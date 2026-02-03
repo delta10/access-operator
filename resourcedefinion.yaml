@@ -1,81 +1,141 @@
-apiVersion: access.example.com/v1b
+apiVersion: k8s.delta10.nl/v1alpha1
 kind: PostgresAccess
 metadata:
-  name: app-db-access
+    name: postgresaccesses.access.example.com
 spec:
-  versions:
-    - name: v1
-      schema:
-        openAPIV3Schema:
-          type: object
-          required: ["generatedSecret", "grants", "connection"] # username will be randomly generated into the generated secret when empty
-          properties:
-            generatedSecret:
-              type: string
-            username:
-              type: string
-            connection:
-              type: object
-              items:
-                host:
-                  type: string
-                port:
-                  type: int
-                database:
-                  type: string
-                username: # or normal string
-                  secretRef:
+    group: access.example.com
+    scope: Namespaced
+    names:
+        plural: postgresaccesses
+        singular: postgresaccess
+        kind: PostgresAccess
+        shortNames:
+            - pgaccess
+    versions:
+        -   name: v1alpha1
+            served: true
+            storage: true
+            schema:
+                openAPIV3Schema:
                     type: object
-                    items:
-                      name:
-                        type: string
-                      key:
-                        type: string
-                password: # or normal string
-                  secretRef:
-                    type: object
-                    items:
-                      name:
-                        type: string
-                      key:
-                        type: string
-                # INSTEAD OF above standardized secret
-                existingSecret:
-                  type: string # existing secret implies that keys are always named the same (username, password, host, port, database)
-            grants:
-              type: array
-              minItems: 1
-              maxItems: 1
-              items:
-                type: object
-                required: ["username", "database", "privileges"] # Schema can be excluded and assumed to be public in this case
-                properties:
-                  username:
-                    type: string
-                  database:
-                    type: string
-                  schema:
-                    type: string
-                    default: public
-                  privileges:
-                    type: array
-                    minItems: 1
-                    items:
-                      type: string
-                      enum: # from https://www.postgresql.org/docs/current/ddl-priv.html
-                        - SELECT
-                        - INSERT
-                        - UPDATE
-                        - DELETE
-                        - TRUNCATE
-                        - REFERENCES
-                        - TRIGGER
-                        - CREATE
-                        - CONNECT
-                        - TEMPORARY
-                        - EXECUTE
-                        - USAGE
-                        - SET
-                        - ALTER SYSTEM
-                        - MAINTAIN
-scope: Namespaced
+                    required: [ "spec" ]
+                    properties:
+                        spec:
+                            type: object
+                            required: [ "generatedSecret", "grants", "connection" ]
+                            properties:
+                                generatedSecret:
+                                    type: string
+                                    minLength: 1
+
+                                # optional; if empty, operator generates and stores in generatedSecret
+                                username:
+                                    type: string
+
+                                connection:
+                                    type: object
+                                    description: Connection info OR a reference to an existing standardized secret.
+                                    oneOf:
+                                        # Option A: point to an existing standardized secret by name, needs to have the required keys (host, port, database, username, password)
+                                        -   required: [ "existingSecret" ]
+                                            properties:
+                                                existingSecret:
+                                                    type: string
+                                                    minLength: 1
+
+                                        # Option B: provide fields (host/port/db + username/password as string or secretRef)
+                                        -   required: [ "host", "port", "database", "username", "password" ]
+                                            properties:
+                                                host:
+                                                    type: string
+                                                    minLength: 1
+                                                port:
+                                                    type: integer
+                                                    minimum: 1
+                                                    maximum: 65535
+                                                database:
+                                                    type: string
+                                                    minLength: 1
+
+                                                username: # username for connecting to the DB, can be plain or secretRef
+                                                    oneOf:
+                                                        -   type: string
+                                                            minLength: 1
+                                                        -   type: object
+                                                            required: [ "secretRef" ]
+                                                            properties:
+                                                                secretRef:
+                                                                    type: object
+                                                                    required: [ "name", "key" ]
+                                                                    properties:
+                                                                        name:
+                                                                            type: string
+                                                                            minLength: 1
+                                                                        key:
+                                                                            type: string
+                                                                            minLength: 1
+                                                                    additionalProperties: false
+                                                            additionalProperties: false
+
+
+                                                password: # Password can be provided as plain text or secretRef
+                                                    oneOf:
+                                                        -   type: string
+                                                            minLength: 1
+                                                        -   type: object
+                                                            required: [ "secretRef" ]
+                                                            properties:
+                                                                secretRef:
+                                                                    type: object
+                                                                    required: [ "name", "key" ]
+                                                                    properties:
+                                                                        name:
+                                                                            type: string
+                                                                            minLength: 1
+                                                                        key:
+                                                                            type: string
+                                                                            minLength: 1
+                                                                    additionalProperties: false
+                                                            additionalProperties: false
+                                            additionalProperties: false
+                                    additionalProperties: false
+
+                                grants:
+                                    type: array
+                                    minItems: 1
+                                    maxItems: 1
+                                    items:
+                                        type: object
+                                        required: [ "database", "privileges" ]
+                                        properties:
+                                            database:
+                                                type: string
+                                                minLength: 1
+                                            schema:
+                                                type: string
+                                                default: public
+                                                minLength: 1
+                                            privileges:
+                                                type: array
+                                                minItems: 1
+                                                items:
+                                                    type: string
+                                                    enum:
+                                                        - SELECT
+                                                        - INSERT
+                                                        - UPDATE
+                                                        - DELETE
+                                                        - TRUNCATE
+                                                        - REFERENCES
+                                                        - TRIGGER
+                                                        - CREATE
+                                                        - CONNECT
+                                                        - TEMPORARY
+                                                        - EXECUTE
+                                                        - USAGE
+                                                        - SET
+                                                        - ALTER SYSTEM
+                                                        - MAINTAIN
+                                        additionalProperties: false
+
+                            additionalProperties: false
