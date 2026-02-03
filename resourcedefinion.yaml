@@ -1,0 +1,81 @@
+apiVersion: access.example.com/v1b
+kind: PostgresAccess
+metadata:
+  name: app-db-access
+spec:
+  versions:
+    - name: v1
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: ["generatedSecret", "grants", "connection"] # username will be randomly generated into the generated secret when empty
+          properties:
+            generatedSecret:
+              type: string
+            username:
+              type: string
+            connection:
+              type: object
+              items:
+                host:
+                  type: string
+                port:
+                  type: int
+                database:
+                  type: string
+                username: # or normal string
+                  secretRef:
+                    type: object
+                    items:
+                      name:
+                        type: string
+                      key:
+                        type: string
+                password: # or normal string
+                  secretRef:
+                    type: object
+                    items:
+                      name:
+                        type: string
+                      key:
+                        type: string
+                # INSTEAD OF above standardized secret
+                existingSecret:
+                  type: string # existing secret implies that keys are always named the same (username, password, host, port, database)
+            grants:
+              type: array
+              minItems: 1
+              maxItems: 1
+              items:
+                type: object
+                required: ["username", "database", "privileges"] # Schema can be excluded and assumed to be public in this case
+                properties:
+                  username:
+                    type: string
+                  database:
+                    type: string
+                  schema:
+                    type: string
+                    default: public
+                  privileges:
+                    type: array
+                    minItems: 1
+                    items:
+                      type: string
+                      enum: # from https://www.postgresql.org/docs/current/ddl-priv.html
+                        - SELECT
+                        - INSERT
+                        - UPDATE
+                        - DELETE
+                        - TRUNCATE
+                        - REFERENCES
+                        - TRIGGER
+                        - CREATE
+                        - CONNECT
+                        - TEMPORARY
+                        - EXECUTE
+                        - USAGE
+                        - SET
+                        - ALTER SYSTEM
+                        - MAINTAIN
+scope: Namespaced
