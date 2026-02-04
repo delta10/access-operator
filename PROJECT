@@ -8,4 +8,14 @@ layout:
 - go.kubebuilder.io/v4
 projectName: access-operator
 repo: github.com/delta10/access-operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: k8s.delta10.nl
+  group: pods.k8s.delta10.nl
+  kind: PostgresAccess
+  path: github.com/delta10/access-operator/api/v1
+  version: v1
 version: "3"
