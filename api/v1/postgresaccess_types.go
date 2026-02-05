@@ -98,7 +98,7 @@ type GrantSpec struct {
 	// privileges is the list of privileges to grant
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:Enum=SELECT;INSERT;UPDATE;DELETE;TRUNCATE;REFERENCES;TRIGGER;CREATE;CONNECT;TEMPORARY;EXECUTE;USAGE;SET;ALTER SYSTEM;MAINTAIN
+	// +kubebuilder:validation:Items:Enum=SELECT;INSERT;UPDATE;DELETE;TRUNCATE;REFERENCES;TRIGGER;CREATE;CONNECT;TEMPORARY;EXECUTE;USAGE;SET;ALTER SYSTEM;MAINTAIN
 	Privileges []string `json:"privileges"`
 }
 

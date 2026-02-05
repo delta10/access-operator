@@ -135,22 +135,6 @@ spec:
                       type: string
                     privileges:
                       description: privileges is the list of privileges to grant
-                      enum:
-                      - SELECT
-                      - INSERT
-                      - UPDATE
-                      - DELETE
-                      - TRUNCATE
-                      - REFERENCES
-                      - TRIGGER
-                      - CREATE
-                      - CONNECT
-                      - TEMPORARY
-                      - EXECUTE
-                      - USAGE
-                      - SET
-                      - ALTER SYSTEM
-                      - MAINTAIN
                       items:
                         type: string
                       minItems: 1
