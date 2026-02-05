@@ -51,7 +51,16 @@ var _ = Describe("PostgresAccess Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: podsv1.PostgresAccessSpec{
+						GeneratedSecret: "test-generated-secret",
+						Connection:      podsv1.ConnectionSpec{},
+						Grants: []podsv1.GrantSpec{
+							{
+								Database:   "testdb",
+								Privileges: []string{"SELECT"},
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
