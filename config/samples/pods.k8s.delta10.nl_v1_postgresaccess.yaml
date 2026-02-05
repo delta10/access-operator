@@ -1,9 +1,0 @@
-apiVersion: pods.k8s.delta10.nl.k8s.delta10.nl/v1
-kind: PostgresAccess
-metadata:
-  labels:
-    app.kubernetes.io/name: access-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: postgresaccess-sample
-spec:
-  # TODO(user): Add fields here

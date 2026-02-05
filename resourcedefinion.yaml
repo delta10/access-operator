@@ -1,4 +1,4 @@
-apiVersion: pods.k8s.delta10.nl/v1
+apiVersion: k8s.delta10.nl/v1alpha1
 kind: PostgresAccess
 metadata:
     name: postgresaccesses.access.example.com
