@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.0
-  name: postgresaccesses.pods.k8s.delta10.nl
+  name: postgresaccesses.access.k8s.delta10.nl
 spec:
-  group: pods.k8s.delta10.nl
+  group: access.k8s.delta10.nl
   names:
     kind: PostgresAccess
     listKind: PostgresAccessList

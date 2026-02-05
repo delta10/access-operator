@@ -14,7 +14,7 @@ resources:
     namespaced: true
   controller: true
   domain: k8s.delta10.nl
-  group: pods
+  group: access
   kind: PostgresAccess
   path: github.com/delta10/access-operator/api/v1
   version: v1
