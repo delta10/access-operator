@@ -1,0 +1,33 @@
+services:
+    postgres:
+        image: postgres:18
+        container_name: pg-dev
+        environment:
+            POSTGRES_USER: devuser
+            POSTGRES_PASSWORD: devpassword
+            POSTGRES_DB: devdb
+        volumes:
+            -  ./api_keys.sql:/docker-entrypoint-initdb.d/api_keys.sql
+        ports:
+            - "5432:5432"
+        networks:
+            - pg-network
+    adminer:
+        image: adminer
+        restart: always
+        container_name: adminer-dev
+        environment:
+            ADMINER_DEFAULT_SERVER: postgres
+            ADMINER_DEFAULT_USER: devuser
+            ADMINER_DEFAULT_PASSWORD: devpassword
+            ADMINER_DEFAULT_DB: devdb
+        depends_on:
+            - postgres
+        networks:
+            - pg-network
+        ports:
+            - 9090:8080
+
+networks:
+    pg-network:
+        driver: bridge
