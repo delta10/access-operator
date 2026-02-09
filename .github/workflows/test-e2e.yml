@@ -8,6 +8,20 @@ jobs:
   test-e2e:
     name: Run on Ubuntu
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -27,6 +41,12 @@ jobs:
         run: kind version
 
       - name: Running Test e2e
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
         run: |
           go mod tidy
           make test-e2e

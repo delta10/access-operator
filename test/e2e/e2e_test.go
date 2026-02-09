@@ -20,13 +20,16 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -268,15 +271,110 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		It("should create a PostgresAccess resource and verify database connectivity", func() {
+			By("checking if PostgreSQL is available")
+			postgresHost := os.Getenv("POSTGRES_HOST")
+			if postgresHost == "" {
+				postgresHost = "postgres" // Use service name when running in CI
+			}
+			postgresPort := os.Getenv("POSTGRES_PORT")
+			if postgresPort == "" {
+				postgresPort = "5432"
+			}
+			postgresUser := os.Getenv("POSTGRES_USER")
+			if postgresUser == "" {
+				postgresUser = "postgres"
+			}
+			postgresPassword := os.Getenv("POSTGRES_PASSWORD")
+			if postgresPassword == "" {
+				postgresPassword = "postgres"
+			}
+			postgresDB := os.Getenv("POSTGRES_DB")
+			if postgresDB == "" {
+				postgresDB = "testdb"
+			}
+
+			// Try to connect to PostgreSQL
+			connStr := fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable",
+				postgresUser, postgresPassword, postgresHost, postgresPort, postgresDB)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			conn, err := pgx.Connect(ctx, connStr)
+			if err != nil {
+				Skip(fmt.Sprintf("PostgreSQL connection failed - database not running: %v", err))
+			}
+			defer conn.Close(ctx)
+			By("PostgreSQL is available, proceeding with test")
+
+			// Create the test namespace if it doesn't exist
+			testNamespace := "postgres-access-test"
+			cmd := exec.Command("kubectl", "create", "ns", testNamespace, "--dry-run=client", "-o", "yaml")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace yaml")
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(output)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
+
+			// Create the PostgresAccess resource
+			By("creating a PostgresAccess resource")
+			pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: PostgresAccess
+metadata:
+  name: test-postgres-access
+  namespace: %s
+spec:
+  generatedSecret: test-postgres-credentials
+  connection:
+    host: %s
+    port: 5432
+    database: %s
+    username:
+      value: %s
+    password:
+      value: %s
+  grants:
+    - database: %s
+      privileges:
+        - CONNECT
+        - SELECT
+`, testNamespace, postgresHost, postgresDB, postgresUser, postgresPassword, postgresDB)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(pgAccessYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
+
+			// Wait for the secret to be created
+			By("waiting for the generated secret to be created")
+			verifySecretCreated := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials", "-n", testNamespace, "-o", "jsonpath={.data.username}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
+				g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
+			}
+			Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			// Verify the database user was created
+			By("verifying the database user was created")
+			var userExists bool
+			err = conn.QueryRow(context.Background(),
+				"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)",
+				"test-postgres-access").Scan(&userExists)
+			Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
+			Expect(userExists).To(BeTrue(), "Database user should have been created")
+
+			// Cleanup
+			By("cleaning up the PostgresAccess resource")
+			cmd = exec.Command("kubectl", "delete", "postgresaccess", "test-postgres-access", "-n", testNamespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+
+			cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+		})
 	})
 })
 
