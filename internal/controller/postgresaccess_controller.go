@@ -43,9 +43,9 @@ type PostgresAccessReconciler struct {
 }
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=pods.k8s.delta10.nl,resources=postgresaccesses,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=pods.k8s.delta10.nl,resources=postgresaccesses/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=pods.k8s.delta10.nl,resources=postgresaccesses/finalizers,verbs=update
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
