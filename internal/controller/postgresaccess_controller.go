@@ -18,15 +18,18 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"math/big"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	podsv1 "github.com/delta10/access-operator/api/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"crypto/rand"
+	accessv1 "github.com/delta10/access-operator/api/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -36,6 +39,7 @@ import (
 type PostgresAccessReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	DB     DBInterface
 }
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -45,17 +49,10 @@ type PostgresAccessReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the PostgresAccess object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
 func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var pg podsv1.PostgresAccess
+	var pg accessv1.PostgresAccess
 	if err := r.Get(ctx, req.NamespacedName, &pg); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -75,14 +72,20 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		},
 	}
 
+	if pg.Spec.Username == nil || *pg.Spec.Username == "" {
+		generatedUsername := generateUsername(pg.Name)
+		pg.Spec.Username = &generatedUsername
+	}
+	password := rand.Text()
+
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sec, func() error {
 		sec.Type = corev1.SecretTypeOpaque
 
 		if sec.Data == nil {
 			sec.Data = map[string][]byte{}
 		}
-		sec.Data["username"] = []byte("demo-user")
-		sec.Data["password"] = []byte("demo-pass")
+		sec.Data["username"] = []byte(*pg.Spec.Username)
+		sec.Data["password"] = []byte(password)
 
 		return controllerutil.SetControllerReference(&pg, sec, r.Scheme)
 	})
@@ -91,14 +94,71 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	if pg.Spec.Connection.Host != nil && *pg.Spec.Connection.Host != "" &&
+		pg.Spec.Connection.Port != nil &&
+		pg.Spec.Connection.Database != nil && *pg.Spec.Connection.Database != "" {
+
+		adminUser := "fay"
+		adminPassword := "fay"
+		if pg.Spec.Connection.Username != nil && pg.Spec.Connection.Username.Value != nil {
+			adminUser = *pg.Spec.Connection.Username.Value
+		}
+		if pg.Spec.Connection.Password != nil && pg.Spec.Connection.Password.Value != nil {
+			adminPassword = *pg.Spec.Connection.Password.Value
+		}
+		connectionString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s",
+			adminUser,
+			adminPassword,
+			*pg.Spec.Connection.Host,
+			*pg.Spec.Connection.Port,
+			*pg.Spec.Connection.Database,
+		)
+
+		if r.DB == nil {
+			r.DB = NewPostgresDB()
+		}
+
+		err := r.DB.Connect(ctx, connectionString)
+		if err != nil {
+			log.Error(err, "Unable to connect to database", "connectionString", connectionString)
+			return ctrl.Result{}, err
+		}
+		defer r.DB.Close(ctx)
+
+		// create user and grant privileges
+		err = r.DB.CreateUser(ctx, *pg.Spec.Username, password)
+		if err != nil {
+			log.Error(err, "failed to create user in PostgreSQL", "username", *pg.Spec.Username)
+			return ctrl.Result{}, err
+		}
+
+		err = r.DB.GrantPrivileges(ctx, pg.Spec.Grants, *pg.Spec.Username)
+		if err != nil {
+			log.Error(err, "failed to grant privileges in PostgreSQL", "username", *pg.Spec.Username)
+			return ctrl.Result{}, err
+		}
+	} else if pg.Spec.Connection.ExistingSecret != nil && *pg.Spec.Connection.ExistingSecret != "" {
+		log.Info("connection details provided via existing secret, skipping user creation and grants")
+	}
+
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *PostgresAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&podsv1.PostgresAccess{}).
+		For(&accessv1.PostgresAccess{}).
 		Named("postgresaccess").
 		Owns(&corev1.Secret{}).
 		Complete(r)
+}
+
+func generateUsername(resourceName string) string {
+	number, err := rand.Int(rand.Reader, big.NewInt(999999))
+	if err != nil {
+		return ""
+	}
+
+	numberString := fmt.Sprintf("%06d", number.Int64())
+	return fmt.Sprintf("%s-%s", resourceName, numberString)
 }

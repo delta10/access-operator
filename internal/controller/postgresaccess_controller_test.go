@@ -18,76 +18,115 @@ package controller
 
 import (
 	"context"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	podsv1 "github.com/delta10/access-operator/api/v1"
+	accessv1 "github.com/delta10/access-operator/api/v1"
 )
 
 var _ = Describe("PostgresAccess Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+	Context("When testing PostgreSQL connections", func() {
+		const connectionTestResourceName = "postgres-connection-test"
 
 		ctx := context.Background()
 
 		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Name:      connectionTestResourceName,
+			Namespace: "default",
 		}
-		postgresaccess := &podsv1.PostgresAccess{}
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind PostgresAccess")
-			err := k8sClient.Get(ctx, typeNamespacedName, postgresaccess)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &podsv1.PostgresAccess{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					Spec: podsv1.PostgresAccessSpec{
-						GeneratedSecret: "test-generated-secret",
-						Connection:      podsv1.ConnectionSpec{},
-						Grants: []podsv1.GrantSpec{
-							{
-								Database:   "testdb",
-								Privileges: []string{"SELECT"},
-							},
-						},
-					},
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		AfterEach(func() {
+			resource := &accessv1.PostgresAccess{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				By("Cleanup the postgres connection test resource")
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 			}
 		})
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &podsv1.PostgresAccess{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+		It("should create secret and user with a connection and username specified", func() {
+			By("creating a PostgresAccess resource with valid connection host and a user in postgres")
+			host := "localhost"
+			port := int32(5432)
+			db := "testdb"
+			username := "demo-user"
+			password := "demo-password"
+			resource := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      connectionTestResourceName,
+					Namespace: "default",
+				},
+				Spec: accessv1.PostgresAccessSpec{
+					GeneratedSecret: "test-connection-secret",
+					Connection: accessv1.ConnectionSpec{
+						Host:     &host,
+						Port:     &port,
+						Database: &db,
+						Username: &accessv1.SecretKeySelector{
+							Value: &username,
+						},
+						Password: &accessv1.SecretKeySelector{
+							Value: &password,
+						},
+					},
+					Username: &username,
+					Grants: []accessv1.GrantSpec{
+						{
+							Database:   "testdb",
+							Privileges: []string{"CONNECT", "SELECT", "INSERT"},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
-			By("Cleanup the specific resource instance PostgresAccess")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
+			By("verifying the resource was created")
+			createdResource := &accessv1.PostgresAccess{}
+			err := k8sClient.Get(ctx, typeNamespacedName, createdResource)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(createdResource.Spec.Connection.Host).NotTo(BeNil())
+			Expect(*createdResource.Spec.Connection.Host).To(Equal("localhost"))
+
+			By("creating a mock database")
+			mockDB := NewMockDB()
+
+			By("reconciling the resource")
 			controllerReconciler := &PostgresAccessReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
+				DB:     mockDB,
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			By("verifying the mock database was called correctly")
+			Expect(mockDB.ConnectCalled).To(BeTrue())
+			Expect(mockDB.LastConnectionString).To(ContainSubstring("demo-user:demo-password@localhost:5432/testdb"))
+			Expect(mockDB.CreateUserCalled).To(BeTrue())
+			Expect(mockDB.LastUsername).To(Equal("demo-user"))
+			Expect(mockDB.GrantPrivilegesCalled).To(BeTrue())
+			Expect(mockDB.LastGrants).To(HaveLen(1))
+
+			By("verifying the secret was created with the specified username and password")
+			secret := &corev1.Secret{}
+			secretKey := types.NamespacedName{
+				Name:      "test-connection-secret",
+				Namespace: "default",
+			}
+			err = k8sClient.Get(ctx, secretKey, secret)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(secret.Data).To(HaveKey("username"))
+			Expect(secret.Data).To(HaveKey("password"))
+			Expect(string(secret.Data["username"])).To(Equal("demo-user"))
+			Expect(string(secret.Data["password"])).NotTo(BeEmpty())
 		})
 	})
 })

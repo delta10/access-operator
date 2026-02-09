@@ -33,7 +33,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	podsv1 "github.com/delta10/access-operator/api/v1"
+	accessv1 "github.com/delta10/access-operator/api/v1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -60,7 +60,7 @@ var _ = BeforeSuite(func() {
 	ctx, cancel = context.WithCancel(context.TODO())
 
 	var err error
-	err = podsv1.AddToScheme(scheme.Scheme)
+	err = accessv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
