@@ -334,9 +334,10 @@ var _ = Describe("Manager", Ordered, func() {
 			})
 		})
 
-		It("should create a PostgresAccess resource and verify database connectivity", func(testNamespace string, postgresHost string, postgresUser string, postgresPassword string, postgresDB string, conn *pgx.Conn) {
-			By("creating a PostgresAccess resource")
-			pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+		It("should create a PostgresAccess resource and verify database connectivity",
+			func(testNamespace, postgresHost, postgresPort, postgresUser, postgresPassword, postgresDB string, conn *pgx.Conn) {
+				By("creating a PostgresAccess resource")
+				pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
 kind: PostgresAccess
 metadata:
   name: test-postgres-access
@@ -345,7 +346,7 @@ spec:
   generatedSecret: test-postgres-credentials
   connection:
     host: %s
-    port: 5432
+    port: %s
     database: %s
     username:
       value: %s
@@ -357,57 +358,58 @@ spec:
       privileges:
         - CONNECT
         - SELECT
-`, testNamespace, postgresHost, postgresDB, postgresUser, postgresPassword, postgresDB)
+`, testNamespace, postgresHost, postgresPort, postgresDB, postgresUser, postgresPassword, postgresDB)
 
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(pgAccessYAML)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(pgAccessYAML)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
 
-			// Wait for the secret to be created
-			By("waiting for the generated secret to be created")
-			verifySecretCreated := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials", "-n", testNamespace, "-o", "jsonpath={.data.username}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
-				g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
-			}
-			Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
+				// Wait for the secret to be created
+				By("waiting for the generated secret to be created")
+				verifySecretCreated := func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials", "-n", testNamespace, "-o", "jsonpath={.data.username}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
+					g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
+				}
+				Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-			// Verify the database user was created
-			By("verifying the database user was created")
-			var userExists bool
-			err := conn.QueryRow(context.Background(),
-				"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)",
-				"test-postgres-access").Scan(&userExists)
-			Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
-			Expect(userExists).To(BeTrue(), "Database user should have been created")
+				// Verify the database user was created
+				By("verifying the database user was created")
+				var userExists bool
+				err = conn.QueryRow(context.Background(),
+					"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)",
+					"test-postgres-access").Scan(&userExists)
+				Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
+				Expect(userExists).To(BeTrue(), "Database user should have been created")
 
-			// Verify the privileges were granted
-			By("verifying the privileges were granted")
-			var hasConnectPrivilege, hasSelectPrivilege bool
-			err = conn.QueryRow(context.Background(), `
+				// Verify the privileges were granted
+				By("verifying the privileges were granted")
+				var hasConnectPrivilege, hasSelectPrivilege bool
+				err = conn.QueryRow(context.Background(), `
                 SELECT 
                     has_database_privilege('test-postgres-access', 'testdb', 'CONNECT') AS has_connect,
                     has_database_privilege('test-postgres-access', 'testdb', 'SELECT') AS has_select
             `).Scan(&hasConnectPrivilege, &hasSelectPrivilege)
-			Expect(err).NotTo(HaveOccurred(), "Failed to check user privileges")
-			Expect(hasConnectPrivilege).To(BeTrue(), "User should have CONNECT privilege")
-			Expect(hasSelectPrivilege).To(BeTrue(), "User should have SELECT privilege")
+				Expect(err).NotTo(HaveOccurred(), "Failed to check user privileges")
+				Expect(hasConnectPrivilege).To(BeTrue(), "User should have CONNECT privilege")
+				Expect(hasSelectPrivilege).To(BeTrue(), "User should have SELECT privilege")
 
-			// Cleanup
-			By("cleaning up the PostgresAccess resource")
-			cmd = exec.Command("kubectl", "delete", "postgresaccess", "test-postgres-access", "-n", testNamespace, "--ignore-not-found")
-			_, _ = utils.Run(cmd)
+				// Cleanup
+				By("cleaning up the PostgresAccess resource")
+				cmd = exec.Command("kubectl", "delete", "postgresaccess", "test-postgres-access", "-n", testNamespace, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
 
-			cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
-			_, _ = utils.Run(cmd)
-		})
+				cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
 
-		It("should create a PostgresAccess resource with with connectivity as a secret reference and verify database connectivity", func(testNamespace string, postgresHost string, postgresUser string, postgresPassword string, postgresDB string, conn *pgx.Conn) {
-			By("creating a secret with the connection details")
-			connectionSecretYAML :=
-				fmt.Sprintf(`apiVersion: v1
+		It("should create a PostgresAccess resource with with connectivity as a secret reference and verify database connectivity",
+			func(testNamespace, postgresHost, postgresPort, postgresUser, postgresPassword, postgresDB string, conn *pgx.Conn) {
+				By("creating a secret with the connection details")
+				connectionSecretYAML :=
+					fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
   name: postgres-connection-secret
@@ -420,19 +422,19 @@ data:
   username: %s
   password: %s
 `, testNamespace,
-					b64.StdEncoding.EncodeToString([]byte(postgresHost)),
-					b64.StdEncoding.EncodeToString([]byte(5432)),
-					b64.StdEncoding.EncodeToString([]byte(postgresDB)),
-					b64.StdEncoding.EncodeToString([]byte(postgresUser)),
-					b64.StdEncoding.EncodeToString([]byte(postgresPassword)))
+						b64.StdEncoding.EncodeToString([]byte(postgresHost)),
+						b64.StdEncoding.EncodeToString([]byte(postgresPort)),
+						b64.StdEncoding.EncodeToString([]byte(postgresDB)),
+						b64.StdEncoding.EncodeToString([]byte(postgresUser)),
+						b64.StdEncoding.EncodeToString([]byte(postgresPassword)))
 
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(connectionSecretYAML)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(connectionSecretYAML)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			By("creating a PostgresAccess resource referencing the connection secret")
-			pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+				By("creating a PostgresAccess resource referencing the connection secret")
+				pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
 kind: PostgresAccess
 metadata:
   name: test-postgres-access-secret-ref
@@ -450,28 +452,28 @@ spec:
         - SELECT
 `, testNamespace, postgresDB)
 
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(pgAccessYAML)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+				cmd = exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(pgAccessYAML)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
-			// Wait for the secret to be created
-			By("waiting for the generated secret to be created")
-			verifySecretCreated := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace, "-o", "jsonpath={.data.username}")
-			}
+				// Wait for the secret to be created
+				By("waiting for the generated secret to be created")
+				verifySecretCreated := func(g Gomega) {
+					_ := exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace, "-o", "jsonpath={.data.username}")
+				}
 
-			Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
+				Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-			// Verify the database user was created
-			By("verifying the database user was created")
-			var userExists bool
-			err = conn.QueryRow(context.Background(),
-				"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)",
-				"test-postgres-access-secret-ref").Scan(&userExists)
-			Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
-			Expect(userExists).To(BeTrue(), "Database user should have been created")
-		})
+				// Verify the database user was created
+				By("verifying the database user was created")
+				var userExists bool
+				err = conn.QueryRow(context.Background(),
+					"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)",
+					"test-postgres-access-secret-ref").Scan(&userExists)
+				Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
+				Expect(userExists).To(BeTrue(), "Database user should have been created")
+			})
 	})
 })
 
