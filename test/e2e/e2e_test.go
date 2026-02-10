@@ -299,6 +299,20 @@ var _ = Describe("Manager", Ordered, func() {
 				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "PostgreSQL deployment should become available")
 
+				By("waiting for PostgreSQL to accept connections")
+				verifyPostgresReady := func(g Gomega) {
+					output, err := runPostgresQuery(
+						testNamespace,
+						postgresUser,
+						postgresPassword,
+						postgresDB,
+						"SELECT 1;",
+					)
+					g.Expect(err).NotTo(HaveOccurred(), "PostgreSQL should accept connections")
+					g.Expect(output).To(Equal("1"), "PostgreSQL should return a valid query result")
+				}
+				Eventually(verifyPostgresReady, 2*time.Minute, 5*time.Second).Should(Succeed())
+
 				By("ensuring the test table exists")
 				_, err = runPostgresQuery(
 					testNamespace,
