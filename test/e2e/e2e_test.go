@@ -274,6 +274,7 @@ var _ = Describe("Manager", Ordered, func() {
 		Context("Postgres", func() {
 			BeforeEach(func() {
 				By("creating the test namespace if it doesn't exist")
+				testNamespace, _, _, _, _, _ := getDatabaseVariables()
 				cmd := exec.Command("kubectl", "create", "ns", testNamespace, "--dry-run=client", "-o", "yaml")
 				output, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace yaml")
@@ -326,7 +327,7 @@ spec:
 
 				cmd := exec.Command("kubectl", "apply", "-f", "-")
 				cmd.Stdin = strings.NewReader(pgAccessYAML)
-				_, err := utils.Run(cmd)
+				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
 
 				// Wait for the secret to be created
@@ -396,7 +397,7 @@ data:
 
 				cmd := exec.Command("kubectl", "apply", "-f", "-")
 				cmd.Stdin = strings.NewReader(connectionSecretYAML)
-				_, err := utils.Run(cmd)
+				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
 				By("creating a PostgresAccess resource referencing the connection secret")
@@ -520,7 +521,7 @@ func getDatabaseVariables() (string, string, string, string, string, string) {
 }
 
 func connectToDB() (*pgx.Conn, error) {
-	testNamespace, postgresHost, postgresPort, postgresUser, postgresPassword, postgresDB := getDatabaseVariables()
+	_, postgresHost, postgresPort, postgresUser, postgresPassword, postgresDB := getDatabaseVariables()
 	connStr := fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable",
 		postgresUser, postgresPassword, postgresHost, postgresPort, postgresDB)
 
