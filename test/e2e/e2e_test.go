@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -291,6 +292,8 @@ var _ = Describe("Manager", Ordered, func() {
 				postgresDB = "testdb"
 			}
 
+			testNamespace := "postgres-access-test"
+
 			BeforeAll(func() {
 				By("checking if PostgreSQL is available before running tests")
 				connStr := fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable",
@@ -309,7 +312,6 @@ var _ = Describe("Manager", Ordered, func() {
 
 			BeforeEach(func() {
 				By("creating the test namespace if it doesn't exist")
-				testNamespace := "postgres-access-test"
 				cmd := exec.Command("kubectl", "create", "ns", testNamespace, "--dry-run=client", "-o", "yaml")
 				output, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace yaml")
@@ -331,7 +333,7 @@ var _ = Describe("Manager", Ordered, func() {
 			})
 		})
 
-		It("should create a PostgresAccess resource and verify database connectivity", func(postgresHost string, postgresUser string, postgresPassword string, postgresDB string) {
+		It("should create a PostgresAccess resource and verify database connectivity", func(testNamespace string, postgresHost string, postgresUser string, postgresPassword string, postgresDB string, conn *pgx.Conn) {
 			By("creating a PostgresAccess resource")
 			pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
 kind: PostgresAccess
@@ -356,7 +358,7 @@ spec:
         - SELECT
 `, testNamespace, postgresHost, postgresDB, postgresUser, postgresPassword, postgresDB)
 
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(pgAccessYAML)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
@@ -374,7 +376,7 @@ spec:
 			// Verify the database user was created
 			By("verifying the database user was created")
 			var userExists bool
-			err = conn.QueryRow(context.Background(),
+			err := conn.QueryRow(context.Background(),
 				"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)",
 				"test-postgres-access").Scan(&userExists)
 			Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
@@ -401,7 +403,7 @@ spec:
 			_, _ = utils.Run(cmd)
 		})
 
-		It("should create a PostgresAccess resource with with connectivity as a secret reference and verify database connectivity", func(postgresHost string, postgresUser string, postgresPassword string, postgresDB string) {
+		It("should create a PostgresAccess resource with with connectivity as a secret reference and verify database connectivity", func(postgresHost string, postgresUser string, postgresPassword string, postgresDB string, conn *pgx.Conn) {
 			By("creating a secret with the connection details")
 			connectionSecretYAML := fmt.Sprintf(`apiVersion: v1
 kind: Secret
