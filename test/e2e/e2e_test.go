@@ -337,6 +337,7 @@ spec:
     password:
       value: %s
   grants:
+    - username: test-postgres-access
     - database: %s
       privileges:
         - CONNECT

@@ -137,7 +137,12 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Error(err, "Unable to connect to database", "connectionString", connectionString)
 			return ctrl.Result{}, err
 		}
-		defer r.DB.Close(ctx)
+		defer func(DB DBInterface, ctx context.Context) {
+			err := DB.Close(ctx)
+			if err != nil {
+				log.Error(err, "Unable to close database connection")
+			}
+		}(r.DB, ctx)
 
 		// create user and grant privileges
 		err = r.DB.CreateUser(ctx, username, password)
