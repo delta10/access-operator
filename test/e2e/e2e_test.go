@@ -355,7 +355,7 @@ spec:
 
 					cmd := exec.Command("kubectl", "apply", "-f", "-")
 					cmd.Stdin = strings.NewReader(pgAccessYAML)
-					_, err = utils.Run(cmd)
+					_, err := utils.Run(cmd)
 					Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with connection details ", " output ", err, " yaml ", pgAccessYAML)
 
 					// Wait for the secret to be created
@@ -432,7 +432,7 @@ data:
 
 					cmd := exec.Command("kubectl", "apply", "-f", "-")
 					cmd.Stdin = strings.NewReader(connectionSecretYAML)
-					_, err = utils.Run(cmd)
+					_, err := utils.Run(cmd)
 					Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
 					By("creating a PostgresAccess resource referencing the connection secret")
