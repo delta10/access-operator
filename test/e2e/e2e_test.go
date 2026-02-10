@@ -300,6 +300,8 @@ var _ = Describe("Manager", Ordered, func() {
 					By("creating a PostgresAccess resource")
 					testNamespace, postgresHost, postgresPort, postgresUser, postgresPassword, postgresDB := getDatabaseVariables()
 					conn, err := connectToDB()
+					Expect(err).NotTo(HaveOccurred(), "Failed to connect to database")
+					defer conn.Close(context.Background())
 
 					pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
 kind: PostgresAccess
@@ -313,6 +315,7 @@ spec:
     host: %s
     port: %s
     database: %s
+    sslMode: disable
     username:
       value: %s
     password:
@@ -374,6 +377,8 @@ spec:
 					By("creating a secret with the connection details")
 					testNamespace, postgresHost, postgresPort, postgresUser, postgresPassword, postgresDB := getDatabaseVariables()
 					conn, err := connectToDB()
+					Expect(err).NotTo(HaveOccurred(), "Failed to connect to database")
+					defer conn.Close(context.Background())
 					connectionSecretYAML :=
 						fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -387,12 +392,14 @@ data:
   database: %s
   username: %s
   password: %s
+  sslmode: %s
 `, testNamespace,
 							b64.StdEncoding.EncodeToString([]byte(postgresHost)),
 							b64.StdEncoding.EncodeToString([]byte(postgresPort)),
 							b64.StdEncoding.EncodeToString([]byte(postgresDB)),
 							b64.StdEncoding.EncodeToString([]byte(postgresUser)),
-							b64.StdEncoding.EncodeToString([]byte(postgresPassword)))
+							b64.StdEncoding.EncodeToString([]byte(postgresPassword)),
+							b64.StdEncoding.EncodeToString([]byte("disable")))
 
 					cmd := exec.Command("kubectl", "apply", "-f", "-")
 					cmd.Stdin = strings.NewReader(connectionSecretYAML)
@@ -425,7 +432,10 @@ spec:
 					// Wait for the secret to be created
 					By("waiting for the generated secret to be created")
 					verifySecretCreated := func(g Gomega) {
-						_ = exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace, "-o", "jsonpath={.data.username}")
+						cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace, "-o", "jsonpath={.data.username}")
+						output, err := utils.Run(cmd)
+						g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
+						g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
 					}
 
 					Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
@@ -524,10 +534,7 @@ func connectToDB() (*pgx.Conn, error) {
 	connStr := fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable",
 		postgresUser, postgresPassword, postgresHost, postgresPort, postgresDB)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	return pgx.Connect(ctx, connStr)
+	return pgx.Connect(context.Background(), connStr)
 }
 
 // tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,

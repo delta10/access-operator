@@ -146,18 +146,24 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {
 	if pg.Spec.Connection.ExistingSecret != nil && *pg.Spec.Connection.ExistingSecret != "" {
-		u, p, h, port, d, err := getExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, pg.Namespace)
+		u, p, h, port, d, sslMode, err := getExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, pg.Namespace)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s", u, p, h, port, d), nil
+		return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=%s", u, p, h, port, d, sslMode), nil
 	}
 
 	c := pg.Spec.Connection
 	if c.Username != nil && c.Username.Value != nil && c.Password != nil && c.Password.Value != nil &&
 		c.Host != nil && *c.Host != "" && c.Port != nil && c.Database != nil && *c.Database != "" {
-		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s",
-			*c.Username.Value, *c.Password.Value, *c.Host, *c.Port, *c.Database), nil
+
+		sslMode := "require" // secure default
+		if c.SSLMode != nil && *c.SSLMode != "" {
+			sslMode = *c.SSLMode
+		}
+
+		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
+			*c.Username.Value, *c.Password.Value, *c.Host, *c.Port, *c.Database, sslMode), nil
 	}
 
 	return "", fmt.Errorf("no valid connection details provided")
@@ -182,36 +188,42 @@ func generateUsername(resourceName string) string {
 	return fmt.Sprintf("%s-%s", resourceName, numberString)
 }
 
-func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string) (string, string, string, string, string, error) {
+func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string) (string, string, string, string, string, string, error) {
 	var existingSec corev1.Secret
 	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &existingSec); err != nil {
-		return "", "", "", "", "", fmt.Errorf("failed to get existing secret for connection details: %w", err)
+		return "", "", "", "", "", "", fmt.Errorf("failed to get existing secret for connection details: %w", err)
 	}
 
 	existingUsername, ok := existingSec.Data["username"]
 	if !ok || len(existingUsername) == 0 {
-		return "", "", "", "", "", fmt.Errorf("existing secret is missing username")
+		return "", "", "", "", "", "", fmt.Errorf("existing secret is missing username")
 	}
 
 	existingPassword, ok := existingSec.Data["password"]
 	if !ok || len(existingPassword) == 0 {
-		return "", "", "", "", "", fmt.Errorf("existing secret is missing password")
+		return "", "", "", "", "", "", fmt.Errorf("existing secret is missing password")
 	}
 
 	existingHost, ok := existingSec.Data["host"]
 	if !ok || len(existingHost) == 0 {
-		return "", "", "", "", "", fmt.Errorf("existing secret is missing host")
+		return "", "", "", "", "", "", fmt.Errorf("existing secret is missing host")
 	}
 
 	existingPort, ok := existingSec.Data["port"]
 	if !ok || len(existingPort) == 0 {
-		return "", "", "", "", "", fmt.Errorf("existing secret is missing port")
+		return "", "", "", "", "", "", fmt.Errorf("existing secret is missing port")
 	}
 
 	existingDatabase, ok := existingSec.Data["database"]
 	if !ok || len(existingDatabase) == 0 {
-		return "", "", "", "", "", fmt.Errorf("existing secret is missing database")
+		return "", "", "", "", "", "", fmt.Errorf("existing secret is missing database")
 	}
 
-	return string(existingUsername), string(existingPassword), string(existingHost), string(existingPort), string(existingDatabase), nil
+	// sslmode is optional, defaults to "require" for security
+	sslMode := "require"
+	if existingSSLMode, ok := existingSec.Data["sslmode"]; ok && len(existingSSLMode) > 0 {
+		sslMode = string(existingSSLMode)
+	}
+
+	return string(existingUsername), string(existingPassword), string(existingHost), string(existingPort), string(existingDatabase), sslMode, nil
 }

@@ -6,4 +6,71 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: postgresaccess-sample
 spec:
-  # TODO(user): Add fields here
+  # Name of the secret where generated credentials will be stored
+  generatedSecret: my-app-postgres-credentials
+
+  # Optional: specify the username (if omitted, will be auto-generated)
+  username: my-app-user
+
+  # Connection details - Option 1: Direct connection details
+  connection:
+    host: postgres.example.com
+    port: 5432
+    database: mydb
+    # SSL mode: disable, allow, prefer, require (default), verify-ca, verify-full
+    # For production, use 'require', 'verify-ca', or 'verify-full'
+    # For development/test environments without SSL, use 'disable'
+    sslMode: require
+    username:
+      value: admin
+    password:
+      # Recommended: Use secretRef instead of plain value in production
+      secretRef:
+        name: postgres-admin-secret
+        key: password
+
+  # Privileges to grant
+  grants:
+    - database: mydb
+      schema: public  # optional, defaults to "public"
+      privileges:
+        - CONNECT
+        - SELECT
+        - INSERT
+        - UPDATE
+
+---
+# Example 2: Using an existing secret for connection details
+apiVersion: access.k8s.delta10.nl/v1
+kind: PostgresAccess
+metadata:
+  name: postgresaccess-with-secret
+spec:
+  generatedSecret: my-app-postgres-credentials-2
+  username: my-app-user-2
+
+  # Connection details - Option 2: Reference existing secret
+  # Secret must contain: host, port, database, username, password
+  # Optional: sslmode (defaults to "require" if not specified)
+  connection:
+    existingSecret: postgres-connection-details
+
+  grants:
+    - database: mydb
+      privileges:
+        - CONNECT
+        - SELECT
+    username: test-postgres-access
+    connection:
+        host: 127.0.0.1
+        port: 5432
+        database: postgres
+        username:
+            value: postgres
+        password:
+            value: postgres
+    grants:
+        - database: postgres
+          privileges:
+              - CONNECT
+              - SELECT

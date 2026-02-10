@@ -52,6 +52,7 @@ type SecretKeySelector struct {
 type ConnectionSpec struct {
 	// existingSecret references an existing secret with connection details
 	// The secret must contain keys: host, port, database, username, password
+	// Optionally can include: sslmode
 	// +optional
 	ExistingSecret *string `json:"existingSecret,omitempty"`
 
@@ -80,6 +81,14 @@ type ConnectionSpec struct {
 	// Can be provided as plain text or as a secret reference
 	// +optional
 	Password *SecretKeySelector `json:"password,omitempty"`
+
+	// sslMode specifies the SSL mode for the connection
+	// Valid values: disable, allow, prefer, require, verify-ca, verify-full
+	// Defaults to "require" for security
+	// +optional
+	// +kubebuilder:default="require"
+	// +kubebuilder:validation:Enum=disable;allow;prefer;require;verify-ca;verify-full
+	SSLMode *string `json:"sslMode,omitempty"`
 }
 
 // GrantSpec defines database grants to be applied

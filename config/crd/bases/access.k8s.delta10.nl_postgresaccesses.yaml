@@ -52,6 +52,7 @@ spec:
                     description: |-
                       existingSecret references an existing secret with connection details
                       The secret must contain keys: host, port, database, username, password
+                      Optionally can include: sslmode
                     type: string
                   host:
                     description: host is the PostgreSQL server hostname
@@ -90,6 +91,20 @@ spec:
                     maximum: 65535
                     minimum: 1
                     type: integer
+                  sslMode:
+                    default: require
+                    description: |-
+                      sslMode specifies the SSL mode for the connection
+                      Valid values: disable, allow, prefer, require, verify-ca, verify-full
+                      Defaults to "require" for security
+                    enum:
+                    - disable
+                    - allow
+                    - prefer
+                    - require
+                    - verify-ca
+                    - verify-full
+                    type: string
                   username:
                     description: |-
                       username for connecting to the database
