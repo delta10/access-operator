@@ -309,6 +309,7 @@ metadata:
   namespace: %s
 spec:
   generatedSecret: test-postgres-credentials
+  username: test-postgres-access
   connection:
     host: %s
     port: %s
@@ -318,7 +319,6 @@ spec:
     password:
       value: %s
   grants:
-    - username: test-postgres-access
     - database: %s
       privileges:
         - CONNECT
@@ -408,11 +408,10 @@ metadata:
   namespace: %s
 spec:
   generatedSecret: test-postgres-credentials-secret-ref
+  username: test-postgres-access-secret-ref
   connection:
-    secretRef:
-      name: postgres-connection-secret
+    existingSecret: postgres-connection-secret
   grants:
-    - username: test-postgres-access-secret-ref
     - database: %s
       privileges:
         - CONNECT
