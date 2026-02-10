@@ -21,6 +21,7 @@ package e2e
 
 import (
 	"context"
+	b64 "encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -360,7 +361,7 @@ spec:
 
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(pgAccessYAML)
-			_, err = utils.Run(cmd)
+			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
 
 			// Wait for the secret to be created
@@ -403,9 +404,10 @@ spec:
 			_, _ = utils.Run(cmd)
 		})
 
-		It("should create a PostgresAccess resource with with connectivity as a secret reference and verify database connectivity", func(postgresHost string, postgresUser string, postgresPassword string, postgresDB string, conn *pgx.Conn) {
+		It("should create a PostgresAccess resource with with connectivity as a secret reference and verify database connectivity", func(testNamespace string, postgresHost string, postgresUser string, postgresPassword string, postgresDB string, conn *pgx.Conn) {
 			By("creating a secret with the connection details")
-			connectionSecretYAML := fmt.Sprintf(`apiVersion: v1
+			connectionSecretYAML :=
+				fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
   name: postgres-connection-secret
@@ -417,7 +419,12 @@ data:
   database: %s
   username: %s
   password: %s
-`, testNamespace, utils.Base64Encode(postgresHost), utils.Base64Encode("5432"), utils.Base64Encode(postgresDB), utils.Base64Encode(postgresUser), utils.Base64Encode(postgresPassword))
+`, testNamespace,
+					b64.StdEncoding.EncodeToString([]byte(postgresHost)),
+					b64.StdEncoding.EncodeToString([]byte(5432)),
+					b64.StdEncoding.EncodeToString([]byte(postgresDB)),
+					b64.StdEncoding.EncodeToString([]byte(postgresUser)),
+					b64.StdEncoding.EncodeToString([]byte(postgresPassword)))
 
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(connectionSecretYAML)
