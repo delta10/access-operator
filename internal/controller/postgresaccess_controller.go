@@ -20,15 +20,17 @@ import (
 	"context"
 	"fmt"
 
+	"math/big"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"math/big"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"crypto/rand"
+
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -72,11 +74,8 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		},
 	}
 
-	if pg.Spec.Username == nil || *pg.Spec.Username == "" {
-		generatedUsername := generateUsername(pg.Name)
-		pg.Spec.Username = &generatedUsername
-	}
-	password := rand.Text()
+	var username string
+	var password string
 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sec, func() error {
 		sec.Type = corev1.SecretTypeOpaque
@@ -84,7 +83,22 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if sec.Data == nil {
 			sec.Data = map[string][]byte{}
 		}
-		sec.Data["username"] = []byte(*pg.Spec.Username)
+		// Keep credentials stable across reconciles to avoid update loops.
+		if pg.Spec.Username != nil && *pg.Spec.Username != "" {
+			username = *pg.Spec.Username
+		} else if existingUsername, ok := sec.Data["username"]; ok && len(existingUsername) > 0 {
+			username = string(existingUsername)
+		} else {
+			username = generateUsername(pg.Name)
+		}
+
+		if existingPassword, ok := sec.Data["password"]; ok && len(existingPassword) > 0 {
+			password = string(existingPassword)
+		} else {
+			password = rand.Text()
+		}
+
+		sec.Data["username"] = []byte(username)
 		sec.Data["password"] = []byte(password)
 
 		return controllerutil.SetControllerReference(&pg, sec, r.Scheme)
@@ -126,15 +140,15 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		defer r.DB.Close(ctx)
 
 		// create user and grant privileges
-		err = r.DB.CreateUser(ctx, *pg.Spec.Username, password)
+		err = r.DB.CreateUser(ctx, username, password)
 		if err != nil {
-			log.Error(err, "failed to create user in PostgreSQL", "username", *pg.Spec.Username)
+			log.Error(err, "failed to create user in PostgreSQL", "username", username)
 			return ctrl.Result{}, err
 		}
 
-		err = r.DB.GrantPrivileges(ctx, pg.Spec.Grants, *pg.Spec.Username)
+		err = r.DB.GrantPrivileges(ctx, pg.Spec.Grants, username)
 		if err != nil {
-			log.Error(err, "failed to grant privileges in PostgreSQL", "username", *pg.Spec.Username)
+			log.Error(err, "failed to grant privileges in PostgreSQL", "username", username)
 			return ctrl.Result{}, err
 		}
 	} else if pg.Spec.Connection.ExistingSecret != nil && *pg.Spec.Connection.ExistingSecret != "" {
