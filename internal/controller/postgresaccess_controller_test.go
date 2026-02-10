@@ -143,5 +143,74 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(string(updatedSecret.Data["password"])).To(Equal(initialPassword))
 			Expect(mockDB.LastPassword).To(Equal(initialPassword))
 		})
+
+		It("should create secret and user with a connection and username specified in an existing secret", func() {
+			By("creating a PostgresAccess resource with valid connection host and a user in postgres")
+			host := "localhost"
+			port := int32(5432)
+			db := "testdb"
+			username := "demo-user"
+			password := "demo-password"
+			secretName := "db-credentials"
+
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      secretName,
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					"username": []byte(username),
+					"password": []byte(password),
+					"host":     []byte(host),
+					"port":     []byte(string(port)),
+					"database": []byte(db),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			resource := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      connectionTestResourceName,
+					Namespace: "default",
+				},
+				Spec: accessv1.PostgresAccessSpec{
+					GeneratedSecret: "test-connection-secret",
+					Connection: accessv1.ConnectionSpec{
+						ExistingSecret: &secretName,
+					},
+					Username: &username,
+					Grants: []accessv1.GrantSpec{
+						{
+							Database:   "testdb",
+							Privileges: []string{"CONNECT", "SELECT", "INSERT"},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			By("reconciling the resource")
+			controllerReconciler := &PostgresAccessReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				DB:     NewMockDB(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the secret was created with the specified username and password")
+			createdSecret := &corev1.Secret{}
+			secretKey := types.NamespacedName{
+				Name:      "test-connection-secret",
+				Namespace: "default",
+			}
+			err = k8sClient.Get(ctx, secretKey, createdSecret)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(createdSecret.Data).To(HaveKey("username"))
+			Expect(string(createdSecret.Data["username"])).To(Equal(username))
+		})
 	})
 })

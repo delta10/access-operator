@@ -108,59 +108,59 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	if pg.Spec.Connection.Host != nil && *pg.Spec.Connection.Host != "" &&
-		pg.Spec.Connection.Port != nil &&
-		pg.Spec.Connection.Database != nil && *pg.Spec.Connection.Database != "" {
+	connectionString, err := r.getConnectionString(ctx, &pg)
+	if err != nil {
+		log.Error(err, "failed to get connection string, no valid connection details provided")
+		return ctrl.Result{}, err
+	}
+	if r.DB == nil {
+		r.DB = NewPostgresDB()
+	}
 
-		adminUser := "fay"
-		adminPassword := "fay"
-		if pg.Spec.Connection.Username != nil && pg.Spec.Connection.Username.Value != nil {
-			adminUser = *pg.Spec.Connection.Username.Value
+	err = r.DB.Connect(ctx, connectionString)
+	if err != nil {
+		log.Error(err, "Unable to connect to database", "connectionString", connectionString)
+		return ctrl.Result{}, err
+	}
+	defer func() {
+		if err := r.DB.Close(ctx); err != nil {
+			log.Error(err, "failed to close database connection")
 		}
-		if pg.Spec.Connection.Password != nil && pg.Spec.Connection.Password.Value != nil {
-			adminPassword = *pg.Spec.Connection.Password.Value
-		}
-		connectionString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s",
-			adminUser,
-			adminPassword,
-			*pg.Spec.Connection.Host,
-			*pg.Spec.Connection.Port,
-			*pg.Spec.Connection.Database,
-		)
+	}()
 
-		if r.DB == nil {
-			r.DB = NewPostgresDB()
-		}
+	// create user and grant privileges
+	err = r.DB.CreateUser(ctx, username, password)
+	if err != nil {
+		log.Error(err, "failed to create user in PostgreSQL", "username", username)
+		return ctrl.Result{}, err
+	}
 
-		err := r.DB.Connect(ctx, connectionString)
-		if err != nil {
-			log.Error(err, "Unable to connect to database", "connectionString", connectionString)
-			return ctrl.Result{}, err
-		}
-		defer func(DB DBInterface, ctx context.Context) {
-			err := DB.Close(ctx)
-			if err != nil {
-				log.Error(err, "Unable to close database connection")
-			}
-		}(r.DB, ctx)
-
-		// create user and grant privileges
-		err = r.DB.CreateUser(ctx, username, password)
-		if err != nil {
-			log.Error(err, "failed to create user in PostgreSQL", "username", username)
-			return ctrl.Result{}, err
-		}
-
-		err = r.DB.GrantPrivileges(ctx, pg.Spec.Grants, username)
-		if err != nil {
-			log.Error(err, "failed to grant privileges in PostgreSQL", "username", username)
-			return ctrl.Result{}, err
-		}
-	} else if pg.Spec.Connection.ExistingSecret != nil && *pg.Spec.Connection.ExistingSecret != "" {
-		log.Info("connection details provided via existing secret, skipping user creation and grants")
+	err = r.DB.GrantPrivileges(ctx, pg.Spec.Grants, username)
+	if err != nil {
+		log.Error(err, "failed to grant privileges in PostgreSQL", "username", username)
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {
+	if pg.Spec.Connection.ExistingSecret != nil && *pg.Spec.Connection.ExistingSecret != "" {
+		u, p, h, port, d, err := getExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, pg.Namespace)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s", u, p, h, port, d), nil
+	}
+
+	c := pg.Spec.Connection
+	if c.Username != nil && c.Username.Value != nil && c.Password != nil && c.Password.Value != nil &&
+		c.Host != nil && *c.Host != "" && c.Port != nil && c.Database != nil && *c.Database != "" {
+		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s",
+			*c.Username.Value, *c.Password.Value, *c.Host, *c.Port, *c.Database), nil
+	}
+
+	return "", fmt.Errorf("no valid connection details provided")
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -180,4 +180,38 @@ func generateUsername(resourceName string) string {
 
 	numberString := fmt.Sprintf("%06d", number.Int64())
 	return fmt.Sprintf("%s-%s", resourceName, numberString)
+}
+
+func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string) (string, string, string, string, string, error) {
+	var existingSec corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &existingSec); err != nil {
+		return "", "", "", "", "", fmt.Errorf("failed to get existing secret for connection details: %w", err)
+	}
+
+	existingUsername, ok := existingSec.Data["username"]
+	if !ok || len(existingUsername) == 0 {
+		return "", "", "", "", "", fmt.Errorf("existing secret is missing username")
+	}
+
+	existingPassword, ok := existingSec.Data["password"]
+	if !ok || len(existingPassword) == 0 {
+		return "", "", "", "", "", fmt.Errorf("existing secret is missing password")
+	}
+
+	existingHost, ok := existingSec.Data["host"]
+	if !ok || len(existingHost) == 0 {
+		return "", "", "", "", "", fmt.Errorf("existing secret is missing host")
+	}
+
+	existingPort, ok := existingSec.Data["port"]
+	if !ok || len(existingPort) == 0 {
+		return "", "", "", "", "", fmt.Errorf("existing secret is missing port")
+	}
+
+	existingDatabase, ok := existingSec.Data["database"]
+	if !ok || len(existingDatabase) == 0 {
+		return "", "", "", "", "", fmt.Errorf("existing secret is missing database")
+	}
+
+	return string(existingUsername), string(existingPassword), string(existingHost), string(existingPort), string(existingDatabase), nil
 }

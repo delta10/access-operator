@@ -29,7 +29,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -270,9 +269,7 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
-
-		It("should create a PostgresAccess resource and verify database connectivity", func() {
-			By("checking if PostgreSQL is available")
+		Context("Postgres", func() {
 			postgresHost := os.Getenv("POSTGRES_HOST")
 			if postgresHost == "" {
 				postgresHost = "postgres" // Use service name when running in CI
@@ -294,32 +291,47 @@ var _ = Describe("Manager", Ordered, func() {
 				postgresDB = "testdb"
 			}
 
-			// Try to connect to PostgreSQL
-			connStr := fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable",
-				postgresUser, postgresPassword, postgresHost, postgresPort, postgresDB)
+			BeforeAll(func() {
+				By("checking if PostgreSQL is available before running tests")
+				connStr := fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable",
+					postgresUser, postgresPassword, postgresHost, postgresPort, postgresDB)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
 
-			conn, err := pgx.Connect(ctx, connStr)
-			if err != nil {
-				Skip(fmt.Sprintf("PostgreSQL connection failed - database not running: %v", err))
-			}
-			defer conn.Close(ctx)
-			By("PostgreSQL is available, proceeding with test")
+				conn, err := pgx.Connect(ctx, connStr)
+				if err != nil {
+					Skip(fmt.Sprintf("PostgreSQL connection failed - database not running: %v", err))
+				}
+				defer conn.Close(ctx)
 
-			// Create the test namespace if it doesn't exist
-			testNamespace := "postgres-access-test"
-			cmd := exec.Command("kubectl", "create", "ns", testNamespace, "--dry-run=client", "-o", "yaml")
-			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace yaml")
+			})
 
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(output)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
+			BeforeEach(func() {
+				By("creating the test namespace if it doesn't exist")
+				testNamespace := "postgres-access-test"
+				cmd := exec.Command("kubectl", "create", "ns", testNamespace, "--dry-run=client", "-o", "yaml")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace yaml")
 
-			// Create the PostgresAccess resource
+				cmd = exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(output)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
+			})
+
+			AfterEach(func() {
+				By("cleaning up any remaining PostgresAccess resources")
+				cmd := exec.Command("kubectl", "delete", "postgresaccess", "--all", "-n", "postgres-access-test", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+
+				By("cleaning up the test namespace")
+				cmd = exec.Command("kubectl", "delete", "ns", "postgres-access-test", "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+		})
+
+		It("should create a PostgresAccess resource and verify database connectivity", func(postgresHost string, postgresUser string, postgresPassword string, postgresDB string) {
 			By("creating a PostgresAccess resource")
 			pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
 kind: PostgresAccess
@@ -387,6 +399,69 @@ spec:
 
 			cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
 			_, _ = utils.Run(cmd)
+		})
+
+		It("should create a PostgresAccess resource with with connectivity as a secret reference and verify database connectivity", func(postgresHost string, postgresUser string, postgresPassword string, postgresDB string) {
+			By("creating a secret with the connection details")
+			connectionSecretYAML := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-connection-secret
+  namespace: %s
+type: Opaque
+data:
+  host: %s
+  port: %s
+  database: %s
+  username: %s
+  password: %s
+`, testNamespace, utils.Base64Encode(postgresHost), utils.Base64Encode("5432"), utils.Base64Encode(postgresDB), utils.Base64Encode(postgresUser), utils.Base64Encode(postgresPassword))
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(connectionSecretYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+			By("creating a PostgresAccess resource referencing the connection secret")
+			pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: PostgresAccess
+metadata:
+  name: test-postgres-access-secret-ref
+  namespace: %s
+spec:
+  generatedSecret: test-postgres-credentials-secret-ref
+  connection:
+    secretRef:
+      name: postgres-connection-secret
+  grants:
+    - username: test-postgres-access-secret-ref
+    - database: %s
+      privileges:
+        - CONNECT
+        - SELECT
+`, testNamespace, postgresDB)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(pgAccessYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+			// Wait for the secret to be created
+			By("waiting for the generated secret to be created")
+			verifySecretCreated := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace, "-o", "jsonpath={.data.username}")
+			}
+
+			Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			// Verify the database user was created
+			By("verifying the database user was created")
+			var userExists bool
+			err = conn.QueryRow(context.Background(),
+				"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)",
+				"test-postgres-access-secret-ref").Scan(&userExists)
+			Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
+			Expect(userExists).To(BeTrue(), "Database user should have been created")
 		})
 	})
 })
