@@ -552,13 +552,14 @@ func getMetricsOutput() (string, error) {
 
 func getDatabaseVariables() (string, string, string, string, string, string) {
 	testNamespace := "postgres-access-test"
+	defaultClusterHost := fmt.Sprintf("postgres.%s.svc", testNamespace)
 
 	postgresHost := os.Getenv("POSTGRES_CLUSTER_HOST")
 	if postgresHost == "" {
 		postgresHost = os.Getenv("POSTGRES_HOST")
 	}
-	if postgresHost == "" || postgresHost == "localhost" || postgresHost == "127.0.0.1" {
-		postgresHost = "postgres"
+	if postgresHost == "" || postgresHost == "localhost" || postgresHost == "127.0.0.1" || postgresHost == "postgres" {
+		postgresHost = defaultClusterHost
 	}
 
 	postgresPort := os.Getenv("POSTGRES_CLUSTER_PORT")
