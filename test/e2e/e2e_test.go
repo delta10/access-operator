@@ -368,6 +368,18 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
 			Expect(userExists).To(BeTrue(), "Database user should have been created")
 
+			// Verify the privileges were granted
+			By("verifying the privileges were granted")
+			var hasConnectPrivilege, hasSelectPrivilege bool
+			err = conn.QueryRow(context.Background(), `
+                SELECT 
+                    has_database_privilege('test-postgres-access', 'testdb', 'CONNECT') AS has_connect,
+                    has_database_privilege('test-postgres-access', 'testdb', 'SELECT') AS has_select
+            `).Scan(&hasConnectPrivilege, &hasSelectPrivilege)
+			Expect(err).NotTo(HaveOccurred(), "Failed to check user privileges")
+			Expect(hasConnectPrivilege).To(BeTrue(), "User should have CONNECT privilege")
+			Expect(hasSelectPrivilege).To(BeTrue(), "User should have SELECT privilege")
+
 			// Cleanup
 			By("cleaning up the PostgresAccess resource")
 			cmd = exec.Command("kubectl", "delete", "postgresaccess", "test-postgres-access", "-n", testNamespace, "--ignore-not-found")
