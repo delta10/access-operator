@@ -54,6 +54,8 @@ type PostgresAccessReconciler struct {
 func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
+	log.Info("Reconciling PostgresAccess", "namespace", req.Namespace, "name", req.Name)
+
 	var pg accessv1.PostgresAccess
 	if err := r.Get(ctx, req.NamespacedName, &pg); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -138,6 +140,12 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	err = r.DB.GrantPrivileges(ctx, pg.Spec.Grants, username)
 	if err != nil {
 		log.Error(err, "failed to grant privileges in PostgreSQL", "username", username)
+		return ctrl.Result{}, err
+	}
+
+	_, err = r.DB.GetGrants(ctx)
+	if err != nil {
+		log.Error(err, "failed to get grants from PostgreSQL")
 		return ctrl.Result{}, err
 	}
 
@@ -234,4 +242,19 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 		Database: string(existingDatabase),
 		SSLMode:  sslMode,
 	}, nil
+}
+
+func getControlledSecrets(ctx context.Context, c client.Client, pg *accessv1.PostgresAccess) ([]corev1.Secret, error) {
+	var secretList corev1.SecretList
+	if err := c.List(ctx, &secretList, client.InNamespace(pg.Namespace), client.MatchingFields{".metadata.controller": pg.Name}); err != nil {
+		return nil, fmt.Errorf("failed to list secrets: %w", err)
+	}
+
+	var controlledSecrets []corev1.Secret
+	for _, sec := range secretList.Items {
+		if metav1.IsControlledBy(&sec, pg) {
+			controlledSecrets = append(controlledSecrets, sec)
+		}
+	}
+	return controlledSecrets, nil
 }
