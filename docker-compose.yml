@@ -3,11 +3,17 @@ services:
         image: postgres:18
         container_name: pg-dev
         environment:
-            POSTGRES_USER: devuser
-            POSTGRES_PASSWORD: devpassword
-            POSTGRES_DB: devdb
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_DB: testdb
+            POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+        command: >
+            -c listen_addresses='*'
+            -c max_connections=200
+            -c hba_file=/etc/postgresql/pg_hba.conf
         volumes:
             -  ./api_keys.sql:/docker-entrypoint-initdb.d/api_keys.sql
+            -  ./pg_hba.conf:/etc/postgresql/pg_hba.conf
         ports:
             - "5432:5432"
         networks:
