@@ -38,6 +38,15 @@ type PostgresDB struct {
 	conn *pgx.Conn
 }
 
+type ConnectionDetails struct {
+	Username string
+	Password string
+	Host     string
+	Port     string
+	Database string
+	SSLMode  string
+}
+
 func NewPostgresDB() *PostgresDB {
 	return &PostgresDB{}
 }

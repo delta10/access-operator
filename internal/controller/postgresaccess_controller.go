@@ -146,11 +146,12 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {
 	if pg.Spec.Connection.ExistingSecret != nil && *pg.Spec.Connection.ExistingSecret != "" {
-		u, p, h, port, d, sslMode, err := getExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, pg.Namespace)
+		connection, err := getExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, pg.Namespace)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=%s", u, p, h, port, d, sslMode), nil
+		return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=%s",
+			connection.Username, connection.Password, connection.Host, connection.Port, connection.Database, connection.SSLMode), nil
 	}
 
 	c := pg.Spec.Connection
@@ -188,35 +189,35 @@ func generateUsername(resourceName string) string {
 	return fmt.Sprintf("%s-%s", resourceName, numberString)
 }
 
-func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string) (string, string, string, string, string, string, error) {
+func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string) (ConnectionDetails, error) {
 	var existingSec corev1.Secret
 	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &existingSec); err != nil {
-		return "", "", "", "", "", "", fmt.Errorf("failed to get existing secret for connection details: %w", err)
+		return ConnectionDetails{}, fmt.Errorf("failed to get existing secret for connection details: %w", err)
 	}
 
 	existingUsername, ok := existingSec.Data["username"]
 	if !ok || len(existingUsername) == 0 {
-		return "", "", "", "", "", "", fmt.Errorf("existing secret is missing username")
+		return ConnectionDetails{}, fmt.Errorf("existing secret is missing username")
 	}
 
 	existingPassword, ok := existingSec.Data["password"]
 	if !ok || len(existingPassword) == 0 {
-		return "", "", "", "", "", "", fmt.Errorf("existing secret is missing password")
+		return ConnectionDetails{}, fmt.Errorf("existing secret is missing password")
 	}
 
 	existingHost, ok := existingSec.Data["host"]
 	if !ok || len(existingHost) == 0 {
-		return "", "", "", "", "", "", fmt.Errorf("existing secret is missing host")
+		return ConnectionDetails{}, fmt.Errorf("existing secret is missing host")
 	}
 
 	existingPort, ok := existingSec.Data["port"]
 	if !ok || len(existingPort) == 0 {
-		return "", "", "", "", "", "", fmt.Errorf("existing secret is missing port")
+		return ConnectionDetails{}, fmt.Errorf("existing secret is missing port")
 	}
 
 	existingDatabase, ok := existingSec.Data["database"]
 	if !ok || len(existingDatabase) == 0 {
-		return "", "", "", "", "", "", fmt.Errorf("existing secret is missing database")
+		return ConnectionDetails{}, fmt.Errorf("existing secret is missing database")
 	}
 
 	// sslmode is optional, defaults to "require" for security
@@ -225,5 +226,12 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 		sslMode = string(existingSSLMode)
 	}
 
-	return string(existingUsername), string(existingPassword), string(existingHost), string(existingPort), string(existingDatabase), sslMode, nil
+	return ConnectionDetails{
+		Username: string(existingUsername),
+		Password: string(existingPassword),
+		Host:     string(existingHost),
+		Port:     string(existingPort),
+		Database: string(existingDatabase),
+		SSLMode:  sslMode,
+	}, nil
 }
