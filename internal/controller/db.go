@@ -30,10 +30,7 @@ type DBInterface interface {
 	Connect(ctx context.Context, connectionString string) error
 	Close(ctx context.Context) error
 	CreateUser(ctx context.Context, username, password string) error
-	GetUsers(ctx context.Context) ([]string, error)
 	GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error
-	RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error
-	GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error)
 }
 
 // PostgresDB implements DBInterface using pgx
@@ -91,28 +88,6 @@ func (p *PostgresDB) CreateUser(ctx context.Context, username, password string) 
 
 	_, err = p.conn.Exec(ctx, fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s'", quotedUsername, escapedPassword))
 	return err
-}
-
-func (p *PostgresDB) GetUsers(ctx context.Context) ([]string, error) {
-	if p.conn == nil {
-		return nil, fmt.Errorf("database connection is not initialized")
-	}
-
-	rows, err := p.conn.Query(ctx, "SELECT rolname FROM pg_roles WHERE rolcanlogin = true and rolsuper = false")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var users []string
-	for rows.Next() {
-		var username string
-		if err := rows.Scan(&username); err != nil {
-			return nil, err
-		}
-		users = append(users, username)
-	}
-	return users, nil
 }
 
 func (p *PostgresDB) GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
@@ -218,44 +193,6 @@ func (p *PostgresDB) GrantPrivileges(ctx context.Context, grants []accessv1.Gran
 	return nil
 }
 
-func (p *PostgresDB) RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
-
-	return nil
-}
-
-func (p *PostgresDB) GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error) {
-	var dbOutput []struct {
-		Grantor       string
-		Grantee       string
-		Schema        string
-		PrivilegeType string
-		IsGrantable   bool
-	}
-	err := p.conn.QueryRow(ctx,
-		`SELECT r.usename AS grantor, e.usename AS grantee, nspname, privilege_type, is_grantable 
-                FROM pg_namespace, aclexplode(nspacl) AS a
-                    JOIN pg_user e ON a.grantee = e.usesysid 
-                    JOIN pg_user r ON a.grantor = r.usesysid;`).
-		Scan(&dbOutput)
-	if err != nil {
-		return nil, err
-	}
-
-	returnValue := make(map[string][]accessv1.GrantSpec)
-
-	// key is grantee, value is list of grants, first group by grantee, then by schema, then aggregate privileges
-	for _, row := range dbOutput {
-		grant := accessv1.GrantSpec{
-			Database:   "", // we don't have database information in this query, so we leave it empty
-			Schema:     &row.Schema,
-			Privileges: []string{row.PrivilegeType},
-		}
-		returnValue[row.Grantee] = append(returnValue[row.Grantee], grant)
-	}
-
-	return returnValue, nil
-}
-
 // MockDB implements DBInterface for testing
 type MockDB struct {
 	ConnectCalled         bool
@@ -295,12 +232,4 @@ func (m *MockDB) GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpe
 	m.GrantPrivilegesCalled = true
 	m.LastGrants = grants
 	return m.GrantPrivilegesError
-}
-
-func (m *MockDB) RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
-	return nil
-}
-
-func (m *MockDB) GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error) {
-	return nil, nil
 }
