@@ -18,7 +18,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Start PostgreSQL with docker-compose
-        run: docker-compose up -d
+        run: docker compose up -d
 
       - name: Wait for PostgreSQL to be ready
         run: |
@@ -49,5 +49,5 @@ jobs:
 
       - name: Stop PostgreSQL
         if: always()
-        run: docker-compose down -v
+        run: docker compose down -v
 
