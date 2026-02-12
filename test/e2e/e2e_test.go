@@ -320,7 +320,7 @@ var _ = Describe("Manager", Ordered, func() {
 				)
 				Expect(err).NotTo(HaveOccurred(), "Failed to prepare test table")
 
-				Expect(postgresHost).NotTo(BeEmpty(), "Postgres host should be configured")
+				Expect(conn.Host).NotTo(BeEmpty(), "Postgres host should be configured")
 			})
 
 			AfterEach(func() {
