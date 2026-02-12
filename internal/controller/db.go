@@ -77,16 +77,16 @@ func (p *PostgresDB) CreateUser(ctx context.Context, username, password string) 
 		return err
 	}
 
-	quotedUsername := pgx.Identifier{username}.Sanitize()
-	escapedPassword := strings.ReplaceAll(password, "'", "''")
+	sanitizedUser := pgx.Identifier{username}.Sanitize()
+	sanitizedPass := pgx.Identifier{password}.Sanitize()
 
 	var err error
 	if exists {
-		_, err = p.conn.Exec(ctx, fmt.Sprintf("ALTER ROLE %s WITH LOGIN PASSWORD '%s'", quotedUsername, escapedPassword))
+		_, err = p.conn.Exec(ctx, fmt.Sprintf("ALTER ROLE %s WITH LOGIN PASSWORD '%s'", sanitizedUser, sanitizedPass))
 		return err
 	}
 
-	_, err = p.conn.Exec(ctx, fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s'", quotedUsername, escapedPassword))
+	_, err = p.conn.Exec(ctx, fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s'", sanitizedUser, sanitizedPass))
 	return err
 }
 
