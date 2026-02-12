@@ -8,20 +8,6 @@ jobs:
   test-e2e:
     name: Run on Ubuntu
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -30,6 +16,40 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Start PostgreSQL with docker-compose
+        run: docker compose up -d
+
+      - name: Check container status
+        run: |
+          echo "Checking running containers..."
+          docker ps -a
+          echo "Checking pg-dev container logs..."
+          docker logs pg-dev || echo "Container not found yet"
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          echo "Waiting for PostgreSQL to be ready..."
+          sleep 5
+          for i in {1..30}; do
+            if docker ps --filter "name=pg-dev" --filter "status=running" --format "{{.Names}}" | grep -q "pg-dev"; then
+              echo "Container is running, checking PostgreSQL readiness..."
+              if docker exec pg-dev pg_isready -U postgres -d testdb 2>&1; then
+                echo "PostgreSQL is ready!"
+                exit 0
+              fi
+            else
+              echo "Container pg-dev is not running yet"
+            fi
+            echo "Attempt $i: PostgreSQL not ready yet, waiting..."
+            sleep 2
+          done
+          echo "PostgreSQL failed to become ready in time"
+          echo "Final container status:"
+          docker ps -a
+          echo "Container logs:"
+          docker logs pg-dev
+          exit 1
 
       - name: Install the latest version of kind
         run: |
@@ -50,3 +70,8 @@ jobs:
         run: |
           go mod tidy
           make test-e2e
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down -v
+

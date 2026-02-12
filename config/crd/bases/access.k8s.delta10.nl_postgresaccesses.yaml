@@ -175,6 +175,7 @@ spec:
             - connection
             - generatedSecret
             - grants
+            - username
             type: object
           status:
             description: status defines the observed state of PostgresAccess
