@@ -30,6 +30,7 @@ type DBInterface interface {
 	Connect(ctx context.Context, connectionString string) error
 	Close(ctx context.Context) error
 	CreateUser(ctx context.Context, username, password string) error
+	DropUser(ctx context.Context, username string) error
 	GetUsers(ctx context.Context) ([]string, error)
 	GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error
 	RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error
@@ -90,6 +91,16 @@ func (p *PostgresDB) CreateUser(ctx context.Context, username, password string) 
 	}
 
 	_, err = p.conn.Exec(ctx, fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s'", sanitizedUser, sanitizedPass))
+	return err
+}
+
+func (p *PostgresDB) DropUser(ctx context.Context, username string) error {
+	if p.conn == nil {
+		return fmt.Errorf("database connection is not initialized")
+	}
+
+	sanitizedUser := pgx.Identifier{username}.Sanitize()
+	_, err := p.conn.Exec(ctx, fmt.Sprintf("DROP ROLE IF EXISTS %s", sanitizedUser))
 	return err
 }
 
@@ -289,6 +300,16 @@ func (m *MockDB) CreateUser(ctx context.Context, username, password string) erro
 	m.LastUsername = username
 	m.LastPassword = password
 	return m.CreateUserError
+}
+
+func (m *MockDB) DropUser(ctx context.Context, username string) error {
+	m.CreateUserCalled = true
+	m.LastUsername = username
+	return nil
+}
+
+func (m *MockDB) GetUsers(ctx context.Context) ([]string, error) {
+	return []string{"user1", "user2"}, nil
 }
 
 func (m *MockDB) GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {

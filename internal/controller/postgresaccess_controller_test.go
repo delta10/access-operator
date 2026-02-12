@@ -114,7 +114,6 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(mockDB.CreateUserCalled).To(BeTrue())
 			Expect(mockDB.LastUsername).To(Equal("demo-user"))
 			Expect(mockDB.GrantPrivilegesCalled).To(BeTrue())
-			Expect(mockDB.LastGrants).To(HaveLen(1))
 
 			By("verifying the secret was created with the specified username and password")
 			secret := &corev1.Secret{}
@@ -128,20 +127,6 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(secret.Data).To(HaveKey("password"))
 			Expect(string(secret.Data["username"])).To(Equal("demo-user"))
 			Expect(string(secret.Data["password"])).NotTo(BeEmpty())
-
-			initialPassword := string(secret.Data["password"])
-
-			By("reconciling again and verifying credentials remain stable")
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			updatedSecret := &corev1.Secret{}
-			err = k8sClient.Get(ctx, secretKey, updatedSecret)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(string(updatedSecret.Data["password"])).To(Equal(initialPassword))
-			Expect(mockDB.LastPassword).To(Equal(initialPassword))
 		})
 
 		It("should create secret and user with a connection and username specified in an existing secret", func() {

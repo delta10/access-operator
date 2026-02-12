@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -126,23 +127,45 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}()
 
-	// create user and grant privileges
-	err = r.DB.CreateUser(ctx, username, password)
-	if err != nil {
-		log.Error(err, "failed to create user in PostgreSQL", "username", username)
-		return ctrl.Result{}, err
-	}
-
-	err = r.DB.GrantPrivileges(ctx, pg.Spec.Grants, username)
-	if err != nil {
-		log.Error(err, "failed to grant privileges in PostgreSQL", "username", username)
-		return ctrl.Result{}, err
-	}
-
-	_, err = r.DB.GetGrants(ctx)
+	grants, err := r.DB.GetGrants(ctx)
 	if err != nil {
 		log.Error(err, "failed to get grants from PostgreSQL")
 		return ctrl.Result{}, err
+	}
+
+	users, err := r.DB.GetUsers(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	configs, err := getAllPostgresAccessGrantsAndUsers(ctx, r.Client, pg.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	for _, config := range configs {
+		// check if the user exists in the database, if not create it
+		if !slices.Contains(users, config.Username) {
+			err = r.DB.CreateUser(ctx, config.Username, password)
+			if err != nil {
+				log.Error(err, "failed to create user in PostgreSQL", "username", config.Username)
+				continue
+			}
+		}
+
+		toGrant, toRevoke := diffGrants(grants[config.Username], config.Grants)
+
+		err = r.DB.GrantPrivileges(ctx, toGrant, config.Username)
+		if err != nil {
+			log.Error(err, "failed to grant privileges in PostgreSQL", "username", config.Username)
+			continue
+		}
+
+		err = r.DB.RevokePrivileges(ctx, toRevoke, config.Username)
+		if err != nil {
+			log.Error(err, "failed to revoke privileges in PostgreSQL", "username", config.Username)
+			continue
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -230,6 +253,7 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 	}, nil
 }
 
+/*
 func getControlledSecrets(ctx context.Context, c client.Client, pg *accessv1.PostgresAccess) ([]corev1.Secret, error) {
 	var secretList corev1.SecretList
 	if err := c.List(ctx, &secretList, client.InNamespace(pg.Namespace), client.MatchingFields{".metadata.controller": pg.Name}); err != nil {
@@ -243,4 +267,86 @@ func getControlledSecrets(ctx context.Context, c client.Client, pg *accessv1.Pos
 		}
 	}
 	return controlledSecrets, nil
+}
+*/
+
+// UserGrants represents a username and their associated grants
+type UserGrants struct {
+	Username string
+	Grants   []accessv1.GrantSpec
+}
+
+// getAllPostgresAccessGrantsAndUsers retrieves all PostgresAccess CRs and extracts usernames with their grants
+// Returns a slice of UserGrants containing the username and associated grants for each CR
+func getAllPostgresAccessGrantsAndUsers(ctx context.Context, c client.Client, namespace string) ([]UserGrants, error) {
+	var pgList accessv1.PostgresAccessList
+
+	// List all PostgresAccess resources in the namespace
+	// For all namespaces, omit the InNamespace option
+	if err := c.List(ctx, &pgList, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("failed to list PostgresAccess resources: %w", err)
+	}
+
+	var result []UserGrants
+	for _, pg := range pgList.Items {
+		// Get username from the spec
+		username := ""
+		if pg.Spec.Username != nil && *pg.Spec.Username != "" {
+			username = *pg.Spec.Username
+		}
+
+		// Add the username and grants to the result
+		result = append(result, UserGrants{
+			Username: username,
+			Grants:   pg.Spec.Grants,
+		})
+	}
+
+	return result, nil
+}
+
+// diffGrants compares the current grants with the desired grants and determines which grants need to be added or revoked
+// When current is nil or empty, all desired grants will be returned in toGrant and toRevoke will be empty
+func diffGrants(current, desired []accessv1.GrantSpec) (toGrant, toRevoke []accessv1.GrantSpec) {
+	// Create maps for easy lookup
+	currentMap := make(map[string]accessv1.GrantSpec)
+	desiredMap := make(map[string]accessv1.GrantSpec)
+
+	for _, grant := range current {
+		for _, privilege := range grant.Privileges {
+			key := fmt.Sprintf("%s:%s", grant.Database, privilege)
+			currentMap[key] = accessv1.GrantSpec{
+				Database:   grant.Database,
+				Schema:     grant.Schema,
+				Privileges: []string{privilege},
+			}
+		}
+	}
+
+	for _, grant := range desired {
+		for _, privilege := range grant.Privileges {
+			key := fmt.Sprintf("%s:%s", grant.Database, privilege)
+			desiredMap[key] = accessv1.GrantSpec{
+				Database:   grant.Database,
+				Schema:     grant.Schema,
+				Privileges: []string{privilege},
+			}
+		}
+	}
+
+	// Determine grants to add
+	for key, grant := range desiredMap {
+		if _, exists := currentMap[key]; !exists {
+			toGrant = append(toGrant, grant)
+		}
+	}
+
+	// Determine grants to revoke
+	for key, grant := range currentMap {
+		if _, exists := desiredMap[key]; !exists {
+			toRevoke = append(toRevoke, grant)
+		}
+	}
+
+	return toGrant, toRevoke
 }
