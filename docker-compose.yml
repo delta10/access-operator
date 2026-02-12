@@ -12,7 +12,6 @@ services:
             -c max_connections=200
             -c hba_file=/etc/postgresql/pg_hba.conf
         volumes:
-            -  ./api_keys.sql:/docker-entrypoint-initdb.d/api_keys.sql
             -  ./pg_hba.conf:/etc/postgresql/pg_hba.conf
         ports:
             - "5432:5432"
