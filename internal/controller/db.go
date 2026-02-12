@@ -230,38 +230,141 @@ func (p *PostgresDB) GrantPrivileges(ctx context.Context, grants []accessv1.Gran
 }
 
 func (p *PostgresDB) RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
+	if p.conn == nil {
+		return fmt.Errorf("database connection is not initialized")
+	}
 
+	quotedUsername := pgx.Identifier{username}.Sanitize()
+	for _, grant := range grants {
+		schema := "public"
+		if grant.Schema != nil && *grant.Schema != "" {
+			schema = *grant.Schema
+		}
+
+		databasePrivileges := make([]string, 0, len(grant.Privileges))
+		schemaPrivileges := make([]string, 0, len(grant.Privileges))
+		tablePrivileges := make([]string, 0, len(grant.Privileges))
+		functionPrivileges := make([]string, 0, len(grant.Privileges))
+		unsupportedPrivileges := make([]string, 0)
+
+		for _, privilege := range grant.Privileges {
+			switch strings.ToUpper(privilege) {
+			case "CONNECT", "TEMPORARY":
+				databasePrivileges = append(databasePrivileges, privilege)
+			case "CREATE":
+				databasePrivileges = append(databasePrivileges, privilege)
+				schemaPrivileges = append(schemaPrivileges, privilege)
+			case "USAGE":
+				schemaPrivileges = append(schemaPrivileges, privilege)
+			case "SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "MAINTAIN":
+				tablePrivileges = append(tablePrivileges, privilege)
+			case "EXECUTE":
+				functionPrivileges = append(functionPrivileges, privilege)
+			default:
+				unsupportedPrivileges = append(unsupportedPrivileges, privilege)
+			}
+		}
+
+		if len(unsupportedPrivileges) > 0 {
+			return fmt.Errorf("unsupported privileges: %s", strings.Join(unsupportedPrivileges, ", "))
+		}
+
+		quotedDatabase := pgx.Identifier{grant.Database}.Sanitize()
+		quotedSchema := pgx.Identifier{schema}.Sanitize()
+
+		if len(databasePrivileges) > 0 {
+			_, err := p.conn.Exec(
+				ctx,
+				fmt.Sprintf("REVOKE %s ON DATABASE %s FROM %s",
+					strings.Join(databasePrivileges, ", "),
+					quotedDatabase,
+					quotedUsername,
+				),
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(schemaPrivileges) > 0 {
+			_, err := p.conn.Exec(
+				ctx,
+				fmt.Sprintf("REVOKE %s ON SCHEMA %s FROM %s",
+					strings.Join(schemaPrivileges, ", "),
+					quotedSchema,
+					quotedUsername,
+				),
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(tablePrivileges) > 0 {
+			_, err := p.conn.Exec(
+				ctx,
+				fmt.Sprintf("REVOKE %s ON ALL TABLES IN SCHEMA %s FROM %s",
+					strings.Join(tablePrivileges, ", "),
+					quotedSchema,
+					quotedUsername,
+				),
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(functionPrivileges) > 0 {
+			_, err := p.conn.Exec(
+				ctx,
+				fmt.Sprintf("REVOKE %s ON ALL FUNCTIONS IN SCHEMA %s FROM %s",
+					strings.Join(functionPrivileges, ", "),
+					quotedSchema,
+					quotedUsername,
+				),
+			)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
 func (p *PostgresDB) GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error) {
-	var dbOutput []struct {
-		Grantor       string
-		Grantee       string
-		Schema        string
-		PrivilegeType string
-		IsGrantable   bool
+	if p.conn == nil {
+		return nil, fmt.Errorf("database connection is not initialized")
 	}
-	err := p.conn.QueryRow(ctx,
-		`SELECT r.usename AS grantor, e.usename AS grantee, nspname, privilege_type, is_grantable 
-                FROM pg_namespace, aclexplode(nspacl) AS a
-                    JOIN pg_user e ON a.grantee = e.usesysid 
-                    JOIN pg_user r ON a.grantor = r.usesysid;`).
-		Scan(&dbOutput)
+
+	rows, err := p.conn.Query(ctx, `SELECT e.usename AS grantee, nspname, privilege_type
+		FROM pg_namespace, aclexplode(nspacl) AS a
+		JOIN pg_user e ON a.grantee = e.usesysid;`)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
 	returnValue := make(map[string][]accessv1.GrantSpec)
 
-	// key is grantee, value is list of grants, first group by grantee, then by schema, then aggregate privileges
-	for _, row := range dbOutput {
-		grant := accessv1.GrantSpec{
-			Database:   "", // we don't have database information in this query, so we leave it empty
-			Schema:     &row.Schema,
-			Privileges: []string{row.PrivilegeType},
+	// key is grantee, value is list of grants aggregated as GrantSpec entries
+	for rows.Next() {
+		var grantee string
+		var schema string
+		var privilegeType string
+		if err := rows.Scan(&grantee, &schema, &privilegeType); err != nil {
+			return nil, err
 		}
-		returnValue[row.Grantee] = append(returnValue[row.Grantee], grant)
+
+		s := schema
+		grant := accessv1.GrantSpec{
+			Database:   "", // database-level information is not available from this query
+			Schema:     &s,
+			Privileges: []string{privilegeType},
+		}
+		returnValue[grantee] = append(returnValue[grantee], grant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return returnValue, nil
