@@ -20,8 +20,6 @@ import (
 	"context"
 	"fmt"
 
-	"math/big"
-
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -77,22 +75,20 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	var username string
 	var password string
 
+	if pg.Spec.Username != nil && *pg.Spec.Username != "" {
+		username = *pg.Spec.Username
+	}
+
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sec, func() error {
 		sec.Type = corev1.SecretTypeOpaque
 
 		if sec.Data == nil {
 			sec.Data = map[string][]byte{}
 		}
-		// Keep credentials stable across reconciles to avoid update loops.
-		if pg.Spec.Username != nil && *pg.Spec.Username != "" {
-			username = *pg.Spec.Username
-		} else if existingUsername, ok := sec.Data["username"]; ok && len(existingUsername) > 0 {
-			username = string(existingUsername)
-		} else {
-			username = generateUsername(pg.Name)
-		}
 
-		if existingPassword, ok := sec.Data["password"]; ok && len(existingPassword) > 0 {
+		existingPassword, ok := sec.Data["password"]
+
+		if ok && len(existingPassword) > 0 {
 			password = string(existingPassword)
 		} else {
 			password = rand.Text()
@@ -177,16 +173,6 @@ func (r *PostgresAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Named("postgresaccess").
 		Owns(&corev1.Secret{}).
 		Complete(r)
-}
-
-func generateUsername(resourceName string) string {
-	number, err := rand.Int(rand.Reader, big.NewInt(999999))
-	if err != nil {
-		return ""
-	}
-
-	numberString := fmt.Sprintf("%06d", number.Int64())
-	return fmt.Sprintf("%s-%s", resourceName, numberString)
 }
 
 func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string) (ConnectionDetails, error) {

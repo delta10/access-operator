@@ -120,8 +120,8 @@ type PostgresAccessSpec struct {
 
 	// username is the PostgreSQL username to create
 	// If empty, the operator will generate one
-	// +optional
-	Username *string `json:"username,omitempty"`
+	// +kubebuilder:validation:Required
+	Username *string `json:"username"`
 
 	// connection defines how to connect to PostgreSQL
 	// Can reference an existing secret or provide connection details directly
