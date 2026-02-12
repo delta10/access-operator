@@ -8,20 +8,6 @@ jobs:
   test-e2e:
     name: Run on Ubuntu
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -30,6 +16,16 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Start PostgreSQL with docker-compose
+        run: docker-compose up -d
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          until docker exec pg-dev pg_isready -U postgres; do
+            echo "Waiting for postgres..."
+            sleep 2
+          done
 
       - name: Install the latest version of kind
         run: |
@@ -50,3 +46,8 @@ jobs:
         run: |
           go mod tidy
           make test-e2e
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker-compose down -v
+
