@@ -273,14 +273,14 @@ var _ = Describe("Manager", Ordered, func() {
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 		Context("Postgres", func() {
 			BeforeEach(func() {
-				By("creating the test namespace if it doesn't exist")
+				By("ensuring no stale test namespace exists")
 				testNamespace, conn := getDatabaseVariables()
-				cmd := exec.Command("kubectl", "create", "ns", testNamespace, "--dry-run=client", "-o", "yaml")
-				output, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace yaml")
+				cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--timeout=2m")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to clean up existing test namespace")
 
-				cmd = exec.Command("kubectl", "apply", "-f", "-")
-				cmd.Stdin = strings.NewReader(output)
+				By("creating a fresh test namespace")
+				cmd = exec.Command("kubectl", "create", "ns", testNamespace)
 				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
 
