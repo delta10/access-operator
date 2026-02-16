@@ -395,7 +395,7 @@ spec:
 
 					// Verify the privileges were granted
 					By("verifying the privileges were granted")
-					err = verifyPrivilegesGranted(testNamespace, conn, []string{"CONNECT", "SELECT"})
+					err = verifyPrivilegesGranted(testNamespace, conn, "test-postgres-access", []string{"CONNECT", "SELECT"})
 					Expect(err).NotTo(HaveOccurred(), "Failed to verify privileges granted to the database user")
 				})
 
@@ -454,7 +454,7 @@ spec:
 					// Wait for the privileges to be granted
 					By("waiting for the privileges to be granted")
 					verifyPrivileges := func(g Gomega) {
-						err = verifyPrivilegesGranted(testNamespace, conn, []string{"CONNECT", "SELECT"})
+						err = verifyPrivilegesGranted(testNamespace, conn, "test-privileges-maintenance", []string{"CONNECT", "SELECT"})
 						g.Expect(err).NotTo(HaveOccurred(), "Failed to verify privileges granted to the database user")
 					}
 					Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
@@ -486,7 +486,7 @@ spec:
 				// Wait for the initial privileges to be granted
 				By("waiting for the initial privileges to be granted")
 				verifyInitialPrivileges := func(g Gomega) {
-					err = verifyPrivilegesGranted(testNamespace, conn, []string{"CONNECT"})
+					err = verifyPrivilegesGranted(testNamespace, conn, "test-privileges-reconciliation", []string{"CONNECT"})
 					g.Expect(err).NotTo(HaveOccurred(), "Failed to verify initial privileges granted to the database user")
 				}
 				Eventually(verifyInitialPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
@@ -500,7 +500,7 @@ spec:
 
 				By("verifying that the new privileges are granted")
 				verifyUpdatedPrivileges := func(g Gomega) {
-					err = verifyPrivilegesGranted(testNamespace, conn, []string{"CONNECT", "SELECT", "INSERT"})
+					err = verifyPrivilegesGranted(testNamespace, conn, "test-privileges-reconciliation", []string{"CONNECT", "SELECT", "INSERT"})
 					g.Expect(err).NotTo(HaveOccurred(), "Failed to verify updated privileges granted to the database user")
 				}
 				Eventually(verifyUpdatedPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
@@ -733,10 +733,14 @@ spec:
 	return err
 }
 
-func verifyPrivilegesGranted(namespace string, connection controller.ConnectionDetails, expectedPrivileges []string) error {
+func verifyPrivilegesGranted(
+	namespace string,
+	connection controller.ConnectionDetails,
+	username string,
+	expectedPrivileges []string,
+) error {
 	// Build the privilege check query dynamically based on expected privileges
 	var privilegeChecks []string
-	username := "test-postgres-access"
 
 	for _, privilege := range expectedPrivileges {
 		upperPrivilege := strings.ToUpper(privilege)
