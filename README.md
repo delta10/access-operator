@@ -6,7 +6,22 @@ This project uses [Kubebuilder](https://kubebuilder.io/) to implement a Kubernet
 ## Setup
 First make sure you have [Kubebuilder](https://book.kubebuilder.io/quick-start.html#installation) installed on your machine. Follow the instructions on the Kubebuilder website to set it up.
 
-If you're running windows use WSL.
+If you're running Windows use WSL.
+
+## Running the operator locally
+First install the operator with the following command:
+```bash
+make install
+```
+Then run it:
+```bash
+make run
+```
+
+When using the docker compose you can use a simple sample config with:
+```bash
+kubectl apply -f config/samples/access_v1_postgresaccess.yaml
+```
 
 ## Running tests
 Ofcourse you can also use [act](https://github.com/nektos/act) to run the whole pipeline locally in Docker but preformance isn't great.
