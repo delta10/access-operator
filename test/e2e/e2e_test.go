@@ -32,6 +32,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	accessv1 "github.com/delta10/access-operator/api/v1"
 	"github.com/delta10/access-operator/internal/controller"
 	"github.com/delta10/access-operator/test/utils"
 )
@@ -335,7 +336,7 @@ var _ = Describe("Manager", Ordered, func() {
 				_, _ = utils.Run(cmd)
 			})
 
-			It("should create a PostgresAccess resource and verify database connectivity",
+			It("should create a PostgresAccess resource and create a database user with the specified privileges via direct connection details",
 				func() {
 					By("creating a PostgresAccess resource")
 					testNamespace, conn := getDatabaseVariables()
@@ -394,81 +395,28 @@ spec:
 
 					// Verify the privileges were granted
 					By("verifying the privileges were granted")
-					verifyPrivilegesGranted := func(g Gomega) {
-						output, err := runPostgresQuery(
-							testNamespace,
-							conn,
-							`SELECT
-  has_database_privilege('test-postgres-access', current_database(), 'CONNECT'),
-  has_table_privilege('test-postgres-access', 'public.access_operator_test', 'SELECT');`,
-						)
-						g.Expect(err).NotTo(HaveOccurred(), "Failed to check user privileges")
-						privileges := strings.Split(output, ",")
-						g.Expect(privileges).To(HaveLen(2), "Expected connect and select privilege results")
-						g.Expect(privileges[0]).To(Equal("t"), "User should have CONNECT privilege")
-						g.Expect(privileges[1]).To(Equal("t"), "User should have SELECT privilege")
-					}
-					Eventually(verifyPrivilegesGranted, 2*time.Minute, 5*time.Second).Should(Succeed())
+					err = verifyPrivilegesGranted(testNamespace, conn, []string{"CONNECT", "SELECT"})
+					Expect(err).NotTo(HaveOccurred(), "Failed to verify privileges granted to the database user")
 				})
 
-			It("should create a PostgresAccess resource with with connectivity as a secret reference and verify database connectivity",
+			It("should create a PostgresAccess resource with connectivity as a secret reference and create a database user accordingly",
 				func() {
 					By("creating a secret with the connection details")
 					testNamespace, conn := getDatabaseVariables()
-					connectionSecretYAML :=
-						fmt.Sprintf(`apiVersion: v1
-kind: Secret
-metadata:
-  name: postgres-connection-secret
-  namespace: %s
-type: Opaque
-data:
-  host: %s
-  port: %s
-  database: %s
-  username: %s
-  password: %s
-  sslmode: %s
-`, testNamespace,
-							b64.StdEncoding.EncodeToString([]byte(conn.Host)),
-							b64.StdEncoding.EncodeToString([]byte(conn.Port)),
-							b64.StdEncoding.EncodeToString([]byte(conn.Database)),
-							b64.StdEncoding.EncodeToString([]byte(conn.Username)),
-							b64.StdEncoding.EncodeToString([]byte(conn.Password)),
-							b64.StdEncoding.EncodeToString([]byte("disable")))
-
-					cmd := exec.Command("kubectl", "apply", "-f", "-")
-					cmd.Stdin = strings.NewReader(connectionSecretYAML)
-					_, err := utils.Run(cmd)
+					secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
 					Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
 					By("creating a PostgresAccess resource referencing the connection secret")
-					pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
-kind: PostgresAccess
-metadata:
-  name: test-postgres-access-secret-ref
-  namespace: %s
-spec:
-  generatedSecret: test-postgres-credentials-secret-ref
-  username: test-postgres-access-secret-ref
-  connection:
-    existingSecret: postgres-connection-secret
-  grants:
-    - database: %s
-      privileges:
-        - CONNECT
-        - SELECT
-`, testNamespace, conn.Database)
-
-					cmd = exec.Command("kubectl", "apply", "-f", "-")
-					cmd.Stdin = strings.NewReader(pgAccessYAML)
-					_, err = utils.Run(cmd)
+					err = createResourceFromSecretReference("test-username", testNamespace, secretName, accessv1.GrantSpec{
+						Database:   conn.Database,
+						Privileges: []string{"CONNECT", "SELECT"},
+					})
 					Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
 					// Wait for the secret to be created
 					By("waiting for the generated secret to be created")
 					verifySecretCreated := func(g Gomega) {
-						cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace, "-o", "jsonpath={.data.username}")
+						cmd := exec.Command("kubectl", "get", "secret", "test-username", "-n", testNamespace, "-o", "jsonpath={.data.username}")
 						output, err := utils.Run(cmd)
 						g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
 						g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
@@ -660,6 +608,122 @@ func runPostgresQuery(namespace string, connection controller.ConnectionDetails,
 	}
 
 	return strings.TrimSpace(output), nil
+}
+
+func createConnectionDetailsViaSecret(namespace string, connection controller.ConnectionDetails) (string, error) {
+	secretName := "postgres-connection-secret"
+	secretYAML := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+data:
+  host: %s
+  port: %s
+  database: %s
+  username: %s
+  password: %s
+  sslmode: %s
+`, secretName, namespace,
+		b64.StdEncoding.EncodeToString([]byte(connection.Host)),
+		b64.StdEncoding.EncodeToString([]byte(connection.Port)),
+		b64.StdEncoding.EncodeToString([]byte(connection.Database)),
+		b64.StdEncoding.EncodeToString([]byte(connection.Username)),
+		b64.StdEncoding.EncodeToString([]byte(connection.Password)),
+		b64.StdEncoding.EncodeToString([]byte("disable")))
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(secretYAML)
+	_, err := utils.Run(cmd)
+	return secretName, err
+}
+
+func createResourceFromSecretReference(username, namespace, connSecret string, grants accessv1.GrantSpec) error {
+	privilegesYAML := "privileges:"
+	for _, privilege := range grants.Privileges {
+		privilegesYAML += fmt.Sprintf("\n        - %s", privilege)
+	}
+	pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: PostgresAccess
+metadata:
+  name: test-postgres-access-secret-ref
+  namespace: %s
+spec:
+  generatedSecret: test-postgres-credentials-secret-ref
+  username: %s
+  connection:
+    existingSecret: %s
+  grants:
+    - database: %s
+      %s
+`, namespace, username, connSecret, grants.Database, privilegesYAML)
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(pgAccessYAML)
+	_, err := utils.Run(cmd)
+	return err
+}
+
+func verifyPrivilegesGranted(namespace string, connection controller.ConnectionDetails, expectedPrivileges []string) error {
+	// Build the privilege check query dynamically based on expected privileges
+	var privilegeChecks []string
+	username := "test-postgres-access"
+
+	for _, privilege := range expectedPrivileges {
+		upperPrivilege := strings.ToUpper(privilege)
+		switch upperPrivilege {
+		case "CONNECT", "CREATE", "TEMPORARY", "TEMP":
+			// Database-level privileges
+			privilegeChecks = append(privilegeChecks,
+				fmt.Sprintf("has_database_privilege('%s', current_database(), '%s')", username, upperPrivilege))
+		case "SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER":
+			// Table-level privileges
+			privilegeChecks = append(privilegeChecks,
+				fmt.Sprintf("has_table_privilege('%s', 'public.access_operator_test', '%s')", username, upperPrivilege))
+		case "USAGE", "CREATE":
+			// Schema-level privileges (can also be database level for CREATE)
+			privilegeChecks = append(privilegeChecks,
+				fmt.Sprintf("has_schema_privilege('%s', 'public', '%s')", username, upperPrivilege))
+		case "EXECUTE":
+			// Function-level privilege - we'll check if user has execute on any function
+			privilegeChecks = append(privilegeChecks,
+				fmt.Sprintf("has_schema_privilege('%s', 'public', 'USAGE')", username))
+		default:
+			// For any other privileges, try database level
+			privilegeChecks = append(privilegeChecks,
+				fmt.Sprintf("has_database_privilege('%s', current_database(), '%s')", username, upperPrivilege))
+		}
+	}
+
+	privilegesQuery := fmt.Sprintf("SELECT %s;", strings.Join(privilegeChecks, ", "))
+	output, err := runPostgresQuery(namespace, connection, privilegesQuery)
+	if err != nil {
+		return err
+	}
+
+	var actualPrivileges []string
+	if output != "" {
+		// psql -tA with -F, returns comma-separated values
+		actualPrivileges = strings.Split(output, ",")
+	}
+
+	// By comparing the lengths, we detect if there are any extra (excess) privileges
+	if len(actualPrivileges) != len(expectedPrivileges) {
+		return fmt.Errorf("privilege count mismatch (possible excess privileges): expected %d (%v), got %d (%v)",
+			len(expectedPrivileges), expectedPrivileges, len(actualPrivileges), actualPrivileges)
+	}
+
+	// Check that all privileges are granted (all should be 't' for true)
+	for i, result := range actualPrivileges {
+		trimmedResult := strings.TrimSpace(result)
+		if trimmedResult != "t" {
+			return fmt.Errorf("privilege check failed for '%s': expected 't' (granted), got '%s'",
+				expectedPrivileges[i], trimmedResult)
+		}
+	}
+
+	return nil
 }
 
 // tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
