@@ -751,7 +751,7 @@ func createResourceFromSecretReference(username, namespace, connSecret string, g
 	pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
 kind: PostgresAccess
 metadata:
-  name: test-postgres-access-secret-ref
+  name: %s
   namespace: %s
 spec:
   generatedSecret: test-postgres-credentials-secret-ref
@@ -761,7 +761,7 @@ spec:
   grants:
     - database: %s
       %s
-`, namespace, username, connSecret, grants.Database, privilegesYAML)
+`, username, namespace, username, connSecret, grants.Database, privilegesYAML)
 
 	cmd := exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(pgAccessYAML)
