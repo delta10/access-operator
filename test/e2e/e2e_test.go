@@ -437,6 +437,74 @@ spec:
 					}
 					Eventually(verifyDatabaseUserCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
 				})
+
+			It("should reconcile and maintain the privileges of a PostgresAccess resource when they are manually revoked in the database",
+				func() {
+					By("creating a PostgresAccess resource")
+					testNamespace, conn := getDatabaseVariables()
+					secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
+					Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+					err = createResourceFromSecretReference("test-privileges-maintenance", testNamespace, secretName, accessv1.GrantSpec{
+						Database:   conn.Database,
+						Privileges: []string{"CONNECT", "SELECT"},
+					})
+					Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+					// Wait for the privileges to be granted
+					By("waiting for the privileges to be granted")
+					verifyPrivileges := func(g Gomega) {
+						err = verifyPrivilegesGranted(testNamespace, conn, []string{"CONNECT", "SELECT"})
+						g.Expect(err).NotTo(HaveOccurred(), "Failed to verify privileges granted to the database user")
+					}
+					Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+					By("revoking the SELECT privilege from the database user")
+					_, err = runPostgresQuery(
+						testNamespace,
+						conn,
+						"REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM test-privileges-maintenance;",
+					)
+					Expect(err).NotTo(HaveOccurred(), "Failed to revoke SELECT privilege")
+
+					By("verifying that the controller reconciles and restores the revoked privilege")
+					Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+				})
+
+			It("should reconcile privileges when they're changed in the config", func() {
+				By("creating a PostgresAccess resource with certain privileges")
+				testNamespace, conn := getDatabaseVariables()
+				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = createResourceFromSecretReference("test-privileges-reconciliation", testNamespace, secretName, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				// Wait for the initial privileges to be granted
+				By("waiting for the initial privileges to be granted")
+				verifyInitialPrivileges := func(g Gomega) {
+					err = verifyPrivilegesGranted(testNamespace, conn, []string{"CONNECT"})
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to verify initial privileges granted to the database user")
+				}
+				Eventually(verifyInitialPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("updating the PostgresAccess resource to include additional privileges")
+				err = createResourceFromSecretReference("test-privileges-reconciliation", testNamespace, secretName, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT", "INSERT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to update PostgresAccess resource with new privileges")
+
+				By("verifying that the new privileges are granted")
+				verifyUpdatedPrivileges := func(g Gomega) {
+					err = verifyPrivilegesGranted(testNamespace, conn, []string{"CONNECT", "SELECT", "INSERT"})
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to verify updated privileges granted to the database user")
+				}
+				Eventually(verifyUpdatedPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+			})
 		})
 	})
 })
