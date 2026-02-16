@@ -328,11 +328,11 @@ var _ = Describe("Manager", Ordered, func() {
 				testNamespace, _ := getDatabaseVariables()
 
 				By("cleaning up any remaining PostgresAccess resources")
-				cmd := exec.Command("kubectl", "delete", "postgresaccess", "--all", "-n", testNamespace, "--ignore-not-found")
+				cmd := exec.Command("kubectl", "delete", "postgresaccess", "--all", "-n", testNamespace, "--ignore-not-found", "--wait=false")
 				_, _ = utils.Run(cmd)
 
 				By("cleaning up the test namespace")
-				cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
+				cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--wait=false")
 				_, _ = utils.Run(cmd)
 			})
 
@@ -625,7 +625,7 @@ data:
     database: %s
     username: %s
     password: %s
-    sslMode: %s
+    sslmode: %s
 `, secretName, testNamespace,
 					b64.StdEncoding.EncodeToString([]byte(conn.Host)),
 					b64.StdEncoding.EncodeToString([]byte(conn.Port)),
