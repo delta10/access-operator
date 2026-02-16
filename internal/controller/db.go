@@ -100,7 +100,15 @@ func (p *PostgresDB) DropUser(ctx context.Context, username string) error {
 	}
 
 	sanitizedUser := pgx.Identifier{username}.Sanitize()
-	_, err := p.conn.Exec(ctx, fmt.Sprintf("DROP ROLE IF EXISTS %s", sanitizedUser))
+
+	// First drop all objects owned by the user
+	_, err := p.conn.Exec(ctx, fmt.Sprintf("DROP OWNED BY %s CASCADE", sanitizedUser))
+	if err != nil {
+		return err
+	}
+
+	// Then drop the role
+	_, err = p.conn.Exec(ctx, fmt.Sprintf("DROP ROLE IF EXISTS %s", sanitizedUser))
 	return err
 }
 

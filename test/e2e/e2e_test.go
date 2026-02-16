@@ -336,12 +336,11 @@ var _ = Describe("Manager", Ordered, func() {
 				_, _ = utils.Run(cmd)
 			})
 
-			It("should create a PostgresAccess resource and create a database user with the specified privileges via direct connection details",
-				func() {
-					By("creating a PostgresAccess resource")
-					testNamespace, conn := getDatabaseVariables()
+			It("should create a PostgresAccess resource and create a database user with the specified privileges via direct connection details", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := getDatabaseVariables()
 
-					pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+				pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
 kind: PostgresAccess
 metadata:
   name: test-postgres-access
@@ -365,111 +364,77 @@ spec:
         - SELECT
 `, testNamespace, conn.Host, conn.Port, conn.Database, conn.Username, conn.Password, conn.Database)
 
-					cmd := exec.Command("kubectl", "apply", "-f", "-")
-					cmd.Stdin = strings.NewReader(pgAccessYAML)
-					_, err := utils.Run(cmd)
-					Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with connection details ", " output ", err, " yaml ", pgAccessYAML)
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(pgAccessYAML)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with connection details ", " output ", err, " yaml ", pgAccessYAML)
 
-					// Wait for the secret to be created
-					By("waiting for the generated secret to be created")
-					verifySecretCreated := func(g Gomega) {
-						cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials", "-n", testNamespace, "-o", "jsonpath={.data.username}")
-						output, err := utils.Run(cmd)
-						g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
-						g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
-					}
-					Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
+				// Wait for the secret to be created
+				By("waiting for the generated secret to be created")
+				verifySecretCreated := func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials", "-n", testNamespace, "-o", "jsonpath={.data.username}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
+					g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
+				}
+				Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-					// Verify the database user was created
-					By("verifying the database user was created")
-					verifyDatabaseUserCreated := func(g Gomega) {
-						output, err := runPostgresQuery(
-							testNamespace,
-							conn,
-							"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'test-postgres-access');",
-						)
-						g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
-						g.Expect(output).To(Equal("t"), "Database user should have been created")
-					}
-					Eventually(verifyDatabaseUserCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
-
-					// Verify the privileges were granted
-					By("verifying the privileges were granted")
-					err = verifyPrivilegesGranted(testNamespace, conn, "test-postgres-access", []string{"CONNECT", "SELECT"})
-					Expect(err).NotTo(HaveOccurred(), "Failed to verify privileges granted to the database user")
-				})
-
-			It("should create a PostgresAccess resource with connectivity as a secret reference and create a database user accordingly",
-				func() {
-					By("creating a secret with the connection details")
-					testNamespace, conn := getDatabaseVariables()
-					secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
-					Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
-
-					By("creating a PostgresAccess resource referencing the connection secret")
-					err = createResourceFromSecretReference("test-username", testNamespace, secretName, accessv1.GrantSpec{
-						Database:   conn.Database,
-						Privileges: []string{"CONNECT", "SELECT"},
-					})
-					Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
-
-					// Wait for the secret to be created
-					By("waiting for the generated secret to be created")
-					verifySecretCreated := func(g Gomega) {
-						cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace, "-o", "jsonpath={.data.username}")
-						output, err := utils.Run(cmd)
-						g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
-						g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
-					}
-
-					Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
-
-					// Verify the database user was created
-					By("verifying the database user was created")
-					verifyDatabaseUserCreated := func(g Gomega) {
-						output, err := runPostgresQuery(
-							testNamespace,
-							conn,
-							"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'test-username');",
-						)
-						g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
-						g.Expect(output).To(Equal("t"), "Database user should have been created")
-					}
-					Eventually(verifyDatabaseUserCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
-				})
-
-			It("should reconcile and maintain the privileges of a PostgresAccess resource when they are manually revoked in the database",
-				func() {
-					By("creating a PostgresAccess resource")
-					testNamespace, conn := getDatabaseVariables()
-					secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
-					Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
-
-					err = createResourceFromSecretReference("test-privileges-maintenance", testNamespace, secretName, accessv1.GrantSpec{
-						Database:   conn.Database,
-						Privileges: []string{"CONNECT", "SELECT"},
-					})
-					Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
-
-					// Wait for the privileges to be granted
-					By("waiting for the privileges to be granted")
-					verifyPrivileges := func(g Gomega) {
-						err = verifyPrivilegesGranted(testNamespace, conn, "test-privileges-maintenance", []string{"CONNECT", "SELECT"})
-						g.Expect(err).NotTo(HaveOccurred(), "Failed to verify privileges granted to the database user")
-					}
-					Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
-
-					By("revoking the SELECT privilege from the database user")
-					_, err = runPostgresQuery(
+				// Verify the database user was created
+				By("verifying the database user was created")
+				verifyDatabaseUserCreated := func(g Gomega) {
+					output, err := runPostgresQuery(
 						testNamespace,
 						conn,
-						`REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM "test-privileges-maintenance";`,
+						"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'test-postgres-access');",
 					)
-					Expect(err).NotTo(HaveOccurred(), "Failed to revoke SELECT privilege")
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
+					g.Expect(output).To(Equal("t"), "Database user should have been created")
+				}
+				Eventually(verifyDatabaseUserCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-					By("verifying that the controller reconciles and restores the revoked privilege")
-					Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+				// Verify the privileges were granted
+				By("verifying the privileges were granted")
+				err = verifyPrivilegesGranted(testNamespace, conn, "test-postgres-access", []string{"CONNECT", "SELECT"})
+				Expect(err).NotTo(HaveOccurred(), "Failed to verify privileges granted to the database user")
+			})
+
+			It("should create a PostgresAccess resource with connectivity as a secret reference and create a database user accordingly", func() {
+				By("creating a secret with the connection details")
+				testNamespace, conn := getDatabaseVariables()
+				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				By("creating a PostgresAccess resource referencing the connection secret")
+				err = createResourceFromSecretReference("test-username", testNamespace, secretName, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
 				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				// Wait for the secret to be created
+				By("waiting for the generated secret to be created")
+				verifySecretCreated := func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace, "-o", "jsonpath={.data.username}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
+					g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
+				}
+
+				Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				// Verify the database user was created
+				By("verifying the database user was created")
+				verifyDatabaseUserCreated := func(g Gomega) {
+					output, err := runPostgresQuery(
+						testNamespace,
+						conn,
+						"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'test-username');",
+					)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
+					g.Expect(output).To(Equal("t"), "Database user should have been created")
+				}
+				Eventually(verifyDatabaseUserCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
+			})
 
 			It("should reconcile privileges when they're changed in the config", func() {
 				By("creating a PostgresAccess resource with certain privileges")
@@ -505,6 +470,77 @@ spec:
 				}
 				Eventually(verifyUpdatedPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
 			})
+
+			It("should reconcile and maintain the privileges of a PostgresAccess resource when they are manually revoked in the database", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := getDatabaseVariables()
+				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = createResourceFromSecretReference("test-privileges-maintenance", testNamespace, secretName, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				// Wait for the privileges to be granted
+				By("waiting for the privileges to be granted")
+				verifyPrivileges := func(g Gomega) {
+					err = verifyPrivilegesGranted(testNamespace, conn, "test-privileges-maintenance", []string{"CONNECT", "SELECT"})
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to verify privileges granted to the database user")
+				}
+				Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("revoking the SELECT privilege from the database user")
+				_, err = runPostgresQuery(
+					testNamespace,
+					conn,
+					`REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM "test-privileges-maintenance";`,
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to revoke SELECT privilege")
+
+				By("verifying that the controller reconciles and restores the revoked privilege")
+				Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+			})
+
+			It("should delete the database user when the PostgresAccess resource is deleted", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := getDatabaseVariables()
+				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = createResourceFromSecretReference("test-deletion", testNamespace, secretName, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				// Wait for the privileges to be granted
+				By("waiting for the privileges to be granted")
+				verifyPrivileges := func(g Gomega) {
+					err = verifyPrivilegesGranted(testNamespace, conn, "test-deletion", []string{"CONNECT", "SELECT"})
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to verify privileges granted to the database user")
+				}
+				Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("deleting the PostgresAccess resource")
+				cmd := exec.Command("kubectl", "delete", "postgresaccess", "test-deletion", "-n", testNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
+
+				By("verifying that the database user is deleted")
+				verifyUserDeleted := func(g Gomega) {
+					output, err := runPostgresQuery(
+						testNamespace,
+						conn,
+						"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'test-deletion');",
+					)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
+					g.Expect(output).To(Equal("f"), "Database user should have been deleted")
+				}
+				Eventually(verifyUserDeleted, 2*time.Minute, 5*time.Second).Should(Succeed())
+			})
+
 		})
 	})
 })

@@ -32,6 +32,7 @@ import (
 	"crypto/rand"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
+	controllerruntime "sigs.k8s.io/controller-runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -50,6 +51,11 @@ const privilegeDriftRequeueInterval = 30 * time.Second
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/finalizers,verbs=update
+
+// RBAC permissions for CronJobs, if needed for finalizer cleanup.
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=cronjobs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=cronjobs/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -85,7 +91,13 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		username = *pg.Spec.Username
 	}
 
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sec, func() error {
+	_, err := r.finalizePostgresAccess(ctx, req, &pg)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// reconcile the secret that holds the connection details for this PostgresAccess CR.
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, sec, func() error {
 		sec.Type = corev1.SecretTypeOpaque
 
 		if sec.Data == nil {
@@ -110,11 +122,27 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	connectionString, err := r.getConnectionString(ctx, &pg)
+	err = r.reconcilePostgresAccess(ctx, &pg)
 	if err != nil {
-		log.Error(err, "failed to get connection string, no valid connection details provided")
+		log.Error(err, "failed to reconcile PostgresAccess")
 		return ctrl.Result{}, err
 	}
+
+	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
+}
+
+// reconcilePostgresAccess connects to the PostgreSQL database, retrieves current grants and users.
+// Then ensures that the grants specified in the PostgresAccess CR are correctly applied in the database.
+// It also creates/removes any users as needed.
+func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, pg *accessv1.PostgresAccess) error {
+	log := logf.FromContext(ctx)
+
+	connectionString, err := r.getConnectionString(ctx, pg)
+	if err != nil {
+		log.Error(err, "failed to get connection string, no valid connection details provided")
+		return err
+	}
+
 	if r.DB == nil {
 		r.DB = NewPostgresDB()
 	}
@@ -122,7 +150,7 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	err = r.DB.Connect(ctx, connectionString)
 	if err != nil {
 		log.Error(err, "Unable to connect to database", "connectionString", connectionString)
-		return ctrl.Result{}, err
+		return err
 	}
 	defer func() {
 		if err := r.DB.Close(ctx); err != nil {
@@ -133,23 +161,25 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	grants, err := r.DB.GetGrants(ctx)
 	if err != nil {
 		log.Error(err, "failed to get grants from PostgreSQL")
-		return ctrl.Result{}, err
+		return err
 	}
 
 	users, err := r.DB.GetUsers(ctx)
 	if err != nil {
-		return ctrl.Result{}, err
+		return err
 	}
 
 	configs, err := getAllPostgresAccessGrantsAndUsers(ctx, r.Client, pg.Namespace)
 	if err != nil {
-		return ctrl.Result{}, err
+		return err
 	}
+
+	usersHandled := make(map[string]bool)
 
 	for _, config := range configs {
 		// check if the user exists in the database, if not create it
 		if !slices.Contains(users, config.Username) {
-			err = r.DB.CreateUser(ctx, config.Username, password)
+			err = r.DB.CreateUser(ctx, config.Username, "")
 			if err != nil {
 				log.Error(err, "failed to create user in PostgreSQL", "username", config.Username)
 				continue
@@ -169,11 +199,94 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Error(err, "failed to revoke privileges in PostgreSQL", "username", config.Username)
 			continue
 		}
+
+		usersHandled[config.Username] = true
 	}
 
-	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
+	// remove users that are not handled by any PostgresAccess CR anymore
+	for _, user := range users {
+		if !usersHandled[user] {
+			err = r.DB.DropUser(ctx, user)
+			if err != nil {
+				log.Error(err, "failed to drop user in PostgreSQL", "username", user)
+				continue
+			}
+		}
+	}
+
+	return nil
 }
 
+func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, req controllerruntime.Request, pg *accessv1.PostgresAccess) (bool, error) {
+	log := logf.FromContext(ctx)
+	cronJob := &accessv1.CronJob{}
+	if err := r.Get(ctx, req.NamespacedName, cronJob); err != nil {
+		log.Error(err, "unable to fetch CronJob")
+		return true, client.IgnoreNotFound(err)
+	}
+
+	FinalizerName := "access.k8s.delta10.nl/finalizer"
+
+	if cronJob.ObjectMeta.DeletionTimestamp.IsZero() {
+		// The object is not being deleted, so if it does not have our finalizer,
+		// then let's add the finalizer and update the object. This is equivalent
+		// to registering our finalizer.
+		if !controllerutil.ContainsFinalizer(cronJob, FinalizerName) {
+			controllerutil.AddFinalizer(cronJob, FinalizerName)
+			if err := r.Update(ctx, cronJob); err != nil {
+				return true, err
+			}
+		}
+	} else {
+		// The object is being deleted
+		if controllerutil.ContainsFinalizer(cronJob, FinalizerName) {
+
+			connectionString, err := r.getConnectionString(ctx, pg)
+			if err != nil {
+				log.Error(err, "failed to get connection string during finalization")
+				return true, err
+			}
+
+			if r.DB == nil {
+				r.DB = NewPostgresDB()
+			}
+
+			err = r.DB.Connect(ctx, connectionString)
+			if err != nil {
+				log.Error(err, "Unable to connect to database during finalization", "connectionString", connectionString)
+				return true, err
+			}
+			defer func() {
+				if err := r.DB.Close(ctx); err != nil {
+					log.Error(err, "failed to close database connection during finalization")
+				}
+			}()
+
+			users, err := r.DB.GetUsers(ctx)
+			if err != nil {
+				log.Error(err, "failed to get users from PostgreSQL during finalization")
+				return true, err
+			}
+
+			for _, user := range users {
+				// Only drop the user if it matches the username in the PostgresAccess spec
+				if pg.Spec.Username != nil && *pg.Spec.Username == user {
+					err = r.DB.DropUser(ctx, user)
+					if err != nil {
+						log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
+						continue
+					}
+				}
+			}
+		}
+		return false, nil
+	}
+
+	return false, nil
+}
+
+// getConnectionString constructs the PostgreSQL connection string based on the PostgresAccess spec.
+// It supports both direct connection details and referencing an existing secret for connection information.
 func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {
 	if pg.Spec.Connection.ExistingSecret != nil && *pg.Spec.Connection.ExistingSecret != "" {
 		connection, err := getExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, pg.Namespace)
@@ -257,20 +370,20 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 }
 
 /*
-func getControlledSecrets(ctx context.Context, c client.Client, pg *accessv1.PostgresAccess) ([]corev1.Secret, error) {
-	var secretList corev1.SecretList
-	if err := c.List(ctx, &secretList, client.InNamespace(pg.Namespace), client.MatchingFields{".metadata.controller": pg.Name}); err != nil {
-		return nil, fmt.Errorf("failed to list secrets: %w", err)
-	}
+   func getControlledSecrets(ctx context.Context, c client.Client, pg *accessv1.PostgresAccess) ([]corev1.Secret, error) {
+   	var secretList corev1.SecretList
+   	if err := c.List(ctx, &secretList, client.InNamespace(pg.Namespace), client.MatchingFields{".metadata.controller": pg.Name}); err != nil {
+   		return nil, fmt.Errorf("failed to list secrets: %w", err)
+   	}
 
-	var controlledSecrets []corev1.Secret
-	for _, sec := range secretList.Items {
-		if metav1.IsControlledBy(&sec, pg) {
-			controlledSecrets = append(controlledSecrets, sec)
-		}
-	}
-	return controlledSecrets, nil
-}
+   	var controlledSecrets []corev1.Secret
+   	for _, sec := range secretList.Items {
+   		if metav1.IsControlledBy(&sec, pg) {
+   			controlledSecrets = append(controlledSecrets, sec)
+   		}
+   	}
+   	return controlledSecrets, nil
+   }
 */
 
 // UserGrants represents a username and their associated grants
