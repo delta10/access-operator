@@ -1,7 +1,7 @@
 # This rule is not used by the project access-operator itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
-# Grants read-only access to pods.k8s.delta10.nl resources.
+# Grants read-only access to access.k8s.delta10.nl resources.
 # This role is intended for users who need visibility into these resources
 # without permissions to modify them. It is ideal for monitoring purposes and limited-access viewing.
 
