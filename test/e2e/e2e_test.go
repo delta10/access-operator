@@ -673,7 +673,7 @@ func verifyPrivilegesGranted(namespace string, connection controller.ConnectionD
 	for _, privilege := range expectedPrivileges {
 		upperPrivilege := strings.ToUpper(privilege)
 		switch upperPrivilege {
-		case "CONNECT", "CREATE", "TEMPORARY", "TEMP":
+		case "CONNECT", "TEMPORARY", "TEMP":
 			// Database-level privileges
 			privilegeChecks = append(privilegeChecks,
 				fmt.Sprintf("has_database_privilege('%s', current_database(), '%s')", username, upperPrivilege))
@@ -681,10 +681,14 @@ func verifyPrivilegesGranted(namespace string, connection controller.ConnectionD
 			// Table-level privileges
 			privilegeChecks = append(privilegeChecks,
 				fmt.Sprintf("has_table_privilege('%s', 'public.access_operator_test', '%s')", username, upperPrivilege))
-		case "USAGE", "CREATE":
-			// Schema-level privileges (can also be database level for CREATE)
+		case "USAGE":
+			// Schema-level privilege
 			privilegeChecks = append(privilegeChecks,
 				fmt.Sprintf("has_schema_privilege('%s', 'public', '%s')", username, upperPrivilege))
+		case "CREATE":
+			// CREATE can be granted at database or schema level depending on target object.
+			privilegeChecks = append(privilegeChecks,
+				fmt.Sprintf("(has_database_privilege('%s', current_database(), 'CREATE') OR has_schema_privilege('%s', 'public', 'CREATE'))", username, username))
 		case "EXECUTE":
 			// Function-level privilege - we'll check if user has execute on any function
 			privilegeChecks = append(privilegeChecks,
