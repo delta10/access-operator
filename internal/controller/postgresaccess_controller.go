@@ -182,15 +182,14 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	usersHandled := make(map[string]bool)
 
 	for _, config := range configs {
+		password, err := getUserPassword(ctx, r.Client, pg.Namespace, config.GeneratedSecret)
+		if err != nil {
+			log.Error(err, "failed to get user password from generated secret", "username", config.Username, "secret", config.GeneratedSecret)
+			continue
+		}
+
 		// check if the user exists in the database, if not create it
 		if !slices.Contains(users, config.Username) {
-			// get the password for the user from the corresponding PostgresAccess CR's generated secret
-			password, err := getUserPassword(ctx, r.Client, pg)
-			if err != nil {
-				log.Error(err, "failed to get user password from secret", "username", config.Username)
-				continue
-			}
-
 			err = r.DB.CreateUser(ctx, config.Username, password)
 			if err != nil {
 				log.Error(err, "failed to create user in PostgreSQL", "username", config.Username)
@@ -198,12 +197,6 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 			}
 		} else {
 			// check if the password for the existing user matches the password in the corresponding PostgresAccess CR's generated secret, if not update it
-			password, err := getUserPassword(ctx, r.Client, pg)
-			if err != nil {
-				log.Error(err, "failed to get user password from secret for existing user", "username", config.Username)
-				continue
-			}
-
 			err = r.DB.UpdateUserPassword(ctx, config.Username, password)
 			if err != nil {
 				log.Error(err, "failed to update user password in PostgreSQL for existing user", "username", config.Username)
@@ -409,8 +402,9 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 
 // UserGrants represents a username and their associated grants
 type UserGrants struct {
-	Username string
-	Grants   []accessv1.GrantSpec
+	Username        string
+	GeneratedSecret string
+	Grants          []accessv1.GrantSpec
 }
 
 // getAllPostgresAccessGrantsAndUsers retrieves all PostgresAccess CRs and extracts usernames with their grants
@@ -434,8 +428,9 @@ func getAllPostgresAccessGrantsAndUsers(ctx context.Context, c client.Client, na
 
 		// Add the username and grants to the result
 		result = append(result, UserGrants{
-			Username: username,
-			Grants:   pg.Spec.Grants,
+			Username:        username,
+			GeneratedSecret: pg.Spec.GeneratedSecret,
+			Grants:          pg.Spec.Grants,
 		})
 	}
 
@@ -488,14 +483,13 @@ func diffGrants(current, desired []accessv1.GrantSpec) (toGrant, toRevoke []acce
 	return toGrant, toRevoke
 }
 
-func getUserPassword(ctx context.Context, c client.Client, pg *accessv1.PostgresAccess) (string, error) {
-	if pg.Spec.Username == nil || *pg.Spec.Username == "" {
-		return "", fmt.Errorf("username is not specified in PostgresAccess spec")
+func getUserPassword(ctx context.Context, c client.Client, namespace, secretName string) (string, error) {
+	if secretName == "" {
+		return "", fmt.Errorf("generatedSecret is not specified in PostgresAccess spec")
 	}
 
-	secretName := fmt.Sprintf("%s-credentials", *pg.Spec.Username)
 	var userSec corev1.Secret
-	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: pg.Namespace}, &userSec); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &userSec); err != nil {
 		return "", fmt.Errorf("failed to get user secret for password retrieval: %w", err)
 	}
 

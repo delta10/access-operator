@@ -459,14 +459,34 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(results).To(HaveLen(2))
 
-			resultMap := make(map[string][]accessv1.GrantSpec, len(results))
+			resultMap := make(map[string]UserGrants, len(results))
 			for _, item := range results {
-				resultMap[item.Username] = item.Grants
+				resultMap[item.Username] = item
 			}
 
 			Expect(resultMap).To(HaveKey(firstUser))
 			Expect(resultMap).To(HaveKey(secondUser))
 			Expect(resultMap).NotTo(HaveKey(otherNamespaceUser))
+			Expect(resultMap[firstUser].GeneratedSecret).To(Equal("first-secret"))
+			Expect(resultMap[secondUser].GeneratedSecret).To(Equal("second-secret"))
+		})
+
+		It("should read user password from the generated secret name", func() {
+			fakeClient, _ := newFakeClientWithScheme(
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "custom-generated-secret",
+						Namespace: "default",
+					},
+					Data: map[string][]byte{
+						"password": []byte("super-secret"),
+					},
+				},
+			)
+
+			password, err := getUserPassword(context.Background(), fakeClient, "default", "custom-generated-secret")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(password).To(Equal("super-secret"))
 		})
 
 		It("should add finalizer for active resources", func() {
