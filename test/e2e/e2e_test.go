@@ -499,7 +499,7 @@ spec:
 				)
 				Expect(err).NotTo(HaveOccurred(), "Failed to revoke SELECT privilege")
 
-				err = triggerReconciliation(controllerPodName, testNamespace)
+				err = triggerReconciliation("test-privileges-maintenance", testNamespace)
 				Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation after revoking privileges")
 
 				By("verifying that the controller reconciles and restores the revoked privilege")
@@ -518,7 +518,7 @@ spec:
 				})
 				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
-				err = triggerReconciliation(controllerPodName, testNamespace)
+				err = triggerReconciliation("test-deletion", testNamespace)
 				Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation after creating PostgresAccess resource")
 
 				// Wait for the privileges to be granted
