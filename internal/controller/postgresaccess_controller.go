@@ -32,7 +32,6 @@ import (
 	"crypto/rand"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
-	controllerruntime "sigs.k8s.io/controller-runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -46,6 +45,7 @@ type PostgresAccessReconciler struct {
 }
 
 const privilegeDriftRequeueInterval = 30 * time.Second
+const postgresAccessFinalizer = "access.k8s.delta10.nl/finalizer"
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses,verbs=get;list;watch;create;update;patch;delete
@@ -91,9 +91,14 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		username = *pg.Spec.Username
 	}
 
-	_, err := r.finalizePostgresAccess(ctx, req, &pg)
+	finalized, err := r.finalizePostgresAccess(ctx, &pg)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	// If the resource is finalized, we return early to avoid requeuing.
+	// The finalizer will have been removed, so no further reconciliation will occur for this resource.
+	if finalized {
+		return ctrl.Result{}, nil
 	}
 
 	// reconcile the secret that holds the connection details for this PostgresAccess CR.
@@ -217,72 +222,68 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	return nil
 }
 
-func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, req controllerruntime.Request, pg *accessv1.PostgresAccess) (bool, error) {
+func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, pg *accessv1.PostgresAccess) (bool, error) {
 	log := logf.FromContext(ctx)
-	cronJob := &accessv1.CronJob{}
-	if err := r.Get(ctx, req.NamespacedName, cronJob); err != nil {
-		log.Error(err, "unable to fetch CronJob")
-		return true, client.IgnoreNotFound(err)
-	}
-
-	FinalizerName := "access.k8s.delta10.nl/finalizer"
-
-	if cronJob.ObjectMeta.DeletionTimestamp.IsZero() {
+	if pg.DeletionTimestamp.IsZero() {
 		// The object is not being deleted, so if it does not have our finalizer,
 		// then let's add the finalizer and update the object. This is equivalent
 		// to registering our finalizer.
-		if !controllerutil.ContainsFinalizer(cronJob, FinalizerName) {
-			controllerutil.AddFinalizer(cronJob, FinalizerName)
-			if err := r.Update(ctx, cronJob); err != nil {
-				return true, err
-			}
-		}
-	} else {
-		// The object is being deleted
-		if controllerutil.ContainsFinalizer(cronJob, FinalizerName) {
-
-			connectionString, err := r.getConnectionString(ctx, pg)
-			if err != nil {
-				log.Error(err, "failed to get connection string during finalization")
-				return true, err
-			}
-
-			if r.DB == nil {
-				r.DB = NewPostgresDB()
-			}
-
-			err = r.DB.Connect(ctx, connectionString)
-			if err != nil {
-				log.Error(err, "Unable to connect to database during finalization", "connectionString", connectionString)
-				return true, err
-			}
-			defer func() {
-				if err := r.DB.Close(ctx); err != nil {
-					log.Error(err, "failed to close database connection during finalization")
-				}
-			}()
-
-			users, err := r.DB.GetUsers(ctx)
-			if err != nil {
-				log.Error(err, "failed to get users from PostgreSQL during finalization")
-				return true, err
-			}
-
-			for _, user := range users {
-				// Only drop the user if it matches the username in the PostgresAccess spec
-				if pg.Spec.Username != nil && *pg.Spec.Username == user {
-					err = r.DB.DropUser(ctx, user)
-					if err != nil {
-						log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
-						continue
-					}
-				}
+		if !controllerutil.ContainsFinalizer(pg, postgresAccessFinalizer) {
+			controllerutil.AddFinalizer(pg, postgresAccessFinalizer)
+			if err := r.Update(ctx, pg); err != nil {
+				return false, err
 			}
 		}
 		return false, nil
 	}
 
-	return false, nil
+	if !controllerutil.ContainsFinalizer(pg, postgresAccessFinalizer) {
+		return true, nil
+	}
+
+	connectionString, err := r.getConnectionString(ctx, pg)
+	if err != nil {
+		log.Error(err, "failed to get connection string during finalization")
+		return true, err
+	}
+
+	if r.DB == nil {
+		r.DB = NewPostgresDB()
+	}
+
+	err = r.DB.Connect(ctx, connectionString)
+	if err != nil {
+		log.Error(err, "Unable to connect to database during finalization", "connectionString", connectionString)
+		return true, err
+	}
+	defer func() {
+		if err := r.DB.Close(ctx); err != nil {
+			log.Error(err, "failed to close database connection during finalization")
+		}
+	}()
+
+	users, err := r.DB.GetUsers(ctx)
+	if err != nil {
+		log.Error(err, "failed to get users from PostgreSQL during finalization")
+		return true, err
+	}
+
+	for _, user := range users {
+		if pg.Spec.Username != nil && *pg.Spec.Username == user {
+			err = r.DB.DropUser(ctx, user)
+			if err != nil {
+				log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
+				continue
+			}
+		}
+	}
+
+	controllerutil.RemoveFinalizer(pg, postgresAccessFinalizer)
+	if err := r.Update(ctx, pg); err != nil {
+		return true, err
+	}
+
+	return true, nil
 }
 
 // getConnectionString constructs the PostgreSQL connection string based on the PostgresAccess spec.
