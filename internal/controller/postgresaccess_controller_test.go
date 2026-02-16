@@ -103,10 +103,11 @@ var _ = Describe("PostgresAccess Controller", func() {
 				DB:     mockDB,
 			}
 
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(privilegeDriftRequeueInterval))
 
 			By("verifying the mock database was called correctly")
 			Expect(mockDB.ConnectCalled).To(BeTrue())
@@ -181,10 +182,11 @@ var _ = Describe("PostgresAccess Controller", func() {
 				DB:     NewMockDB(),
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(privilegeDriftRequeueInterval))
 
 			By("verifying the secret was created with the specified username and password")
 			createdSecret := &corev1.Secret{}
