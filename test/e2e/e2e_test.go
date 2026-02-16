@@ -471,7 +471,7 @@ spec:
 				Eventually(verifyUpdatedPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
 			})
 
-			It("should reconcile and maintain the privileges of a PostgresAccess resource when they are manually revoked in the database", func() {
+			It("should reconcile the privileges of a PostgresAccess resource when they are manually revoked in the database", func() {
 				By("creating a PostgresAccess resource")
 				testNamespace, conn := getDatabaseVariables()
 				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
@@ -539,6 +539,52 @@ spec:
 					g.Expect(output).To(Equal("f"), "Database user should have been deleted")
 				}
 				Eventually(verifyUserDeleted, 2*time.Minute, 5*time.Second).Should(Succeed())
+			})
+
+			It("should delete the database user and secrets when the PostgresAccess resource is deleted", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := getDatabaseVariables()
+				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = createResourceFromSecretReference("test-deletion", testNamespace, secretName, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				// Wait for the privileges to be granted
+				By("waiting for the privileges to be granted")
+				verifyPrivileges := func(g Gomega) {
+					err = verifyPrivilegesGranted(testNamespace, conn, "test-deletion", []string{"CONNECT", "SELECT"})
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to verify privileges granted to the database user")
+				}
+				Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("deleting the PostgresAccess resource")
+				cmd := exec.Command("kubectl", "delete", "postgresaccess", "test-deletion", "-n", testNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
+
+				By("verifying that the database user is deleted")
+				verifyUserDeleted := func(g Gomega) {
+					output, err := runPostgresQuery(
+						testNamespace,
+						conn,
+						"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'test-deletion');",
+					)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
+					g.Expect(output).To(Equal("f"), "Database user should have been deleted")
+				}
+				Eventually(verifyUserDeleted, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("verifying that the generated secret is deleted")
+				verifySecretDeleted := func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace)
+					_, err := utils.Run(cmd)
+					g.Expect(err).To(HaveOccurred(), "Secret should have been deleted")
+				}
+				Eventually(verifySecretDeleted, 2*time.Minute, 5*time.Second).Should(Succeed())
 			})
 
 		})
