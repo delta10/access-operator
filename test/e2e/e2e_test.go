@@ -416,7 +416,7 @@ spec:
 					// Wait for the secret to be created
 					By("waiting for the generated secret to be created")
 					verifySecretCreated := func(g Gomega) {
-						cmd := exec.Command("kubectl", "get", "secret", "test-username", "-n", testNamespace, "-o", "jsonpath={.data.username}")
+						cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace, "-o", "jsonpath={.data.username}")
 						output, err := utils.Run(cmd)
 						g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
 						g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
@@ -430,7 +430,7 @@ spec:
 						output, err := runPostgresQuery(
 							testNamespace,
 							conn,
-							"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'test-postgres-access-secret-ref');",
+							"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'test-username');",
 						)
 						g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
 						g.Expect(output).To(Equal("t"), "Database user should have been created")
