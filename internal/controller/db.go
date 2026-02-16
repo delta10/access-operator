@@ -30,6 +30,7 @@ type DBInterface interface {
 	Connect(ctx context.Context, connectionString string) error
 	Close(ctx context.Context) error
 	CreateUser(ctx context.Context, username, password string) error
+	UpdateUserPassword(ctx context.Context, username, newPassword string) error
 	DropUser(ctx context.Context, username string) error
 	GetUsers(ctx context.Context) ([]string, error)
 	GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error
@@ -91,6 +92,18 @@ func (p *PostgresDB) CreateUser(ctx context.Context, username, password string) 
 	}
 
 	_, err = p.conn.Exec(ctx, fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s'", sanitizedUser, sanitizedPass))
+	return err
+}
+
+func (p *PostgresDB) UpdateUserPassword(ctx context.Context, username, newPassword string) error {
+	if p.conn == nil {
+		return fmt.Errorf("database connection is not initialized")
+	}
+
+	sanitizedUser := pgx.Identifier{username}.Sanitize()
+	sanitizedPass := pgx.Identifier{newPassword}.Sanitize()
+
+	_, err := p.conn.Exec(ctx, fmt.Sprintf("ALTER ROLE %s WITH LOGIN PASSWORD '%s'", sanitizedUser, sanitizedPass))
 	return err
 }
 
@@ -418,6 +431,12 @@ func (m *MockDB) CreateUser(ctx context.Context, username, password string) erro
 	m.CreatedUsernames = append(m.CreatedUsernames, username)
 	m.LastPassword = password
 	return m.CreateUserError
+}
+
+func (m *MockDB) UpdateUserPassword(ctx context.Context, username, newPassword string) error {
+	m.LastUsername = username
+	m.LastPassword = newPassword
+	return nil
 }
 
 func (m *MockDB) DropUser(ctx context.Context, username string) error {

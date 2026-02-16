@@ -587,6 +587,119 @@ spec:
 				Eventually(verifySecretDeleted, 2*time.Minute, 5*time.Second).Should(Succeed())
 			})
 
+			It("should update the database user's password when the PostgresAccess resource is updated with a new password", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := getDatabaseVariables()
+				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = createResourceFromSecretReference("test-password-update", testNamespace, secretName, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				By("waiting for the privileges to be granted")
+				verifyPrivileges := func(g Gomega) {
+					err = verifyPrivilegesGranted(testNamespace, conn, "test-password-update", []string{"CONNECT", "SELECT"})
+				}
+				Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("updating the PostgresAccess resource with a new password")
+				newPassword := "newpassword123"
+				updatedSecretYAML := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+    name: %s
+    namespace: %s
+type: Opaque
+data:
+    host: %s
+    port: %s
+    database: %s
+    username: %s
+    password: %s
+    sslMode: %s
+`, secretName, testNamespace,
+					b64.StdEncoding.EncodeToString([]byte(conn.Host)),
+					b64.StdEncoding.EncodeToString([]byte(conn.Port)),
+					b64.StdEncoding.EncodeToString([]byte(conn.Database)),
+					b64.StdEncoding.EncodeToString([]byte(conn.Username)),
+					b64.StdEncoding.EncodeToString([]byte(newPassword)),
+					b64.StdEncoding.EncodeToString([]byte("disable")))
+
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+
+				cmd.Stdin = strings.NewReader(updatedSecretYAML)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to update connection secret with new password")
+
+				By("verifying that the database user's password is updated and the user can authenticate with the new password")
+				verifyPasswordUpdated := func(g Gomega) {
+					// Update the connection details with the new password for authentication
+					updatedConn := conn
+					updatedConn.Password = newPassword
+
+					// Attempt to run a query using the updated password
+					output, err := runPostgresQuery(
+						testNamespace,
+						updatedConn,
+						"SELECT 1;",
+					)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to authenticate with the new password")
+					g.Expect(output).To(Equal("1"), "PostgreSQL should return a valid query result with the new password")
+				}
+				Eventually(verifyPasswordUpdated, 2*time.Minute, 5*time.Second).Should(Succeed())
+			})
+
+			It("should update the database user's password the secret's password is rolled via deletion", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := getDatabaseVariables()
+				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = createResourceFromSecretReference("test-password-rotation", testNamespace, secretName, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				By("waiting for the privileges to be granted")
+				verifyPrivileges := func(g Gomega) {
+					err = verifyPrivilegesGranted(testNamespace, conn, "test-password-rotation", []string{"CONNECT", "SELECT"})
+				}
+				Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("deleting the secret to trigger password rotation")
+				cmd := exec.Command("kubectl", "delete", "secret", secretName, "-n", testNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to delete connection secret")
+
+				By("verifying that the database user's password is updated and the user can authenticate with the new password")
+				// get the new password from the recreated secret and verify authentication
+				verifyPasswordRotated := func(g Gomega) {
+					// Retrieve the new password from the recreated secret
+					cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", testNamespace, "-o", "jsonpath={.data.password}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve the recreated secret")
+					newPasswordBytes, err := b64.StdEncoding.DecodeString(output)
+					Expect(err).NotTo(HaveOccurred(), "Failed to decode the new password from the secret")
+					newPassword := string(newPasswordBytes)
+
+					// Update the connection details with the new password for authentication
+					updatedConn := conn
+					updatedConn.Password = newPassword
+
+					// Attempt to run a query using the updated password
+					queryOutput, err := runPostgresQuery(
+						testNamespace,
+						updatedConn,
+						"SELECT 1;",
+					)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to authenticate with the new password after rotation")
+					g.Expect(queryOutput).To(Equal("1"), "PostgreSQL should return a valid query result with the new password after rotation")
+				}
+			})
 		})
 	})
 })

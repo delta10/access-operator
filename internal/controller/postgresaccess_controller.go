@@ -184,9 +184,29 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	for _, config := range configs {
 		// check if the user exists in the database, if not create it
 		if !slices.Contains(users, config.Username) {
-			err = r.DB.CreateUser(ctx, config.Username, "")
+			// get the password for the user from the corresponding PostgresAccess CR's generated secret
+			password, err := getUserPassword(ctx, r.Client, pg)
+			if err != nil {
+				log.Error(err, "failed to get user password from secret", "username", config.Username)
+				continue
+			}
+
+			err = r.DB.CreateUser(ctx, config.Username, password)
 			if err != nil {
 				log.Error(err, "failed to create user in PostgreSQL", "username", config.Username)
+				continue
+			}
+		} else {
+			// check if the password for the existing user matches the password in the corresponding PostgresAccess CR's generated secret, if not update it
+			password, err := getUserPassword(ctx, r.Client, pg)
+			if err != nil {
+				log.Error(err, "failed to get user password from secret for existing user", "username", config.Username)
+				continue
+			}
+
+			err = r.DB.UpdateUserPassword(ctx, config.Username, password)
+			if err != nil {
+				log.Error(err, "failed to update user password in PostgreSQL for existing user", "username", config.Username)
 				continue
 			}
 		}
@@ -466,4 +486,23 @@ func diffGrants(current, desired []accessv1.GrantSpec) (toGrant, toRevoke []acce
 	}
 
 	return toGrant, toRevoke
+}
+
+func getUserPassword(ctx context.Context, c client.Client, pg *accessv1.PostgresAccess) (string, error) {
+	if pg.Spec.Username == nil || *pg.Spec.Username == "" {
+		return "", fmt.Errorf("username is not specified in PostgresAccess spec")
+	}
+
+	secretName := fmt.Sprintf("%s-credentials", *pg.Spec.Username)
+	var userSec corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: pg.Namespace}, &userSec); err != nil {
+		return "", fmt.Errorf("failed to get user secret for password retrieval: %w", err)
+	}
+
+	existingPassword, ok := userSec.Data["password"]
+	if !ok || len(existingPassword) == 0 {
+		return "", fmt.Errorf("user secret is missing password")
+	}
+
+	return string(existingPassword), nil
 }
