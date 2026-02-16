@@ -499,6 +499,9 @@ spec:
 				)
 				Expect(err).NotTo(HaveOccurred(), "Failed to revoke SELECT privilege")
 
+				err = triggerReconciliation(controllerPodName, testNamespace)
+				Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation after revoking privileges")
+
 				By("verifying that the controller reconciles and restores the revoked privilege")
 				Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
 			})
@@ -514,6 +517,9 @@ spec:
 					Privileges: []string{"CONNECT", "SELECT"},
 				})
 				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				err = triggerReconciliation(controllerPodName, testNamespace)
+				Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation after creating PostgresAccess resource")
 
 				// Wait for the privileges to be granted
 				By("waiting for the privileges to be granted")
@@ -997,6 +1003,16 @@ func verifyPrivilegesGranted(
 	}
 
 	return nil
+}
+
+func triggerReconciliation(resourceName, namespace string) error {
+	timestamp := time.Now().Format(time.RFC3339Nano)
+	cmd := exec.Command("kubectl", "annotate", "postgresaccess", resourceName,
+		"-n", namespace,
+		fmt.Sprintf("reconcile-trigger=%s", timestamp),
+		"--overwrite")
+	_, err := utils.Run(cmd)
+	return err
 }
 
 // tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,

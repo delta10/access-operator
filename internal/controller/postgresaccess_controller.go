@@ -196,7 +196,8 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 				continue
 			}
 		} else {
-			// check if the password for the existing user matches the password in the corresponding PostgresAccess CR's generated secret, if not update it
+			// Update the password for existing user to ensure it matches the generated secret
+			// we skip the check if the password is already correct because that would make more queries and create more complexity.
 			err = r.DB.UpdateUserPassword(ctx, config.Username, password)
 			if err != nil {
 				log.Error(err, "failed to update user password in PostgreSQL for existing user", "username", config.Username)
