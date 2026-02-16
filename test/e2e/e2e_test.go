@@ -699,6 +699,8 @@ data:
 					g.Expect(err).NotTo(HaveOccurred(), "Failed to authenticate with the new password after rotation")
 					g.Expect(queryOutput).To(Equal("1"), "PostgreSQL should return a valid query result with the new password after rotation")
 				}
+
+				Eventually(verifyPasswordRotated, 2*time.Minute, 5*time.Second).Should(Succeed())
 			})
 		})
 	})
