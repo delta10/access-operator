@@ -463,7 +463,7 @@ spec:
 					_, err = runPostgresQuery(
 						testNamespace,
 						conn,
-						"REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM test-privileges-maintenance;",
+						`REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM "test-privileges-maintenance";`,
 					)
 					Expect(err).NotTo(HaveOccurred(), "Failed to revoke SELECT privilege")
 
