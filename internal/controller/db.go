@@ -382,9 +382,14 @@ func (p *PostgresDB) GetGrants(ctx context.Context) (map[string][]accessv1.Grant
 type MockDB struct {
 	ConnectCalled         bool
 	CreateUserCalled      bool
+	DropUserCalled        bool
 	GrantPrivilegesCalled bool
 	LastConnectionString  string
 	LastUsername          string
+	LastCreatedUsername   string
+	LastDroppedUsername   string
+	CreatedUsernames      []string
+	DroppedUsernames      []string
 	LastPassword          string
 	LastGrants            []accessv1.GrantSpec
 	ConnectError          error
@@ -409,13 +414,16 @@ func (m *MockDB) Close(ctx context.Context) error {
 func (m *MockDB) CreateUser(ctx context.Context, username, password string) error {
 	m.CreateUserCalled = true
 	m.LastUsername = username
+	m.LastCreatedUsername = username
+	m.CreatedUsernames = append(m.CreatedUsernames, username)
 	m.LastPassword = password
 	return m.CreateUserError
 }
 
 func (m *MockDB) DropUser(ctx context.Context, username string) error {
-	m.CreateUserCalled = true
-	m.LastUsername = username
+	m.DropUserCalled = true
+	m.LastDroppedUsername = username
+	m.DroppedUsernames = append(m.DroppedUsernames, username)
 	return nil
 }
 
