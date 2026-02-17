@@ -103,7 +103,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 							Value: &password,
 						},
 					},
-					Username: &username,
+					Username: username,
 					Grants: []accessv1.GrantSpec{
 						{
 							Database:   "testdb",
@@ -192,7 +192,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					Connection: accessv1.ConnectionSpec{
 						ExistingSecret: &secretName,
 					},
-					Username: &username,
+					Username: username,
 					Grants: []accessv1.GrantSpec{
 						{
 							Database:   "testdb",
@@ -427,7 +427,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "target"},
 					Spec: accessv1.PostgresAccessSpec{
 						GeneratedSecret: "first-secret",
-						Username:        &firstUser,
+						Username:        firstUser,
 						Grants: []accessv1.GrantSpec{
 							{Database: "db1", Privileges: []string{"CONNECT"}},
 						},
@@ -437,7 +437,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "target"},
 					Spec: accessv1.PostgresAccessSpec{
 						GeneratedSecret: "second-secret",
-						Username:        &secondUser,
+						Username:        secondUser,
 						Grants: []accessv1.GrantSpec{
 							{Database: "db2", Privileges: []string{"SELECT"}},
 						},
@@ -447,7 +447,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "other-ns"},
 					Spec: accessv1.PostgresAccessSpec{
 						GeneratedSecret: "other-secret",
-						Username:        &otherNamespaceUser,
+						Username:        otherNamespaceUser,
 						Grants: []accessv1.GrantSpec{
 							{Database: "db3", Privileges: []string{"CONNECT"}},
 						},

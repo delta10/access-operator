@@ -84,12 +84,7 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		},
 	}
 
-	var username string
 	var password string
-
-	if pg.Spec.Username != nil && *pg.Spec.Username != "" {
-		username = *pg.Spec.Username
-	}
 
 	finalized, err := r.finalizePostgresAccess(ctx, &pg)
 	if err != nil {
@@ -117,7 +112,7 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			password = rand.Text()
 		}
 
-		sec.Data["username"] = []byte(username)
+		sec.Data["username"] = []byte(pg.Spec.Username)
 		sec.Data["password"] = []byte(password)
 
 		return controllerutil.SetControllerReference(&pg, sec, r.Scheme)
@@ -283,7 +278,7 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 	}
 
 	for _, user := range users {
-		if pg.Spec.Username != nil && *pg.Spec.Username == user {
+		if pg.Spec.Username == user {
 			err = r.DB.DropUser(ctx, user)
 			if err != nil {
 				log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
@@ -404,15 +399,9 @@ func getAllPostgresAccessGrantsAndUsers(ctx context.Context, c client.Client, na
 
 	result := make([]UserGrants, 0, len(pgList.Items))
 	for _, pg := range pgList.Items {
-		// Get username from the spec
-		username := ""
-		if pg.Spec.Username != nil && *pg.Spec.Username != "" {
-			username = *pg.Spec.Username
-		}
-
 		// Add the username and grants to the result
 		result = append(result, UserGrants{
-			Username:        username,
+			Username:        pg.Spec.Username,
 			GeneratedSecret: pg.Spec.GeneratedSecret,
 			Grants:          pg.Spec.Grants,
 		})
