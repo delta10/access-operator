@@ -687,7 +687,7 @@ data:
 					output, err := utils.Run(cmd)
 					g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve the recreated secret")
 					newPasswordBytes, err := b64.StdEncoding.DecodeString(output)
-					Expect(err).NotTo(HaveOccurred(), "Failed to decode the new password from the secret")
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to decode the new password from the secret")
 					newPassword := string(newPasswordBytes)
 
 					// Update the connection details with the new password for authentication
