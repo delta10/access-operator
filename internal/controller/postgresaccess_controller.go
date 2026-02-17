@@ -262,7 +262,7 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 
 	err = r.DB.Connect(ctx, connectionString)
 	if err != nil {
-		log.Error(err, "Unable to connect to database during finalization", "connectionString", connectionString)
+		log.Error(err, "Unable to connect to database during finalization")
 		return true, err
 	}
 	defer func() {
