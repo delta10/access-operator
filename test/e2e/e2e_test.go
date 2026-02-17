@@ -850,7 +850,7 @@ spec:
 	return err
 }
 
-999func runPostgresQuery(namespace string, connection controller.ConnectionDetails, query string) (string, error) {
+func runPostgresQuery(namespace string, connection controller.ConnectionDetails, query string) (string, error) {
 	cmd := exec.Command(
 		"kubectl",
 		"exec",
