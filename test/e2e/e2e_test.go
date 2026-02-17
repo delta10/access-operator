@@ -587,9 +587,10 @@ spec:
 
 				By("verifying that the generated secret is deleted")
 				verifySecretDeleted := func(g Gomega) {
-					cmd := exec.Command("kubectl", "get", "secret", genSecName, "-n", testNamespace)
-					_, err := utils.Run(cmd)
-					g.Expect(err).To(HaveOccurred(), "Secret should have been deleted")
+					cmd := exec.Command("kubectl", "get", "secret", genSecName, "-n", testNamespace, "-o", "name", "--ignore-not-found")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to check if secret exists")
+					g.Expect(strings.TrimSpace(output)).To(BeEmpty(), "Secret should have been deleted")
 				}
 				Eventually(verifySecretDeleted, 2*time.Minute, 5*time.Second).Should(Succeed())
 			})
