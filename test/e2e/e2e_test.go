@@ -275,7 +275,7 @@ var _ = Describe("Manager", Ordered, func() {
 			BeforeEach(func() {
 				By("ensuring no stale test namespace exists")
 				testNamespace, conn := getDatabaseVariables()
-				cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--timeout=2m")
+				cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--timeout=1m")
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to clean up existing test namespace")
 
@@ -850,7 +850,7 @@ spec:
 	return err
 }
 
-func runPostgresQuery(namespace string, connection controller.ConnectionDetails, query string) (string, error) {
+999func runPostgresQuery(namespace string, connection controller.ConnectionDetails, query string) (string, error) {
 	cmd := exec.Command(
 		"kubectl",
 		"exec",
