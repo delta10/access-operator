@@ -384,23 +384,6 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 	}, nil
 }
 
-/*
-   func getControlledSecrets(ctx context.Context, c client.Client, pg *accessv1.PostgresAccess) ([]corev1.Secret, error) {
-   	var secretList corev1.SecretList
-   	if err := c.List(ctx, &secretList, client.InNamespace(pg.Namespace), client.MatchingFields{".metadata.controller": pg.Name}); err != nil {
-   		return nil, fmt.Errorf("failed to list secrets: %w", err)
-   	}
-
-   	var controlledSecrets []corev1.Secret
-   	for _, sec := range secretList.Items {
-   		if metav1.IsControlledBy(&sec, pg) {
-   			controlledSecrets = append(controlledSecrets, sec)
-   		}
-   	}
-   	return controlledSecrets, nil
-   }
-*/
-
 // UserGrants represents a username and their associated grants
 type UserGrants struct {
 	Username        string
