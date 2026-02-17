@@ -18,6 +18,12 @@ Then run it:
 make run
 ```
 
+Ofcourse make sure you have a Database running that you can connect to, for example a local Postgres instance.   
+You can use the following command to run a Postgres instance in Docker:
+```bash
+docker compose up -d
+```
+
 When using the docker compose you can use a simple sample config with:
 ```bash
 kubectl apply -f config/samples/access_v1_postgresaccess.yaml
@@ -31,17 +37,18 @@ Ofcourse you can also use [act](https://github.com/nektos/act) to run the whole 
 make test
 ```
 ### e2e tests
+Make sure the following are running and/or installed:
+- kind
+- kubectl
+- Docker
+
 for e2e tests, you can use:
 
 ```bash
 make test-e2e
 ```
 
-if you don't have a database running locally you can use docker compose to start a postgres database:
-
-```bash
-docker compose up -d
-```
+The database will be created withing the cluster using a custom resource, so you don't need to have a local database running for the e2e tests.
 
 ### Linter
 Install [golangci-lint](https://golangci-lint.run/docs/welcome/install/local/) first, then you can run the linter with:
