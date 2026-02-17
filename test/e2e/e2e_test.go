@@ -606,33 +606,25 @@ spec:
 				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
 				By("waiting for the privileges to be granted")
+				CRUsername := "test-password-update"
 				verifyPrivileges := func(g Gomega) {
-					err = verifyPrivilegesGranted(testNamespace, conn, "test-password-update", []string{"CONNECT", "SELECT"})
+					err = verifyPrivilegesGranted(testNamespace, conn, CRUsername, []string{"CONNECT", "SELECT"})
 				}
 				Eventually(verifyPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 				By("updating the PostgresAccess resource with a new password")
-				newPassword := "newpassword123"
+				// get the current password from the user with username test-password-update and update it in the YAML
+				newPassword := "new-secure-password"
 				updatedSecretYAML := fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
-    name: %s
-    namespace: %s
+  name: %s
+  namespace: %s
 type: Opaque
 data:
-    host: %s
-    port: %s
-    database: %s
-    username: %s
-    password: %s
-    sslmode: %s
-`, secretName, testNamespace,
-					b64.StdEncoding.EncodeToString([]byte(conn.Host)),
-					b64.StdEncoding.EncodeToString([]byte(conn.Port)),
-					b64.StdEncoding.EncodeToString([]byte(conn.Database)),
-					b64.StdEncoding.EncodeToString([]byte(conn.Username)),
-					b64.StdEncoding.EncodeToString([]byte(newPassword)),
-					b64.StdEncoding.EncodeToString([]byte("disable")))
+  username: %s
+  password: %s
+`, "test-postgres-credentials-secret-ref", testNamespace, b64.StdEncoding.EncodeToString([]byte(CRUsername)), b64.StdEncoding.EncodeToString([]byte(newPassword)))
 
 				cmd := exec.Command("kubectl", "apply", "-f", "-")
 
@@ -644,6 +636,7 @@ data:
 				verifyPasswordUpdated := func(g Gomega) {
 					// Update the connection details with the new password for authentication
 					updatedConn := conn
+					updatedConn.Username = CRUsername
 					updatedConn.Password = newPassword
 
 					// Attempt to run a query using the updated password
