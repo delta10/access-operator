@@ -419,7 +419,7 @@ func getAllPostgresAccessGrantsAndUsers(ctx context.Context, c client.Client, na
 		return nil, fmt.Errorf("failed to list PostgresAccess resources: %w", err)
 	}
 
-	var result []UserGrants
+	result := make([]UserGrants, 0, len(pgList.Items))
 	for _, pg := range pgList.Items {
 		// Get username from the spec
 		username := ""
