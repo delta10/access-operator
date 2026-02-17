@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -252,6 +253,18 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 
 	connectionString, err := r.getConnectionString(ctx, pg)
 	if err != nil {
+		// If the secret is not found, we can't connect to clean up, but that's okay
+		// The secret might have been deleted already, or the resource is being force-deleted
+		// In this case, just remove the finalizer and let the resource be deleted
+		if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "not found") {
+			log.Info("Connection secret not found during finalization, skipping database cleanup", "error", err.Error())
+			controllerutil.RemoveFinalizer(pg, postgresAccessFinalizer)
+			if err := r.Update(ctx, pg); err != nil {
+				log.Error(err, "failed to remove finalizer")
+				return true, err
+			}
+			return true, nil
+		}
 		log.Error(err, "failed to get connection string during finalization")
 		return true, err
 	}
