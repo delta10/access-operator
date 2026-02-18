@@ -45,6 +45,7 @@ type PostgresAccessReconciler struct {
 }
 
 const privilegeDriftRequeueInterval = 30 * time.Second
+const syncedRequeueInterval = 5 * time.Minute
 const postgresAccessFinalizer = "access.k8s.delta10.nl/finalizer"
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -85,6 +86,7 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	var password string
+	inSync := true
 
 	finalized, err := r.finalizePostgresAccess(ctx, &pg)
 	if err != nil {
@@ -110,6 +112,7 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			password = string(existingPassword)
 		} else {
 			password = rand.Text()
+			inSync = false
 		}
 
 		sec.Data["username"] = []byte(pg.Spec.Username)
@@ -122,10 +125,18 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	err = r.reconcilePostgresAccess(ctx, &pg)
+	pgSync, err := r.reconcilePostgresAccess(ctx, &pg)
 	if err != nil {
 		log.Error(err, "failed to reconcile PostgresAccess")
 		return ctrl.Result{}, err
+	}
+
+	if inSync {
+		inSync = pgSync
+	}
+
+	if inSync {
+		return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
 	}
 
 	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
@@ -134,13 +145,13 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 // reconcilePostgresAccess connects to the PostgreSQL database, retrieves current grants and users.
 // Then ensures that the grants specified in the PostgresAccess CR are correctly applied in the database.
 // It also creates/removes any users as needed.
-func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, pg *accessv1.PostgresAccess) error {
+func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, pg *accessv1.PostgresAccess) (bool, error) {
 	log := logf.FromContext(ctx)
 
 	connectionString, err := r.getConnectionString(ctx, pg)
 	if err != nil {
 		log.Error(err, "failed to get connection string, no valid connection details provided")
-		return err
+		return false, err
 	}
 
 	if r.DB == nil {
@@ -150,7 +161,7 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	err = r.DB.Connect(ctx, connectionString)
 	if err != nil {
 		log.Error(err, "Unable to connect to database", "connectionString", connectionString)
-		return err
+		return false, err
 	}
 	defer func() {
 		if err := r.DB.Close(ctx); err != nil {
@@ -161,20 +172,21 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	grants, err := r.DB.GetGrants(ctx)
 	if err != nil {
 		log.Error(err, "failed to get grants from PostgreSQL")
-		return err
+		return false, err
 	}
 
 	users, err := r.DB.GetUsers(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	configs, err := getAllPostgresAccessGrantsAndUsers(ctx, r.Client, pg.Namespace)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	usersHandled := make(map[string]bool)
+	inSync := true
 
 	for _, config := range configs {
 		password, err := getUserPassword(ctx, r.Client, pg.Namespace, config.GeneratedSecret)
@@ -190,6 +202,7 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 				log.Error(err, "failed to create user in PostgreSQL", "username", config.Username)
 				continue
 			}
+			inSync = false
 		} else {
 			// Update the password for existing user to ensure it matches the generated secret
 			// we skip the check if the password is already correct because that would make more queries and create more complexity.
@@ -198,9 +211,14 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 				log.Error(err, "failed to update user password in PostgreSQL for existing user", "username", config.Username)
 				continue
 			}
+
+			// don't check sync here to avoid extra queries to the database, we'll trust it's fine
 		}
 
 		toGrant, toRevoke := diffGrants(grants[config.Username], config.Grants)
+		if len(toGrant) > 0 || len(toRevoke) > 0 {
+			inSync = false
+		}
 
 		err = r.DB.GrantPrivileges(ctx, toGrant, config.Username)
 		if err != nil {
@@ -229,7 +247,7 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 		}
 	}
 
-	return nil
+	return inSync, nil
 }
 
 func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, pg *accessv1.PostgresAccess) (bool, error) {
