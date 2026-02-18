@@ -31,7 +31,7 @@ type DBInterface interface {
 	Close(ctx context.Context) error
 	CreateUser(ctx context.Context, username, password string) error
 	UpdateUserPassword(ctx context.Context, username, newPassword string) error
-	DropUser(ctx context.Context, username string) error
+	DropUser(ctx context.Context, username string, cleanupPolicy accessv1.CleanupPolicy) error
 	GetUsers(ctx context.Context) ([]string, error)
 	GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error
 	RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error
@@ -107,22 +107,119 @@ func (p *PostgresDB) UpdateUserPassword(ctx context.Context, username, newPasswo
 	return err
 }
 
-func (p *PostgresDB) DropUser(ctx context.Context, username string) error {
+func (p *PostgresDB) DropUser(ctx context.Context, username string, policy accessv1.CleanupPolicy) (err error) {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
-
-	sanitizedUser := pgx.Identifier{username}.Sanitize()
-
-	// First drop all objects owned by the user
-	_, err := p.conn.Exec(ctx, fmt.Sprintf("DROP OWNED BY %s CASCADE", sanitizedUser))
-	if err != nil {
-		return err
+	if username == "" {
+		return fmt.Errorf("username is empty")
 	}
 
-	// Then drop the role
-	_, err = p.conn.Exec(ctx, fmt.Sprintf("DROP ROLE IF EXISTS %s", sanitizedUser))
-	return err
+	// Idempotency: DROP OWNED/REASSIGN OWNED require the role to exist
+	var exists bool
+	if err := p.conn.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, username,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("failed to check role existence: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+
+	tx, err := p.conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		} else {
+			err = tx.Commit(ctx)
+		}
+	}()
+
+	u := pgx.Identifier{username}.Sanitize()
+
+	switch policy {
+	case accessv1.CleanupPolicyCascade:
+		if _, err = tx.Exec(ctx, fmt.Sprintf(`DROP OWNED BY %s CASCADE`, u)); err != nil {
+			return fmt.Errorf("drop owned cascade: %w", err)
+		}
+
+	case accessv1.CleanupPolicyOrphan:
+		var target string
+		if err := tx.QueryRow(ctx, `
+			SELECT pg_catalog.pg_get_userbyid(d.datdba)
+			FROM pg_database d
+			WHERE d.datname = current_database()`,
+		).Scan(&target); err != nil {
+			return fmt.Errorf("get current database owner: %w", err)
+		}
+		t := pgx.Identifier{target}.Sanitize()
+
+		if _, err = tx.Exec(ctx, fmt.Sprintf(`REASSIGN OWNED BY %s TO %s`, u, t)); err != nil {
+			return fmt.Errorf("reassign owned: %w", err)
+		}
+		if _, err = tx.Exec(ctx, fmt.Sprintf(`DROP OWNED BY %s`, u)); err != nil {
+			return fmt.Errorf("drop owned (privileges): %w", err)
+		}
+
+	case accessv1.CleanupPolicyRestrict:
+		// Comprehensive ownership check: cluster-wide shared objects AND database-local objects
+		var ownsAnything bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				-- Cluster-wide shared objects (databases, tablespaces, etc.)
+				SELECT 1
+				FROM pg_shdepend d
+				JOIN pg_roles r ON r.oid = d.refobjid
+				WHERE r.rolname = $1
+				  AND d.deptype = 'o'
+				UNION ALL
+				-- Database-local objects (tables, views, sequences, etc.)
+				SELECT 1
+				FROM pg_class c
+				JOIN pg_roles r ON r.oid = c.relowner
+				WHERE r.rolname = $1
+				UNION ALL
+				-- Functions and procedures
+				SELECT 1
+				FROM pg_proc p
+				JOIN pg_roles r ON r.oid = p.proowner
+				WHERE r.rolname = $1
+				UNION ALL
+				-- Types
+				SELECT 1
+				FROM pg_type t
+				JOIN pg_roles r ON r.oid = t.typowner
+				WHERE r.rolname = $1
+				UNION ALL
+				-- Schemas
+				SELECT 1
+				FROM pg_namespace n
+				JOIN pg_roles r ON r.oid = n.nspowner
+				WHERE r.rolname = $1
+			)`, username,
+		).Scan(&ownsAnything); err != nil {
+			return fmt.Errorf("check ownership: %w", err)
+		}
+		if ownsAnything {
+			return fmt.Errorf("cannot drop user %q: user owns objects (cleanupPolicy Restrict)", username)
+		}
+
+		// Safe now: only revokes privileges (no owned objects to drop)
+		if _, err = tx.Exec(ctx, fmt.Sprintf(`DROP OWNED BY %s`, u)); err != nil {
+			return fmt.Errorf("drop owned (privileges): %w", err)
+		}
+
+	default:
+		return fmt.Errorf("unknown cleanup policy: %s", policy)
+	}
+
+	if _, err = tx.Exec(ctx, fmt.Sprintf(`DROP ROLE %s`, u)); err != nil {
+		return fmt.Errorf("drop role %q: %w", username, err)
+	}
+	return nil
 }
 
 func (p *PostgresDB) GetUsers(ctx context.Context) ([]string, error) {
@@ -439,7 +536,7 @@ func (m *MockDB) UpdateUserPassword(ctx context.Context, username, newPassword s
 	return nil
 }
 
-func (m *MockDB) DropUser(ctx context.Context, username string) error {
+func (m *MockDB) DropUser(ctx context.Context, username string, cleanupPolicy accessv1.CleanupPolicy) error {
 	m.DropUserCalled = true
 	m.LastDroppedUsername = username
 	m.DroppedUsernames = append(m.DroppedUsernames, username)

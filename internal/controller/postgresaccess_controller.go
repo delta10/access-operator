@@ -218,9 +218,10 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	}
 
 	// remove users that are not handled by any PostgresAccess CR anymore
+	// Use Restrict policy as the safe default for orphaned users
 	for _, user := range users {
 		if !usersHandled[user] {
-			err = r.DB.DropUser(ctx, user)
+			err = r.DB.DropUser(ctx, user, accessv1.CleanupPolicyRestrict)
 			if err != nil {
 				log.Error(err, "failed to drop user in PostgreSQL", "username", user)
 				continue
@@ -277,9 +278,15 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 		return true, err
 	}
 
+	// Determine cleanup policy, default to Restrict if not specified
+	cleanupPolicy := accessv1.CleanupPolicyRestrict
+	if pg.Spec.CleanupPolicy != nil {
+		cleanupPolicy = *pg.Spec.CleanupPolicy
+	}
+
 	for _, user := range users {
 		if pg.Spec.Username == user {
-			err = r.DB.DropUser(ctx, user)
+			err = r.DB.DropUser(ctx, user, cleanupPolicy)
 			if err != nil {
 				log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
 				continue

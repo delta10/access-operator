@@ -39,6 +39,18 @@ spec:
           spec:
             description: spec defines the desired state of PostgresAccess
             properties:
+              cleanupPolicy:
+                default: Restrict
+                description: |-
+                  cleanupPolicy specifies how to handle owned objects when dropping a user
+                  Cascade: drops all objects owned by the user (destructive)
+                  Restrict: prevents dropping the user if they own any objects (safe default)
+                  Orphan: reassigns owned objects to the current database owner before dropping
+                enum:
+                - Cascade
+                - Restrict
+                - Orphan
+                type: string
               connection:
                 description: |-
                   connection defines how to connect to PostgreSQL

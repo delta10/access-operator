@@ -405,7 +405,7 @@ spec:
 				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
 				By("creating a PostgresAccess resource referencing the connection secret")
-				err = createResourceFromSecretReference("test-username", testNamespace, "test-postgres-credentials-secret-ref", secretName, accessv1.GrantSpec{
+				err = createResourceFromSecretReference("test-username", testNamespace, "test-postgres-credentials-secret-ref", secretName, nil, accessv1.GrantSpec{
 					Database:   conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
 				})
@@ -442,7 +442,7 @@ spec:
 				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
 				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-				err = createResourceFromSecretReference("test-privileges-reconciliation", testNamespace, "test-postgres-credentials-secret-ref", secretName, accessv1.GrantSpec{
+				err = createResourceFromSecretReference("test-privileges-reconciliation", testNamespace, "test-postgres-credentials-secret-ref", secretName, nil, accessv1.GrantSpec{
 					Database:   conn.Database,
 					Privileges: []string{"CONNECT"},
 				})
@@ -457,7 +457,7 @@ spec:
 				Eventually(verifyInitialPrivileges, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 				By("updating the PostgresAccess resource to include additional privileges")
-				err = createResourceFromSecretReference("test-privileges-reconciliation", testNamespace, "test-postgres-credentials-secret-ref", secretName, accessv1.GrantSpec{
+				err = createResourceFromSecretReference("test-privileges-reconciliation", testNamespace, "test-postgres-credentials-secret-ref", secretName, nil, accessv1.GrantSpec{
 					Database:   conn.Database,
 					Privileges: []string{"CONNECT", "SELECT", "INSERT"},
 				})
@@ -477,7 +477,7 @@ spec:
 				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
 				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-				err = createResourceFromSecretReference("test-privileges-maintenance", testNamespace, "test-postgres-credentials-secret-ref", secretName, accessv1.GrantSpec{
+				err = createResourceFromSecretReference("test-privileges-maintenance", testNamespace, "test-postgres-credentials-secret-ref", secretName, nil, accessv1.GrantSpec{
 					Database:   conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
 				})
@@ -512,14 +512,11 @@ spec:
 				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
 				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-				err = createResourceFromSecretReference("test-deletion", testNamespace, "test-postgres-credentials-secret-ref", secretName, accessv1.GrantSpec{
+				err = createResourceFromSecretReference("test-deletion", testNamespace, "test-postgres-credentials-secret-ref", secretName, nil, accessv1.GrantSpec{
 					Database:   conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
 				})
 				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
-
-				err = triggerReconciliation("test-deletion", testNamespace)
-				Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation after creating PostgresAccess resource")
 
 				// Wait for the privileges to be granted
 				By("waiting for the privileges to be granted")
@@ -554,7 +551,7 @@ spec:
 				genSecName := "test-postgres-credentials-secret-ref"
 				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-				err = createResourceFromSecretReference("test-deletion", testNamespace, genSecName, secretName, accessv1.GrantSpec{
+				err = createResourceFromSecretReference("test-deletion", testNamespace, genSecName, secretName, nil, accessv1.GrantSpec{
 					Database:   conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
 				})
@@ -595,6 +592,109 @@ spec:
 				Eventually(verifySecretDeleted, 2*time.Minute, 5*time.Second).Should(Succeed())
 			})
 
+			It("should reassign owned objects to the database owner when cleanupPolicy is Orphan", func() {
+				By("creating a PostgresAccess resource with cleanupPolicy Orphan")
+				testNamespace, conn := getDatabaseVariables()
+				secretName, err := createConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				managedUsername := "test-orphan-cleanup"
+				generatedSecret := "test-orphan-cleanup-credentials"
+				orphanPolicy := accessv1.CleanupPolicyOrphan
+				err = createResourceFromSecretReference(
+					managedUsername,
+					testNamespace,
+					generatedSecret,
+					secretName,
+					&orphanPolicy,
+					accessv1.GrantSpec{
+						Database:   conn.Database,
+						Privileges: []string{"CONNECT", "USAGE", "CREATE"},
+					},
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess with cleanupPolicy Orphan")
+
+				By("waiting for the generated secret to be created and reading the managed password")
+				var managedPassword string
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "secret", generatedSecret, "-n", testNamespace, "-o", "jsonpath={.data.password}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
+					g.Expect(strings.TrimSpace(output)).NotTo(BeEmpty(), "Secret should have password data")
+					passwordBytes, err := b64.StdEncoding.DecodeString(strings.TrimSpace(output))
+					g.Expect(err).NotTo(HaveOccurred(), "Secret password should be valid base64")
+					managedPassword = string(passwordBytes)
+					g.Expect(managedPassword).NotTo(BeEmpty(), "Managed password should not be empty")
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("waiting for the managed user to be created")
+				Eventually(func(g Gomega) {
+					output, err := runPostgresQuery(
+						testNamespace,
+						conn,
+						fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = '%s');", managedUsername),
+					)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to check if managed user exists")
+					g.Expect(output).To(Equal("t"), "Managed database user should have been created")
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("creating an object owned by the managed user")
+				managedConn := conn
+				managedConn.Username = managedUsername
+				managedConn.Password = managedPassword
+				ownedTable := "orphan_policy_owned_table"
+				_, err = runPostgresQuery(
+					testNamespace,
+					managedConn,
+					fmt.Sprintf(`CREATE TABLE public.%s (id SERIAL PRIMARY KEY, value TEXT);`, ownedTable),
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create an owned object as the managed user")
+
+				By("verifying the object is initially owned by the managed user")
+				Eventually(func(g Gomega) {
+					output, err := runPostgresQuery(
+						testNamespace,
+						conn,
+						fmt.Sprintf(
+							"SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = '%s';",
+							ownedTable,
+						),
+					)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to query table owner before deletion")
+					g.Expect(output).To(Equal(managedUsername), "Table should initially be owned by the managed user")
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("deleting the PostgresAccess resource")
+				cmd := exec.Command("kubectl", "delete", "postgresaccess", managedUsername, "-n", testNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
+
+				By("verifying that the managed role is deleted")
+				Eventually(func(g Gomega) {
+					output, err := runPostgresQuery(
+						testNamespace,
+						conn,
+						fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = '%s');", managedUsername),
+					)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to check if managed user exists after deletion")
+					g.Expect(output).To(Equal("f"), "Managed role should have been dropped")
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("verifying ownership is reassigned to the current database owner")
+				Eventually(func(g Gomega) {
+					output, err := runPostgresQuery(
+						testNamespace,
+						conn,
+						fmt.Sprintf(
+							"SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = '%s';",
+							ownedTable,
+						),
+					)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to query table owner after deletion")
+					g.Expect(output).To(Equal(conn.Username), "Owned objects should be reassigned to the database owner")
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			})
+
 			It("should update the database user's password when the PostgresAccess resource is updated with a new password", func() {
 				By("creating a PostgresAccess resource")
 				testNamespace, conn := getDatabaseVariables()
@@ -602,7 +702,7 @@ spec:
 				genSecName := "test-postgres-credentials-secret-ref"
 				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-				err = createResourceFromSecretReference("test-password-update", testNamespace, genSecName, secretName, accessv1.GrantSpec{
+				err = createResourceFromSecretReference("test-password-update", testNamespace, genSecName, secretName, nil, accessv1.GrantSpec{
 					Database:   conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
 				})
@@ -662,7 +762,7 @@ data:
 				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
 				CRUsername := "test-password-rotation"
-				err = createResourceFromSecretReference(CRUsername, testNamespace, genSecName, secretName, accessv1.GrantSpec{
+				err = createResourceFromSecretReference(CRUsername, testNamespace, genSecName, secretName, nil, accessv1.GrantSpec{
 					Database:   conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
 				})
@@ -909,10 +1009,21 @@ data:
 	return secretName, err
 }
 
-func createResourceFromSecretReference(username, namespace, generatedSecretName, connSecret string, grants accessv1.GrantSpec) error {
+func createResourceFromSecretReference(
+	username,
+	namespace,
+	generatedSecretName,
+	connSecret string,
+	cleanupPolicy *accessv1.CleanupPolicy,
+	grants accessv1.GrantSpec,
+) error {
 	privilegesYAML := "privileges:"
 	for _, privilege := range grants.Privileges {
 		privilegesYAML += fmt.Sprintf("\n        - %s", privilege)
+	}
+	cleanupPolicyYAML := ""
+	if cleanupPolicy != nil && *cleanupPolicy != "" {
+		cleanupPolicyYAML = fmt.Sprintf("  cleanupPolicy: %s\n", *cleanupPolicy)
 	}
 	pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
 kind: PostgresAccess
@@ -924,10 +1035,11 @@ spec:
   username: %s
   connection:
     existingSecret: %s
+%s
   grants:
     - database: %s
       %s
-`, username, namespace, generatedSecretName, username, connSecret, grants.Database, privilegesYAML)
+`, username, namespace, generatedSecretName, username, connSecret, cleanupPolicyYAML, grants.Database, privilegesYAML)
 
 	cmd := exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(pgAccessYAML)
