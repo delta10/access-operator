@@ -333,7 +333,7 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 	}
 
 	c := pg.Spec.Connection
-	if c.Username != nil && c.Username.Value != nil && c.Password != nil && c.Password.Value != nil &&
+	if c.Username != nil && c.Password != nil &&
 		c.Host != nil && *c.Host != "" && c.Port != nil && c.Database != nil && *c.Database != "" {
 
 		sslMode := "require" // secure default
@@ -341,8 +341,18 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 			sslMode = *c.SSLMode
 		}
 
+		username, err := r.resolveValueOrSecretRef(ctx, c.Username, pg.Namespace)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve username: %w", err)
+		}
+
+		password, err := r.resolveValueOrSecretRef(ctx, c.Password, pg.Namespace)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve password: %w", err)
+		}
+
 		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
-			*c.Username.Value, *c.Password.Value, *c.Host, *c.Port, *c.Database, sslMode), nil
+			username, password, *c.Host, *c.Port, *c.Database, sslMode), nil
 	}
 
 	return "", fmt.Errorf("no valid connection details provided")
@@ -355,6 +365,31 @@ func (r *PostgresAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Named("postgresaccess").
 		Owns(&corev1.Secret{}).
 		Complete(r)
+}
+
+// resolveValueOrSecretRef resolves a value that can be either a direct value or a secret reference
+func (r *PostgresAccessReconciler) resolveValueOrSecretRef(ctx context.Context, ref *accessv1.SecretKeySelector, namespace string) (string, error) {
+	if ref == nil {
+		return "", fmt.Errorf("value or secret reference is nil")
+	}
+
+	if ref.Value != nil {
+		return *ref.Value, nil
+	}
+
+	if ref.SecretRef != nil {
+		var sec corev1.Secret
+		if err := r.Get(ctx, types.NamespacedName{Name: ref.SecretRef.Name, Namespace: namespace}, &sec); err != nil {
+			return "", fmt.Errorf("failed to get secret: %w", err)
+		}
+		data, ok := sec.Data[ref.SecretRef.Key]
+		if !ok || len(data) == 0 {
+			return "", fmt.Errorf("secret is missing key: %s", ref.SecretRef.Key)
+		}
+		return string(data), nil
+	}
+
+	return "", fmt.Errorf("neither value nor secretRef is specified")
 }
 
 func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string) (ConnectionDetails, error) {

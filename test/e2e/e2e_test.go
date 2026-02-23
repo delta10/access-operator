@@ -377,6 +377,23 @@ var _ = Describe("Manager", Ordered, func() {
 				utils.WaitForDatabaseUserState(testNamespace, conn, "test-username", true)
 			})
 
+			It("should create a database user when connection is provided via direct connection details but user and pass via secret reference", func() {
+				By("creating a secret with the username and password")
+				testNamespace, conn := utils.GetDatabaseVariables()
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				By("creating a PostgresAccess resource referencing the username/password secret and providing connection details directly")
+				err = utils.CreatePostgresAccessWithConnectionSecretRef("test-user-pass", testNamespace, "test-user-pass-secret", conn, secretName, []string{"CONNECT", "SELECT"})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference for username/password")
+
+				By("waiting for the generated secret to be created")
+				utils.WaitForSecretField(testNamespace, "test-user-pass-secret", "username")
+
+				By("verifying the database user was created")
+				utils.WaitForDatabaseUserState(testNamespace, conn, "test-user-pass", true)
+			})
+
 			It("should reconcile privileges when they're changed in the config", func() {
 				By("creating a PostgresAccess resource with certain privileges")
 				testNamespace, conn := utils.GetDatabaseVariables()
