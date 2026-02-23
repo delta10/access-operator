@@ -1,0 +1,29 @@
+apiVersion: access.k8s.delta10.nl/v1
+kind: PostgresAccess
+metadata:
+    labels:
+        app.kubernetes.io/name: access-operator
+        app.kubernetes.io/managed-by: kustomize
+    name: postgresaccess-sample
+spec:
+    generatedSecret: my-app-postgres-credentials
+    username: my-app-user
+    connection:
+        host: localhost
+        port: 5432
+        database: postgres
+        username:
+            secretRef:
+                name: postgres-admin-secret
+                key: username
+        password:
+            secretRef:
+                name: postgres-admin-secret
+                key: password
+    grants:
+        -   database: postgres
+            privileges:
+                - CONNECT
+                - SELECT
+                - INSERT
+                - UPDATE
