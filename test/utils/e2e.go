@@ -308,6 +308,9 @@ spec:
 `, username, namespace, generatedSecretName, username, connection.Host, connection.Port, connection.Database, secretKeyRef, secretKeyRef, connection.Database, formatPrivilegesYAML(privileges, "        "))
 
 	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(pgAccessYAML)
+	_, err := Run(cmd)
+	return err
 }
 
 // CreateResourceFromSecretReference creates a PostgresAccess that references an existing secret.
