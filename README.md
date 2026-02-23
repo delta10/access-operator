@@ -13,6 +13,8 @@ First install the operator with the following command:
 ```bash
 make install
 ```
+If you wish to install the operator via its yaml you can find it in `config/crd/bases/access.k8s.delta10.nl_postgresaccesses.yaml`
+
 Then run it:
 ```bash
 make run
