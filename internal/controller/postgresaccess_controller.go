@@ -333,7 +333,7 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 	}
 
 	c := pg.Spec.Connection
-	if c.Username != nil && c.Username.Value != nil && c.Password != nil && c.Password.Value != nil &&
+	if c.Username != nil && c.Password != nil &&
 		c.Host != nil && *c.Host != "" && c.Port != nil && c.Database != nil && *c.Database != "" {
 
 		sslMode := "require" // secure default
@@ -341,8 +341,40 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 			sslMode = *c.SSLMode
 		}
 
+		username := ""
+		if c.Username.Value != nil {
+			username = *c.Username.Value
+		} else if c.Username.SecretRef != nil {
+			// If Username is provided as a SecretRef, we need to fetch the value from the secret
+			var usernameSec corev1.Secret
+			if err := r.Get(ctx, types.NamespacedName{Name: c.Username.SecretRef.Name, Namespace: pg.Namespace}, &usernameSec); err != nil {
+				return "", fmt.Errorf("failed to get secret for username: %w", err)
+			}
+			usernameData, ok := usernameSec.Data[c.Username.SecretRef.Key]
+			if !ok || len(usernameData) == 0 {
+				return "", fmt.Errorf("secret for username is missing key: %s", c.Username.SecretRef.Key)
+			}
+			username = string(usernameData)
+		}
+
+		password := ""
+		if c.Password.Value != nil {
+			password = *c.Password.Value
+		} else if c.Password.SecretRef != nil {
+			// If Password is provided as a SecretRef, we need to fetch the value from the secret
+			var passwordSec corev1.Secret
+			if err := r.Get(ctx, types.NamespacedName{Name: c.Password.SecretRef.Name, Namespace: pg.Namespace}, &passwordSec); err != nil {
+				return "", fmt.Errorf("failed to get secret for password: %w", err)
+			}
+			passwordData, ok := passwordSec.Data[c.Password.SecretRef.Key]
+			if !ok || len(passwordData) == 0 {
+				return "", fmt.Errorf("secret for password is missing key: %s", c.Password.SecretRef.Key)
+			}
+			password = string(passwordData)
+		}
+
 		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
-			*c.Username.Value, *c.Password.Value, *c.Host, *c.Port, *c.Database, sslMode), nil
+			username, password, *c.Host, *c.Port, *c.Database, sslMode), nil
 	}
 
 	return "", fmt.Errorf("no valid connection details provided")
