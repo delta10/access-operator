@@ -341,36 +341,14 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 			sslMode = *c.SSLMode
 		}
 
-		username := ""
-		if c.Username.Value != nil {
-			username = *c.Username.Value
-		} else if c.Username.SecretRef != nil {
-			// If Username is provided as a SecretRef, we need to fetch the value from the secret
-			var usernameSec corev1.Secret
-			if err := r.Get(ctx, types.NamespacedName{Name: c.Username.SecretRef.Name, Namespace: pg.Namespace}, &usernameSec); err != nil {
-				return "", fmt.Errorf("failed to get secret for username: %w", err)
-			}
-			usernameData, ok := usernameSec.Data[c.Username.SecretRef.Key]
-			if !ok || len(usernameData) == 0 {
-				return "", fmt.Errorf("secret for username is missing key: %s", c.Username.SecretRef.Key)
-			}
-			username = string(usernameData)
+		username, err := r.resolveValueOrSecretRef(ctx, c.Username, pg.Namespace)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve username: %w", err)
 		}
 
-		password := ""
-		if c.Password.Value != nil {
-			password = *c.Password.Value
-		} else if c.Password.SecretRef != nil {
-			// If Password is provided as a SecretRef, we need to fetch the value from the secret
-			var passwordSec corev1.Secret
-			if err := r.Get(ctx, types.NamespacedName{Name: c.Password.SecretRef.Name, Namespace: pg.Namespace}, &passwordSec); err != nil {
-				return "", fmt.Errorf("failed to get secret for password: %w", err)
-			}
-			passwordData, ok := passwordSec.Data[c.Password.SecretRef.Key]
-			if !ok || len(passwordData) == 0 {
-				return "", fmt.Errorf("secret for password is missing key: %s", c.Password.SecretRef.Key)
-			}
-			password = string(passwordData)
+		password, err := r.resolveValueOrSecretRef(ctx, c.Password, pg.Namespace)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve password: %w", err)
 		}
 
 		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
@@ -387,6 +365,31 @@ func (r *PostgresAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Named("postgresaccess").
 		Owns(&corev1.Secret{}).
 		Complete(r)
+}
+
+// resolveValueOrSecretRef resolves a value that can be either a direct value or a secret reference
+func (r *PostgresAccessReconciler) resolveValueOrSecretRef(ctx context.Context, ref *accessv1.SecretKeySelector, namespace string) (string, error) {
+	if ref == nil {
+		return "", fmt.Errorf("value or secret reference is nil")
+	}
+
+	if ref.Value != nil {
+		return *ref.Value, nil
+	}
+
+	if ref.SecretRef != nil {
+		var sec corev1.Secret
+		if err := r.Get(ctx, types.NamespacedName{Name: ref.SecretRef.Name, Namespace: namespace}, &sec); err != nil {
+			return "", fmt.Errorf("failed to get secret: %w", err)
+		}
+		data, ok := sec.Data[ref.SecretRef.Key]
+		if !ok || len(data) == 0 {
+			return "", fmt.Errorf("secret is missing key: %s", ref.SecretRef.Key)
+		}
+		return string(data), nil
+	}
+
+	return "", fmt.Errorf("neither value nor secretRef is specified")
 }
 
 func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string) (ConnectionDetails, error) {
