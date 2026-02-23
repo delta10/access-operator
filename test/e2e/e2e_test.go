@@ -384,10 +384,7 @@ var _ = Describe("Manager", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
 				By("creating a PostgresAccess resource referencing the username/password secret and providing connection details directly")
-				err = utils.CreatePostgresAccessWithConnectionSecretRef("test-username", testNamespace, "test-user-pass-secret", conn, secretName, accessv1.GrantSpec{
-					Database:   conn.Database,
-					Privileges: []string{"CONNECT", "SELECT"},
-				})
+				err = utils.CreatePostgresAccessWithConnectionSecretRef("test-user-pass", testNamespace, "test-user-pass-secret", conn, secretName, []string{"CONNECT", "SELECT"})
 				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference for username/password")
 
 				By("waiting for the generated secret to be created")
