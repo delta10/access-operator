@@ -275,7 +275,7 @@ spec:
 func CreatePostgresAccessWithConnectionSecretRef(
 	username,
 	namespace,
-	generatedSecretName,
+	generatedSecretName string,
 	connection controller.ConnectionDetails,
 	secretKeyRef string,
 	privileges []string,
