@@ -19,6 +19,7 @@ rules:
 - apiGroups:
   - access.k8s.delta10.nl
   resources:
+  - cronjobs
   - postgresaccesses
   verbs:
   - create
@@ -31,12 +32,14 @@ rules:
 - apiGroups:
   - access.k8s.delta10.nl
   resources:
+  - cronjobs/finalizers
   - postgresaccesses/finalizers
   verbs:
   - update
 - apiGroups:
   - access.k8s.delta10.nl
   resources:
+  - cronjobs/status
   - postgresaccesses/status
   verbs:
   - get

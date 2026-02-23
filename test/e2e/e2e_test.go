@@ -21,18 +21,15 @@ package e2e
 
 import (
 	b64 "encoding/base64"
-	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/delta10/access-operator/internal/controller"
+	accessv1 "github.com/delta10/access-operator/api/v1"
 	"github.com/delta10/access-operator/test/utils"
 )
 
@@ -191,7 +188,7 @@ var _ = Describe("Manager", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred(), "Metrics service should exist")
 
 			By("getting the service account token")
-			token, err := serviceAccountToken()
+			token, err := utils.ServiceAccountToken(namespace, serviceAccountName)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(token).NotTo(BeEmpty())
 
@@ -261,7 +258,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 			By("getting the metrics by checking curl-metrics logs")
 			verifyMetricsAvailable := func(g Gomega) {
-				metricsOutput, err := getMetricsOutput()
+				metricsOutput, err := utils.GetMetricsOutput(namespace, "curl-metrics")
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
 				g.Expect(metricsOutput).NotTo(BeEmpty())
 				g.Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
@@ -272,19 +269,19 @@ var _ = Describe("Manager", Ordered, func() {
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 		Context("Postgres", func() {
 			BeforeEach(func() {
-				By("creating the test namespace if it doesn't exist")
-				testNamespace, conn := getDatabaseVariables()
-				cmd := exec.Command("kubectl", "create", "ns", testNamespace, "--dry-run=client", "-o", "yaml")
-				output, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace yaml")
+				By("ensuring no stale test namespace exists")
+				testNamespace, conn := utils.GetDatabaseVariables()
+				cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--timeout=1m")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to clean up existing test namespace")
 
-				cmd = exec.Command("kubectl", "apply", "-f", "-")
-				cmd.Stdin = strings.NewReader(output)
+				By("creating a fresh test namespace")
+				cmd = exec.Command("kubectl", "create", "ns", testNamespace)
 				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
 
 				By("deploying PostgreSQL in the test namespace")
-				err = deployPostgresInstance(testNamespace, conn)
+				err = utils.DeployPostgresInstance(testNamespace, conn)
 				Expect(err).NotTo(HaveOccurred(), "Failed to deploy PostgreSQL instance")
 
 				By("waiting for PostgreSQL to become ready")
@@ -302,7 +299,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("waiting for PostgreSQL to accept connections")
 				verifyPostgresReady := func(g Gomega) {
-					output, err := runPostgresQuery(
+					output, err := utils.RunPostgresQuery(
 						testNamespace,
 						conn,
 						"SELECT 1;",
@@ -313,7 +310,7 @@ var _ = Describe("Manager", Ordered, func() {
 				Eventually(verifyPostgresReady, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 				By("ensuring the test table exists")
-				_, err = runPostgresQuery(
+				_, err = utils.RunPostgresQuery(
 					testNamespace,
 					conn,
 					"CREATE TABLE IF NOT EXISTS public.access_operator_test(id SERIAL PRIMARY KEY, value TEXT);",
@@ -324,348 +321,288 @@ var _ = Describe("Manager", Ordered, func() {
 			})
 
 			AfterEach(func() {
-				testNamespace, _ := getDatabaseVariables()
+				testNamespace, _ := utils.GetDatabaseVariables()
 
 				By("cleaning up any remaining PostgresAccess resources")
-				cmd := exec.Command("kubectl", "delete", "postgresaccess", "--all", "-n", testNamespace, "--ignore-not-found")
+				cmd := exec.Command("kubectl", "delete", "postgresaccess", "--all", "-n", testNamespace, "--ignore-not-found", "--wait=false")
 				_, _ = utils.Run(cmd)
 
 				By("cleaning up the test namespace")
-				cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found")
+				cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--wait=false")
 				_, _ = utils.Run(cmd)
 			})
 
-			It("should create a PostgresAccess resource and verify database connectivity",
-				func() {
-					By("creating a PostgresAccess resource")
-					testNamespace, conn := getDatabaseVariables()
+			It("should create a PostgresAccess resource and create a database user with the specified privileges via direct connection details", func() {
+				testNamespace, conn := utils.GetDatabaseVariables()
+				resourceName := "test-postgres-access"
+				generatedSecret := "test-postgres-credentials"
 
-					pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
-kind: PostgresAccess
-metadata:
-  name: test-postgres-access
-  namespace: %s
-spec:
-  generatedSecret: test-postgres-credentials
-  username: test-postgres-access
-  connection:
-    host: %s
-    port: %s
-    database: %s
-    sslMode: disable
-    username:
-      value: %s
-    password:
-      value: %s
-  grants:
-    - database: %s
-      privileges:
-        - CONNECT
-        - SELECT
-`, testNamespace, conn.Host, conn.Port, conn.Database, conn.Username, conn.Password, conn.Database)
+				By("creating a PostgresAccess resource")
+				err := utils.CreatePostgresAccessWithDirectConnection(
+					resourceName,
+					testNamespace,
+					generatedSecret,
+					conn,
+					[]string{"CONNECT", "SELECT"},
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with connection details")
 
-					cmd := exec.Command("kubectl", "apply", "-f", "-")
-					cmd.Stdin = strings.NewReader(pgAccessYAML)
-					_, err := utils.Run(cmd)
-					Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with connection details ", " output ", err, " yaml ", pgAccessYAML)
+				By("waiting for the generated secret to be created")
+				utils.WaitForSecretField(testNamespace, generatedSecret, "username")
 
-					// Wait for the secret to be created
-					By("waiting for the generated secret to be created")
-					verifySecretCreated := func(g Gomega) {
-						cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials", "-n", testNamespace, "-o", "jsonpath={.data.username}")
-						output, err := utils.Run(cmd)
-						g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
-						g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
-					}
-					Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
+				By("verifying the database user was created")
+				utils.WaitForDatabaseUserState(testNamespace, conn, resourceName, true)
 
-					// Verify the database user was created
-					By("verifying the database user was created")
-					verifyDatabaseUserCreated := func(g Gomega) {
-						output, err := runPostgresQuery(
-							testNamespace,
-							conn,
-							"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'test-postgres-access');",
-						)
-						g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
-						g.Expect(output).To(Equal("t"), "Database user should have been created")
-					}
-					Eventually(verifyDatabaseUserCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
+				By("verifying the privileges were granted")
+				utils.WaitForPrivilegesGranted(testNamespace, conn, resourceName, []string{"CONNECT", "SELECT"})
+			})
 
-					// Verify the privileges were granted
-					By("verifying the privileges were granted")
-					verifyPrivilegesGranted := func(g Gomega) {
-						output, err := runPostgresQuery(
-							testNamespace,
-							conn,
-							`SELECT
-  has_database_privilege('test-postgres-access', current_database(), 'CONNECT'),
-  has_table_privilege('test-postgres-access', 'public.access_operator_test', 'SELECT');`,
-						)
-						g.Expect(err).NotTo(HaveOccurred(), "Failed to check user privileges")
-						privileges := strings.Split(output, ",")
-						g.Expect(privileges).To(HaveLen(2), "Expected connect and select privilege results")
-						g.Expect(privileges[0]).To(Equal("t"), "User should have CONNECT privilege")
-						g.Expect(privileges[1]).To(Equal("t"), "User should have SELECT privilege")
-					}
-					Eventually(verifyPrivilegesGranted, 2*time.Minute, 5*time.Second).Should(Succeed())
+			It("should create a PostgresAccess resource with connectivity as a secret reference and create a database user accordingly", func() {
+				By("creating a secret with the connection details")
+				testNamespace, conn := utils.GetDatabaseVariables()
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				By("creating a PostgresAccess resource referencing the connection secret")
+				err = utils.CreateResourceFromSecretReference("test-username", testNamespace, "test-postgres-credentials-secret-ref", secretName, nil, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
 				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
-			It("should create a PostgresAccess resource with with connectivity as a secret reference and verify database connectivity",
-				func() {
-					By("creating a secret with the connection details")
-					testNamespace, conn := getDatabaseVariables()
-					connectionSecretYAML :=
-						fmt.Sprintf(`apiVersion: v1
+				By("waiting for the generated secret to be created")
+				utils.WaitForSecretField(testNamespace, "test-postgres-credentials-secret-ref", "username")
+
+				By("verifying the database user was created")
+				utils.WaitForDatabaseUserState(testNamespace, conn, "test-username", true)
+			})
+
+			It("should reconcile privileges when they're changed in the config", func() {
+				By("creating a PostgresAccess resource with certain privileges")
+				testNamespace, conn := utils.GetDatabaseVariables()
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = utils.CreateResourceFromSecretReference("test-privileges-reconciliation", testNamespace, "test-postgres-credentials-secret-ref", secretName, nil, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				By("waiting for the initial privileges to be granted")
+				utils.WaitForPrivilegesGranted(testNamespace, conn, "test-privileges-reconciliation", []string{"CONNECT"})
+
+				By("updating the PostgresAccess resource to include additional privileges")
+				err = utils.CreateResourceFromSecretReference("test-privileges-reconciliation", testNamespace, "test-postgres-credentials-secret-ref", secretName, nil, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT", "INSERT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to update PostgresAccess resource with new privileges")
+
+				By("verifying that the new privileges are granted")
+				utils.WaitForPrivilegesGranted(testNamespace, conn, "test-privileges-reconciliation", []string{"CONNECT", "SELECT", "INSERT"})
+			})
+
+			It("should reconcile the privileges of a PostgresAccess resource when they are manually revoked in the database", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := utils.GetDatabaseVariables()
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = utils.CreateResourceFromSecretReference("test-privileges-maintenance", testNamespace, "test-postgres-credentials-secret-ref", secretName, nil, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				By("waiting for the privileges to be granted")
+				utils.WaitForPrivilegesGranted(testNamespace, conn, "test-privileges-maintenance", []string{"CONNECT", "SELECT"})
+
+				By("revoking the SELECT privilege from the database user")
+				_, err = utils.RunPostgresQuery(
+					testNamespace,
+					conn,
+					`REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM "test-privileges-maintenance";`,
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to revoke SELECT privilege")
+
+				err = utils.TriggerReconciliation("test-privileges-maintenance", testNamespace)
+				Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation after revoking privileges")
+
+				By("verifying that the controller reconciles and restores the revoked privilege")
+				utils.WaitForPrivilegesGranted(testNamespace, conn, "test-privileges-maintenance", []string{"CONNECT", "SELECT"})
+			})
+
+			It("should delete the database user when the PostgresAccess resource is deleted", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := utils.GetDatabaseVariables()
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = utils.CreateResourceFromSecretReference("test-deletion", testNamespace, "test-postgres-credentials-secret-ref", secretName, nil, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				By("waiting for the privileges to be granted")
+				utils.WaitForPrivilegesGranted(testNamespace, conn, "test-deletion", []string{"CONNECT", "SELECT"})
+
+				By("deleting the PostgresAccess resource")
+				err = utils.DeletePostgresAccess("test-deletion", testNamespace)
+				Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
+
+				By("verifying that the database user is deleted")
+				utils.WaitForDatabaseUserState(testNamespace, conn, "test-deletion", false)
+			})
+
+			It("should delete the database user and secrets when the PostgresAccess resource is deleted", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := utils.GetDatabaseVariables()
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				genSecName := "test-postgres-credentials-secret-ref"
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = utils.CreateResourceFromSecretReference("test-deletion", testNamespace, genSecName, secretName, nil, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				By("waiting for the privileges to be granted")
+				utils.WaitForPrivilegesGranted(testNamespace, conn, "test-deletion", []string{"CONNECT", "SELECT"})
+
+				By("deleting the PostgresAccess resource")
+				err = utils.DeletePostgresAccess("test-deletion", testNamespace)
+				Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
+
+				By("verifying that the database user is deleted")
+				utils.WaitForDatabaseUserState(testNamespace, conn, "test-deletion", false)
+
+				By("verifying that the generated secret is deleted")
+				utils.WaitForSecretDeleted(testNamespace, genSecName)
+			})
+
+			It("should reassign owned objects to the database owner when cleanupPolicy is Orphan", func() {
+				By("creating a PostgresAccess resource with cleanupPolicy Orphan")
+				testNamespace, conn := utils.GetDatabaseVariables()
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				managedUsername := "test-orphan-cleanup"
+				generatedSecret := "test-orphan-cleanup-credentials"
+				orphanPolicy := accessv1.CleanupPolicyOrphan
+				err = utils.CreateResourceFromSecretReference(
+					managedUsername,
+					testNamespace,
+					generatedSecret,
+					secretName,
+					&orphanPolicy,
+					accessv1.GrantSpec{
+						Database:   conn.Database,
+						Privileges: []string{"CONNECT", "USAGE", "CREATE"},
+					},
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess with cleanupPolicy Orphan")
+
+				By("waiting for the generated secret to be created and reading the managed password")
+				managedPassword := utils.WaitForDecodedSecretField(testNamespace, generatedSecret, "password")
+
+				By("waiting for the managed user to be created")
+				utils.WaitForDatabaseUserState(testNamespace, conn, managedUsername, true)
+
+				By("creating an object owned by the managed user")
+				managedConn := conn
+				managedConn.Username = managedUsername
+				managedConn.Password = managedPassword
+				ownedTable := "orphan_policy_owned_table"
+				_, err = utils.RunPostgresQuery(
+					testNamespace,
+					managedConn,
+					fmt.Sprintf(`CREATE TABLE public.%s (id SERIAL PRIMARY KEY, value TEXT);`, ownedTable),
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create an owned object as the managed user")
+
+				By("verifying the object is initially owned by the managed user")
+				utils.WaitForTableOwner(testNamespace, conn, ownedTable, managedUsername)
+
+				By("deleting the PostgresAccess resource")
+				err = utils.DeletePostgresAccess(managedUsername, testNamespace)
+				Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
+
+				By("verifying that the managed role is deleted")
+				utils.WaitForDatabaseUserState(testNamespace, conn, managedUsername, false)
+
+				By("verifying ownership is reassigned to the current database owner")
+				utils.WaitForTableOwner(testNamespace, conn, ownedTable, conn.Username)
+			})
+
+			It("should update the database user's password when the PostgresAccess resource is updated with a new password", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := utils.GetDatabaseVariables()
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				genSecName := "test-postgres-credentials-secret-ref"
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = utils.CreateResourceFromSecretReference("test-password-update", testNamespace, genSecName, secretName, nil, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				By("waiting for the privileges to be granted")
+				CRUsername := "test-password-update"
+				utils.WaitForPrivilegesGranted(testNamespace, conn, CRUsername, []string{"CONNECT", "SELECT"})
+
+				By("updating the PostgresAccess resource with a new password")
+				// get the current password from the user with username test-password-update and update it in the YAML
+				newPassword := "new-secure-password"
+				updatedSecretYAML := fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
-  name: postgres-connection-secret
+  name: %s
   namespace: %s
 type: Opaque
 data:
-  host: %s
-  port: %s
-  database: %s
   username: %s
   password: %s
-  sslmode: %s
-`, testNamespace,
-							b64.StdEncoding.EncodeToString([]byte(conn.Host)),
-							b64.StdEncoding.EncodeToString([]byte(conn.Port)),
-							b64.StdEncoding.EncodeToString([]byte(conn.Database)),
-							b64.StdEncoding.EncodeToString([]byte(conn.Username)),
-							b64.StdEncoding.EncodeToString([]byte(conn.Password)),
-							b64.StdEncoding.EncodeToString([]byte("disable")))
+`, genSecName, testNamespace, b64.StdEncoding.EncodeToString([]byte(CRUsername)), b64.StdEncoding.EncodeToString([]byte(newPassword)))
 
-					cmd := exec.Command("kubectl", "apply", "-f", "-")
-					cmd.Stdin = strings.NewReader(connectionSecretYAML)
-					_, err := utils.Run(cmd)
-					Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(updatedSecretYAML)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to update connection secret with new password")
 
-					By("creating a PostgresAccess resource referencing the connection secret")
-					pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
-kind: PostgresAccess
-metadata:
-  name: test-postgres-access-secret-ref
-  namespace: %s
-spec:
-  generatedSecret: test-postgres-credentials-secret-ref
-  username: test-postgres-access-secret-ref
-  connection:
-    existingSecret: postgres-connection-secret
-  grants:
-    - database: %s
-      privileges:
-        - CONNECT
-        - SELECT
-`, testNamespace, conn.Database)
+				By("verifying that the database user's password is updated and the user can authenticate with the new password")
+				utils.WaitForAuthenticationSuccess(testNamespace, conn, CRUsername, newPassword)
+			})
 
-					cmd = exec.Command("kubectl", "apply", "-f", "-")
-					cmd.Stdin = strings.NewReader(pgAccessYAML)
-					_, err = utils.Run(cmd)
-					Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+			It("should update the database user's password the secret's password is rolled via deletion", func() {
+				By("creating a PostgresAccess resource")
+				testNamespace, conn := utils.GetDatabaseVariables()
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				genSecName := "test-postgres-credentials-secret-ref"
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-					// Wait for the secret to be created
-					By("waiting for the generated secret to be created")
-					verifySecretCreated := func(g Gomega) {
-						cmd := exec.Command("kubectl", "get", "secret", "test-postgres-credentials-secret-ref", "-n", testNamespace, "-o", "jsonpath={.data.username}")
-						output, err := utils.Run(cmd)
-						g.Expect(err).NotTo(HaveOccurred(), "Secret should exist")
-						g.Expect(output).NotTo(BeEmpty(), "Secret should have username data")
-					}
-
-					Eventually(verifySecretCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
-
-					// Verify the database user was created
-					By("verifying the database user was created")
-					verifyDatabaseUserCreated := func(g Gomega) {
-						output, err := runPostgresQuery(
-							testNamespace,
-							conn,
-							"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'test-postgres-access-secret-ref');",
-						)
-						g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
-						g.Expect(output).To(Equal("t"), "Database user should have been created")
-					}
-					Eventually(verifyDatabaseUserCreated, 2*time.Minute, 5*time.Second).Should(Succeed())
+				CRUsername := "test-password-rotation"
+				err = utils.CreateResourceFromSecretReference(CRUsername, testNamespace, genSecName, secretName, nil, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
 				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				By("waiting for the privileges to be granted")
+				utils.WaitForPrivilegesGranted(testNamespace, conn, "test-password-rotation", []string{"CONNECT", "SELECT"})
+
+				By("deleting the secret to trigger password rotation")
+				cmd := exec.Command("kubectl", "delete", "secret", genSecName, "-n", testNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to delete connection secret")
+
+				By("verifying that the database user's password is updated and the user can authenticate with the new password")
+				newPassword := utils.WaitForDecodedSecretField(testNamespace, genSecName, "password")
+				utils.WaitForAuthenticationSuccess(testNamespace, conn, CRUsername, newPassword)
+			})
 		})
 	})
 })
-
-// serviceAccountToken returns a token for the specified service account in the given namespace.
-// It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
-// and parsing the resulting token from the API response.
-func serviceAccountToken() (string, error) {
-	const tokenRequestRawString = `{
-		"apiVersion": "authentication.k8s.io/v1",
-		"kind": "TokenRequest"
-	}`
-
-	// Temporary file to store the token request
-	secretName := fmt.Sprintf("%s-token-request", serviceAccountName)
-	tokenRequestFile := filepath.Join("/tmp", secretName)
-	err := os.WriteFile(tokenRequestFile, []byte(tokenRequestRawString), os.FileMode(0o644))
-	if err != nil {
-		return "", err
-	}
-
-	var out string
-	verifyTokenCreation := func(g Gomega) {
-		// Execute kubectl command to create the token
-		cmd := exec.Command("kubectl", "create", "--raw", fmt.Sprintf(
-			"/api/v1/namespaces/%s/serviceaccounts/%s/token",
-			namespace,
-			serviceAccountName,
-		), "-f", tokenRequestFile)
-
-		output, err := cmd.CombinedOutput()
-		g.Expect(err).NotTo(HaveOccurred())
-
-		// Parse the JSON output to extract the token
-		var token tokenRequest
-		err = json.Unmarshal(output, &token)
-		g.Expect(err).NotTo(HaveOccurred())
-
-		out = token.Status.Token
-	}
-	Eventually(verifyTokenCreation).Should(Succeed())
-
-	return out, err
-}
-
-// getMetricsOutput retrieves and returns the logs from the curl pod used to access the metrics endpoint.
-func getMetricsOutput() (string, error) {
-	By("getting the curl-metrics logs")
-	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
-	return utils.Run(cmd)
-}
-
-func getDatabaseVariables() (string, controller.ConnectionDetails) {
-	testNamespace := "postgres-access-test"
-	defaultClusterHost := fmt.Sprintf("postgres.%s.svc", testNamespace)
-
-	postgresHost := os.Getenv("POSTGRES_CLUSTER_HOST")
-	if postgresHost == "" {
-		postgresHost = os.Getenv("POSTGRES_HOST")
-	}
-	if postgresHost == "" || postgresHost == "localhost" || postgresHost == "127.0.0.1" || postgresHost == "postgres" {
-		postgresHost = defaultClusterHost
-	}
-
-	postgresPort := os.Getenv("POSTGRES_CLUSTER_PORT")
-	if postgresPort == "" {
-		postgresPort = os.Getenv("POSTGRES_PORT")
-	}
-	if postgresPort == "" {
-		postgresPort = "5432"
-	}
-	postgresUser := os.Getenv("POSTGRES_USER")
-	if postgresUser == "" {
-		postgresUser = "postgres"
-	}
-	postgresPassword := os.Getenv("POSTGRES_PASSWORD")
-	if postgresPassword == "" {
-		postgresPassword = "postgres"
-	}
-	postgresDB := os.Getenv("POSTGRES_DB")
-	if postgresDB == "" {
-		postgresDB = "testdb"
-	}
-
-	return testNamespace, controller.ConnectionDetails{
-		Host:     postgresHost,
-		Port:     postgresPort,
-		Database: postgresDB,
-		Username: postgresUser,
-		Password: postgresPassword,
-	}
-}
-
-func deployPostgresInstance(namespace string, connection controller.ConnectionDetails) error {
-	manifest := fmt.Sprintf(`apiVersion: v1
-kind: Service
-metadata:
-  name: postgres
-  namespace: %s
-spec:
-  selector:
-    app: postgres
-  ports:
-    - name: postgres
-      port: 5432
-      targetPort: 5432
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: postgres
-  namespace: %s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: postgres
-  template:
-    metadata:
-      labels:
-        app: postgres
-    spec:
-      containers:
-        - name: postgres
-          image: postgres:15-alpine
-          env:
-            - name: POSTGRES_USER
-              value: %q
-            - name: POSTGRES_PASSWORD
-              value: %q
-            - name: POSTGRES_DB
-              value: %q
-          ports:
-            - containerPort: 5432
-`, namespace, namespace, connection.Username, connection.Password, connection.Database)
-
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
-	cmd.Stdin = strings.NewReader(manifest)
-	_, err := utils.Run(cmd)
-	return err
-}
-
-func runPostgresQuery(namespace string, connection controller.ConnectionDetails, query string) (string, error) {
-	cmd := exec.Command(
-		"kubectl",
-		"exec",
-		"-n",
-		namespace,
-		"deployment/postgres",
-		"--",
-		"env",
-		fmt.Sprintf("PGPASSWORD=%s", connection.Password),
-		"psql",
-		"-h",
-		"127.0.0.1",
-		"-U",
-		connection.Username,
-		"-d",
-		connection.Database,
-		"-tA",
-		"-F,",
-		"-c",
-		query,
-	)
-
-	output, err := utils.Run(cmd)
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(output), nil
-}
-
-// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
-// containing only the token field that we need to extract.
-type tokenRequest struct {
-	Status struct {
-		Token string `json:"token"`
-	} `json:"status"`
-}

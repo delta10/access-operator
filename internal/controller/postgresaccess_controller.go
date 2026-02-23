@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -42,15 +44,26 @@ type PostgresAccessReconciler struct {
 	DB     DBInterface
 }
 
+const privilegeDriftRequeueInterval = 30 * time.Second
+const syncedRequeueInterval = 5 * time.Minute
+const postgresAccessFinalizer = "access.k8s.delta10.nl/finalizer"
+
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/finalizers,verbs=update
 
+// RBAC permissions for CronJobs, if needed for finalizer cleanup.
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=cronjobs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=cronjobs/finalizers,verbs=update
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+
+	log.Info("Reconciling PostgresAccess", "namespace", req.Namespace, "name", req.Name)
 
 	var pg accessv1.PostgresAccess
 	if err := r.Get(ctx, req.NamespacedName, &pg); err != nil {
@@ -72,14 +85,21 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		},
 	}
 
-	var username string
 	var password string
+	inSync := true
 
-	if pg.Spec.Username != nil && *pg.Spec.Username != "" {
-		username = *pg.Spec.Username
+	finalized, err := r.finalizePostgresAccess(ctx, &pg)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	// If the resource is finalized, we return early to avoid requeuing.
+	// The finalizer will have been removed, so no further reconciliation will occur for this resource.
+	if finalized {
+		return ctrl.Result{}, nil
 	}
 
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sec, func() error {
+	// reconcile the secret that holds the connection details for this PostgresAccess CR.
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, sec, func() error {
 		sec.Type = corev1.SecretTypeOpaque
 
 		if sec.Data == nil {
@@ -92,9 +112,10 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			password = string(existingPassword)
 		} else {
 			password = rand.Text()
+			inSync = false
 		}
 
-		sec.Data["username"] = []byte(username)
+		sec.Data["username"] = []byte(pg.Spec.Username)
 		sec.Data["password"] = []byte(password)
 
 		return controllerutil.SetControllerReference(&pg, sec, r.Scheme)
@@ -104,11 +125,35 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	connectionString, err := r.getConnectionString(ctx, &pg)
+	pgSync, err := r.reconcilePostgresAccess(ctx, &pg)
 	if err != nil {
-		log.Error(err, "failed to get connection string, no valid connection details provided")
+		log.Error(err, "failed to reconcile PostgresAccess")
 		return ctrl.Result{}, err
 	}
+
+	if inSync {
+		inSync = pgSync
+	}
+
+	if inSync {
+		return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
+	}
+
+	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
+}
+
+// reconcilePostgresAccess connects to the PostgreSQL database, retrieves current grants and users.
+// Then ensures that the grants specified in the PostgresAccess CR are correctly applied in the database.
+// It also creates/removes any users as needed.
+func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, pg *accessv1.PostgresAccess) (bool, error) {
+	log := logf.FromContext(ctx)
+
+	connectionString, err := r.getConnectionString(ctx, pg)
+	if err != nil {
+		log.Error(err, "failed to get connection string, no valid connection details provided")
+		return false, err
+	}
+
 	if r.DB == nil {
 		r.DB = NewPostgresDB()
 	}
@@ -116,7 +161,7 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	err = r.DB.Connect(ctx, connectionString)
 	if err != nil {
 		log.Error(err, "Unable to connect to database", "connectionString", connectionString)
-		return ctrl.Result{}, err
+		return false, err
 	}
 	defer func() {
 		if err := r.DB.Close(ctx); err != nil {
@@ -124,22 +169,159 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}()
 
-	// create user and grant privileges
-	err = r.DB.CreateUser(ctx, username, password)
+	grants, err := r.DB.GetGrants(ctx)
 	if err != nil {
-		log.Error(err, "failed to create user in PostgreSQL", "username", username)
-		return ctrl.Result{}, err
+		log.Error(err, "failed to get grants from PostgreSQL")
+		return false, err
 	}
 
-	err = r.DB.GrantPrivileges(ctx, pg.Spec.Grants, username)
+	users, err := r.DB.GetUsers(ctx)
 	if err != nil {
-		log.Error(err, "failed to grant privileges in PostgreSQL", "username", username)
-		return ctrl.Result{}, err
+		return false, err
 	}
 
-	return ctrl.Result{}, nil
+	configs, err := getAllPostgresAccessGrantsAndUsers(ctx, r.Client, pg.Namespace)
+	if err != nil {
+		return false, err
+	}
+
+	usersHandled := make(map[string]bool)
+	inSync := true
+
+	for _, config := range configs {
+		password, err := getUserPassword(ctx, r.Client, pg.Namespace, config.GeneratedSecret)
+		if err != nil {
+			log.Error(err, "failed to get user password from generated secret", "username", config.Username, "secret", config.GeneratedSecret)
+			continue
+		}
+
+		// check if the user exists in the database, if not create it
+		if !slices.Contains(users, config.Username) {
+			err = r.DB.CreateUser(ctx, config.Username, password)
+			if err != nil {
+				log.Error(err, "failed to create user in PostgreSQL", "username", config.Username)
+				continue
+			}
+			inSync = false
+		} else {
+			// Update the password for existing user to ensure it matches the generated secret
+			// we skip the check if the password is already correct because that would make more queries and create more complexity.
+			err = r.DB.UpdateUserPassword(ctx, config.Username, password)
+			if err != nil {
+				log.Error(err, "failed to update user password in PostgreSQL for existing user", "username", config.Username)
+				continue
+			}
+
+			// don't check sync here to avoid extra queries to the database, we'll trust it's fine
+		}
+
+		toGrant, toRevoke := diffGrants(grants[config.Username], config.Grants)
+		if len(toGrant) > 0 || len(toRevoke) > 0 {
+			inSync = false
+		}
+
+		err = r.DB.GrantPrivileges(ctx, toGrant, config.Username)
+		if err != nil {
+			log.Error(err, "failed to grant privileges in PostgreSQL", "username", config.Username)
+			continue
+		}
+
+		err = r.DB.RevokePrivileges(ctx, toRevoke, config.Username)
+		if err != nil {
+			log.Error(err, "failed to revoke privileges in PostgreSQL", "username", config.Username)
+			continue
+		}
+
+		usersHandled[config.Username] = true
+	}
+
+	// remove users that are not handled by any PostgresAccess CR anymore
+	// Use Restrict policy as the safe default for orphaned users
+	for _, user := range users {
+		if !usersHandled[user] {
+			err = r.DB.DropUser(ctx, user, accessv1.CleanupPolicyRestrict)
+			if err != nil {
+				log.Error(err, "failed to drop user in PostgreSQL", "username", user)
+				continue
+			}
+		}
+	}
+
+	return inSync, nil
 }
 
+func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, pg *accessv1.PostgresAccess) (bool, error) {
+	log := logf.FromContext(ctx)
+	if pg.DeletionTimestamp.IsZero() {
+		// The object is not being deleted, so if it does not have our finalizer,
+		// then let's add the finalizer and update the object. This is equivalent
+		// to registering our finalizer.
+		if !controllerutil.ContainsFinalizer(pg, postgresAccessFinalizer) {
+			controllerutil.AddFinalizer(pg, postgresAccessFinalizer)
+			if err := r.Update(ctx, pg); err != nil {
+				return false, err
+			}
+		}
+		return false, nil
+	}
+
+	if !controllerutil.ContainsFinalizer(pg, postgresAccessFinalizer) {
+		return true, nil
+	}
+
+	connectionString, err := r.getConnectionString(ctx, pg)
+	if err != nil {
+		log.Error(err, "failed to get connection string during finalization")
+		return true, err
+	}
+
+	if r.DB == nil {
+		r.DB = NewPostgresDB()
+	}
+
+	err = r.DB.Connect(ctx, connectionString)
+	if err != nil {
+		log.Error(err, "Unable to connect to database during finalization")
+		return true, err
+	}
+	defer func() {
+		if err := r.DB.Close(ctx); err != nil {
+			log.Error(err, "failed to close database connection during finalization")
+		}
+	}()
+
+	users, err := r.DB.GetUsers(ctx)
+	if err != nil {
+		log.Error(err, "failed to get users from PostgreSQL during finalization")
+		return true, err
+	}
+
+	// Determine cleanup policy, default to Restrict if not specified
+	cleanupPolicy := accessv1.CleanupPolicyRestrict
+	if pg.Spec.CleanupPolicy != nil {
+		cleanupPolicy = *pg.Spec.CleanupPolicy
+	}
+
+	for _, user := range users {
+		if pg.Spec.Username == user {
+			err = r.DB.DropUser(ctx, user, cleanupPolicy)
+			if err != nil {
+				log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
+				continue
+			}
+		}
+	}
+
+	controllerutil.RemoveFinalizer(pg, postgresAccessFinalizer)
+	if err := r.Update(ctx, pg); err != nil {
+		return true, err
+	}
+
+	return true, nil
+}
+
+// getConnectionString constructs the PostgreSQL connection string based on the PostgresAccess spec.
+// It supports both direct connection details and referencing an existing secret for connection information.
 func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {
 	if pg.Spec.Connection.ExistingSecret != nil && *pg.Spec.Connection.ExistingSecret != "" {
 		connection, err := getExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, pg.Namespace)
@@ -220,4 +402,99 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 		Database: string(existingDatabase),
 		SSLMode:  sslMode,
 	}, nil
+}
+
+// UserGrants represents a username and their associated grants
+type UserGrants struct {
+	Username        string
+	GeneratedSecret string
+	Grants          []accessv1.GrantSpec
+}
+
+// getAllPostgresAccessGrantsAndUsers retrieves all PostgresAccess CRs and extracts usernames with their grants
+// Returns a slice of UserGrants containing the username and associated grants for each CR
+func getAllPostgresAccessGrantsAndUsers(ctx context.Context, c client.Client, namespace string) ([]UserGrants, error) {
+	var pgList accessv1.PostgresAccessList
+
+	// List all PostgresAccess resources in the namespace
+	// For all namespaces, omit the InNamespace option
+	if err := c.List(ctx, &pgList, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("failed to list PostgresAccess resources: %w", err)
+	}
+
+	result := make([]UserGrants, 0, len(pgList.Items))
+	for _, pg := range pgList.Items {
+		// Add the username and grants to the result
+		result = append(result, UserGrants{
+			Username:        pg.Spec.Username,
+			GeneratedSecret: pg.Spec.GeneratedSecret,
+			Grants:          pg.Spec.Grants,
+		})
+	}
+
+	return result, nil
+}
+
+// diffGrants compares the current grants with the desired grants and determines which grants need to be added or revoked
+// When current is nil or empty, all desired grants will be returned in toGrant and toRevoke will be empty
+func diffGrants(current, desired []accessv1.GrantSpec) (toGrant, toRevoke []accessv1.GrantSpec) {
+	// Create maps for easy lookup
+	currentMap := make(map[string]accessv1.GrantSpec)
+	desiredMap := make(map[string]accessv1.GrantSpec)
+
+	for _, grant := range current {
+		for _, privilege := range grant.Privileges {
+			key := fmt.Sprintf("%s:%s", grant.Database, privilege)
+			currentMap[key] = accessv1.GrantSpec{
+				Database:   grant.Database,
+				Schema:     grant.Schema,
+				Privileges: []string{privilege},
+			}
+		}
+	}
+
+	for _, grant := range desired {
+		for _, privilege := range grant.Privileges {
+			key := fmt.Sprintf("%s:%s", grant.Database, privilege)
+			desiredMap[key] = accessv1.GrantSpec{
+				Database:   grant.Database,
+				Schema:     grant.Schema,
+				Privileges: []string{privilege},
+			}
+		}
+	}
+
+	// Determine grants to add
+	for key, grant := range desiredMap {
+		if _, exists := currentMap[key]; !exists {
+			toGrant = append(toGrant, grant)
+		}
+	}
+
+	// Determine grants to revoke
+	for key, grant := range currentMap {
+		if _, exists := desiredMap[key]; !exists {
+			toRevoke = append(toRevoke, grant)
+		}
+	}
+
+	return toGrant, toRevoke
+}
+
+func getUserPassword(ctx context.Context, c client.Client, namespace, secretName string) (string, error) {
+	if secretName == "" {
+		return "", fmt.Errorf("generatedSecret is not specified in PostgresAccess spec")
+	}
+
+	var userSec corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &userSec); err != nil {
+		return "", fmt.Errorf("failed to get user secret for password retrieval: %w", err)
+	}
+
+	existingPassword, ok := userSec.Data["password"]
+	if !ok || len(existingPassword) == 0 {
+		return "", fmt.Errorf("user secret is missing password")
+	}
+
+	return string(existingPassword), nil
 }
