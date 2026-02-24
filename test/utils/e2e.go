@@ -122,11 +122,10 @@ func GetDatabaseVariables() (string, controller.ConnectionDetails) {
 	}
 }
 
-func GetCNPGConnectionDetailsFromSecret(secretName string) (string, controller.ConnectionDetails) {
-	testNamespace, _ := GetDatabaseVariables()
+func GetCNPGConnectionDetailsFromSecret(namespace, secretName string) controller.ConnectionDetails {
 	var conn controller.ConnectionDetails
 	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", testNamespace, "-o", "jsonpath={.data}")
+		cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", namespace, "-o", "jsonpath={.data}")
 		output, err := Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to get CNPG connection secret")
 
@@ -152,7 +151,7 @@ func GetCNPGConnectionDetailsFromSecret(secretName string) (string, controller.C
 		conn.Password = string(password)
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-	return testNamespace, conn
+	return conn
 }
 
 // DeployPostgresInstance deploys a postgres service/deployment into the provided namespace.
@@ -220,14 +219,32 @@ func DeployCNPGInstance(namespace string) error {
 		return fmt.Errorf("failed to deploy CNPG operator: %w", err)
 	}
 
+	cmd = exec.Command("kubectl", "wait", "--for=condition=Established", "crd/clusters.postgresql.cnpg.io", "--timeout=2m")
+	_, err = Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed waiting for CNPG Cluster CRD: %w", err)
+	}
+
+	cmd = exec.Command("kubectl", "wait", "deployment/cnpg-controller-manager", "-n", "cnpg-system", "--for=condition=Available", "--timeout=3m")
+	_, err = Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed waiting for CNPG operator deployment: %w", err)
+	}
+
 	// then deploy a CNPG cluster for testing
-	manifest := fmt.Sprintf(`apiVersion: cnpg.io/v1
+	manifest := fmt.Sprintf(`apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: cnpg-postgres
   namespace: %s
 spec:
   instances: 1
+  storage:
+    size: 1Gi
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
   postgresql:
     version: "15"
     parameters:
@@ -238,7 +255,17 @@ spec:
 	cmd = exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(manifest)
 	_, err = Run(cmd)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to apply CNPG cluster: %w", err)
+	}
+
+	cmd = exec.Command("kubectl", "wait", "cluster/cnpg-postgres", "-n", namespace, "--for=condition=Ready", "--timeout=5m")
+	_, err = Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed waiting for CNPG cluster to become Ready: %w", err)
+	}
+
+	return nil
 }
 
 // RunPostgresQuery executes a SQL query against the in-cluster postgres deployment.

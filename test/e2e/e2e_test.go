@@ -641,10 +641,10 @@ data:
 
 			It("should create a PostgresAccess resource and create a database user with the specified privileges on a CNPG instance", func() {
 				testNamespace := "pgsql-test"
-				namespace, conn := utils.GetCNPGConnectionDetailsFromSecret("cnpg-postgres-app")
+				conn := utils.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-app")
 
 				By("creating a PostgresAccess resource referencing the connection secret")
-				err := utils.CreateResourceFromSecretReference("test-username", namespace, "test-postgres-credentials-secret-ref", "cnpg-postgres-app", nil, accessv1.GrantSpec{
+				err := utils.CreateResourceFromSecretReference("test-username", testNamespace, "test-postgres-credentials-secret-ref", "cnpg-postgres-app", nil, accessv1.GrantSpec{
 					Database:   conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
 				})
