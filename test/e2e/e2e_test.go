@@ -266,7 +266,6 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
 		})
 
-		// +kubebuilder:scaffold:e2e-webhooks-checks
 		Context("Postgres", func() {
 			BeforeEach(func() {
 				By("ensuring no stale test namespace exists")

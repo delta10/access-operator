@@ -126,7 +126,7 @@ func GetCNPGConnectionDetailsFromSecret(secretName string) (string, controller.C
 	testNamespace, _ := GetDatabaseVariables()
 	var conn controller.ConnectionDetails
 	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", namespace, "-o", "jsonpath={.data}")
+		cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", testNamespace, "-o", "jsonpath={.data}")
 		output, err := Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to get CNPG connection secret")
 
@@ -134,11 +134,22 @@ func GetCNPGConnectionDetailsFromSecret(secretName string) (string, controller.C
 		err = json.Unmarshal([]byte(output), &data)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to parse CNPG connection secret data")
 
-		conn.Host = string(b64.StdEncoding.DecodeString(data["host"]))
-		conn.Port = string(b64.StdEncoding.DecodeString(data["port"]))
-		conn.Database = string(b64.StdEncoding.DecodeString(data["dbname"]))
-		conn.Username = string(b64.StdEncoding.DecodeString(data["username"]))
-		conn.Password = string(b64.StdEncoding.DecodeString(data["password"]))
+		host, err := b64.StdEncoding.DecodeString(data["host"])
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to decode host")
+		port, err := b64.StdEncoding.DecodeString(data["port"])
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to decode port")
+		dbname, err := b64.StdEncoding.DecodeString(data["dbname"])
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to decode dbname")
+		username, err := b64.StdEncoding.DecodeString(data["username"])
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to decode username")
+		password, err := b64.StdEncoding.DecodeString(data["password"])
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to decode password")
+
+		conn.Host = string(host)
+		conn.Port = string(port)
+		conn.Database = string(dbname)
+		conn.Username = string(username)
+		conn.Password = string(password)
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 	return testNamespace, conn
@@ -224,9 +235,9 @@ spec:
       max_connections: "100"
 `, namespace)
 
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd = exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(manifest)
-	_, err := Run(cmd)
+	_, err = Run(cmd)
 	return err
 }
 
