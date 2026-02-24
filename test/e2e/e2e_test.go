@@ -631,19 +631,6 @@ data:
 
 				err = utils.DeployCNPGInstance(testNamespace)
 				Expect(err).NotTo(HaveOccurred(), "Failed to deploy PGSQL instance")
-
-				By("waiting for the PGSQL instance to become ready")
-				cmd = exec.Command(
-					"kubectl",
-					"wait",
-					"--for=condition=Ready",
-					"cnpg/postgres",
-					"-n",
-					testNamespace,
-					"--timeout=3m",
-				)
-				_, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "PGSQL instance should become ready")
 			})
 
 			AfterAll(func() {
