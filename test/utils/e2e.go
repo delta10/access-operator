@@ -246,8 +246,6 @@ spec:
     initdb:
       database: app
       owner: app
-      postInitSQL:
-        - ALTER ROLE app SUPERUSER;
   postgresql:
     parameters:
       shared_buffers: "256MB"
