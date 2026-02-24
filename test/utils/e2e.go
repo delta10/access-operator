@@ -268,42 +268,20 @@ spec:
 	return nil
 }
 
-// RunPostgresQuery executes a SQL query against an in-cluster PostgreSQL target.
+// RunPostgresQuery executes a SQL query against the in-cluster postgres deployment.
 func RunPostgresQuery(namespace string, connection controller.ConnectionDetails, query string) (string, error) {
-	output, err := runPostgresQueryWithTarget(namespace, "deployment/postgres", connection, query)
-	if err == nil {
-		return output, nil
-	}
-
-	// CNPG tests do not provide deployment/postgres; derive a pod name from the rw service host.
-	cnpgTarget, deriveErr := deriveCNPGExecTarget(namespace, connection.Host)
-	if deriveErr != nil {
-		return "", fmt.Errorf("failed to derive CNPG exec target: %w; original error: %v", deriveErr, err)
-	}
-
-	fallbackOutput, fallbackErr := runPostgresQueryWithTarget(namespace, cnpgTarget, connection, query)
-	if fallbackErr == nil {
-		return fallbackOutput, nil
-	}
-
-	return "", fmt.Errorf("failed to query postgres via default target and CNPG fallback: %w; fallback error: %v", err, fallbackErr)
-}
-
-func runPostgresQueryWithTarget(namespace, target string, connection controller.ConnectionDetails, query string) (string, error) {
 	cmd := exec.Command(
 		"kubectl",
 		"exec",
 		"-n",
 		namespace,
-		target,
+		"deployment/postgres",
 		"--",
 		"env",
 		fmt.Sprintf("PGPASSWORD=%s", connection.Password),
 		"psql",
 		"-h",
-		connection.Host,
-		"-p",
-		connection.Port,
+		"127.0.0.1",
 		"-U",
 		connection.Username,
 		"-d",
@@ -320,43 +298,6 @@ func runPostgresQueryWithTarget(namespace, target string, connection controller.
 	}
 
 	return strings.TrimSpace(output), nil
-}
-
-func deriveCNPGExecTarget(namespace, host string) (string, error) {
-	shortHost := strings.Split(host, ".")[0]
-	if shortHost == "" {
-		return "", fmt.Errorf("empty host")
-	}
-
-	// CNPG read-write service is typically "<cluster>-rw", while pods are "<cluster>-<ordinal>".
-	clusterName := strings.TrimSuffix(shortHost, "-rw")
-	if clusterName == "" || clusterName == shortHost {
-		return "", fmt.Errorf("host %q is not a CNPG rw service name", host)
-	}
-
-	cmd := exec.Command(
-		"kubectl",
-		"get",
-		"pods",
-		"-n",
-		namespace,
-		"-l",
-		fmt.Sprintf("cnpg.io/cluster=%s", clusterName),
-		"--field-selector=status.phase=Running",
-		"-o",
-		"jsonpath={.items[0].metadata.name}",
-	)
-	output, err := Run(cmd)
-	if err != nil {
-		return "", fmt.Errorf("failed to list CNPG pods for cluster %q: %w", clusterName, err)
-	}
-
-	podName := strings.TrimSpace(output)
-	if podName == "" {
-		return "", fmt.Errorf("no running CNPG pod found for cluster %q", clusterName)
-	}
-
-	return fmt.Sprintf("pod/%s", podName), nil
 }
 
 // CreateConnectionDetailsViaSecret creates a connection secret used by PostgresAccess.
