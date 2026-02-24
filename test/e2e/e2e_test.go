@@ -266,6 +266,43 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
 		})
 
+		Context("CPPG", func() {
+			BeforeAll(func() {
+				By("deploying a PGSQL instance for testing")
+				testNamespace := "pgsql-test"
+				cmd := exec.Command("kubectl", "create", "ns", testNamespace)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create namespace for PGSQL testing")
+
+				err = utils.DeployCNPGInstance(testNamespace)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy PGSQL instance")
+			})
+
+			AfterAll(func() {
+				By("cleaning up the PGSQL test namespace")
+				cmd := exec.Command("kubectl", "delete", "ns", "pgsql-test", "--ignore-not-found", "--wait=false")
+				_, _ = utils.Run(cmd)
+			})
+
+			It("should create a PostgresAccess resource and create a database user with the specified privileges on a CNPG instance", func() {
+				testNamespace := "pgsql-test"
+				conn := utils.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-app")
+
+				By("creating a PostgresAccess resource referencing the connection secret")
+				err := utils.CreateResourceFromSecretReference("test-username", testNamespace, "test-postgres-credentials-secret-ref", "cnpg-postgres-app", nil, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				By("waiting for the generated secret to be created")
+				utils.WaitForSecretField(testNamespace, "test-postgres-credentials-secret-ref", "username")
+
+				By("verifying the database user was created")
+				utils.WaitForDatabaseUserState(testNamespace, conn, "test-username", true)
+			})
+		})
+
 		Context("Postgres", func() {
 			BeforeEach(func() {
 				By("ensuring no stale test namespace exists")
@@ -618,43 +655,6 @@ data:
 				By("verifying that the database user's password is updated and the user can authenticate with the new password")
 				newPassword := utils.WaitForDecodedSecretField(testNamespace, genSecName, "password")
 				utils.WaitForAuthenticationSuccess(testNamespace, conn, CRUsername, newPassword)
-			})
-		})
-
-		Context("CPPG", func() {
-			BeforeAll(func() {
-				By("deploying a PGSQL instance for testing")
-				testNamespace := "pgsql-test"
-				cmd := exec.Command("kubectl", "create", "ns", testNamespace)
-				_, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to create namespace for PGSQL testing")
-
-				err = utils.DeployCNPGInstance(testNamespace)
-				Expect(err).NotTo(HaveOccurred(), "Failed to deploy PGSQL instance")
-			})
-
-			AfterAll(func() {
-				By("cleaning up the PGSQL test namespace")
-				cmd := exec.Command("kubectl", "delete", "ns", "pgsql-test", "--ignore-not-found", "--wait=false")
-				_, _ = utils.Run(cmd)
-			})
-
-			It("should create a PostgresAccess resource and create a database user with the specified privileges on a CNPG instance", func() {
-				testNamespace := "pgsql-test"
-				conn := utils.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-app")
-
-				By("creating a PostgresAccess resource referencing the connection secret")
-				err := utils.CreateResourceFromSecretReference("test-username", testNamespace, "test-postgres-credentials-secret-ref", "cnpg-postgres-app", nil, accessv1.GrantSpec{
-					Database:   conn.Database,
-					Privileges: []string{"CONNECT", "SELECT"},
-				})
-				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
-
-				By("waiting for the generated secret to be created")
-				utils.WaitForSecretField(testNamespace, "test-postgres-credentials-secret-ref", "username")
-
-				By("verifying the database user was created")
-				utils.WaitForDatabaseUserState(testNamespace, conn, "test-username", true)
 			})
 		})
 	})

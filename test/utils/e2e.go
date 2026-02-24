@@ -521,6 +521,15 @@ func WaitForDatabaseUserState(
 		)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
 		g.Expect(output).To(Equal(expected))
+
+		// log all users for debugging purposes
+		allUsersOutput, err := RunPostgresQuery(
+			namespace,
+			connection,
+			"SELECT rolname FROM pg_roles;",
+		)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to list all users")
+		fmt.Printf("Current database users: %s\n", allUsersOutput)
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 }
 
