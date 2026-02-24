@@ -641,12 +641,11 @@ data:
 
 			It("should create a PostgresAccess resource and create a database user with the specified privileges on a CNPG instance", func() {
 				testNamespace := "pgsql-test"
-				appConn := utils.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-app")
-				adminConn := utils.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-superuser")
+				conn := utils.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-app")
 
 				By("creating a PostgresAccess resource referencing the connection secret")
-				err := utils.CreateResourceFromSecretReference("test-username", testNamespace, "test-postgres-credentials-secret-ref", "cnpg-postgres-superuser", nil, accessv1.GrantSpec{
-					Database:   appConn.Database,
+				err := utils.CreateResourceFromSecretReference("test-username", testNamespace, "test-postgres-credentials-secret-ref", "cnpg-postgres-app", nil, accessv1.GrantSpec{
+					Database:   conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
 				})
 				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
@@ -655,7 +654,7 @@ data:
 				utils.WaitForSecretField(testNamespace, "test-postgres-credentials-secret-ref", "username")
 
 				By("verifying the database user was created")
-				utils.WaitForDatabaseUserState(testNamespace, adminConn, "test-username", true)
+				utils.WaitForDatabaseUserState(testNamespace, conn, "test-username", true)
 			})
 		})
 	})
