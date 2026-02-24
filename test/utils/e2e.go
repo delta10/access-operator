@@ -239,6 +239,7 @@ metadata:
   namespace: %s
 spec:
   instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:15
   storage:
     size: 1Gi
   bootstrap:
@@ -246,7 +247,6 @@ spec:
       database: app
       owner: app
   postgresql:
-    version: "15"
     parameters:
       shared_buffers: "256MB"
       max_connections: "100"
