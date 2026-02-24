@@ -192,9 +192,13 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	inSync := true
 
 	for _, config := range configs {
+		// Mark CR-managed users up front so cleanup never drops them due a transient reconciliation error.
+		usersHandled[config.Username] = true
+
 		password, err := getUserPassword(ctx, r.Client, pg.Namespace, config.GeneratedSecret)
 		if err != nil {
 			log.Error(err, "failed to get user password from generated secret", "username", config.Username, "secret", config.GeneratedSecret)
+			inSync = false
 			continue
 		}
 
@@ -203,6 +207,7 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 			err = r.DB.CreateUser(ctx, config.Username, password)
 			if err != nil {
 				log.Error(err, "failed to create user in PostgreSQL", "username", config.Username)
+				inSync = false
 				continue
 			}
 			inSync = false
@@ -212,6 +217,7 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 			err = r.DB.UpdateUserPassword(ctx, config.Username, password)
 			if err != nil {
 				log.Error(err, "failed to update user password in PostgreSQL for existing user", "username", config.Username)
+				inSync = false
 				continue
 			}
 
@@ -226,16 +232,16 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 		err = r.DB.GrantPrivileges(ctx, toGrant, config.Username)
 		if err != nil {
 			log.Error(err, "failed to grant privileges in PostgreSQL", "username", config.Username)
+			inSync = false
 			continue
 		}
 
 		err = r.DB.RevokePrivileges(ctx, toRevoke, config.Username)
 		if err != nil {
 			log.Error(err, "failed to revoke privileges in PostgreSQL", "username", config.Username)
+			inSync = false
 			continue
 		}
-
-		usersHandled[config.Username] = true
 	}
 
 	// remove users that are not handled by any PostgresAccess CR anymore
@@ -245,6 +251,7 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 			err = r.DB.DropUser(ctx, user, accessv1.CleanupPolicyRestrict)
 			if err != nil {
 				log.Error(err, "failed to drop user in PostgreSQL", "username", user)
+				inSync = false
 				continue
 			}
 		}
