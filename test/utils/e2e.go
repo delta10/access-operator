@@ -268,14 +268,45 @@ spec:
 	return nil
 }
 
-// RunPostgresQuery executes a SQL query against the in-cluster postgres deployment.
+func getPostgresExecTarget(namespace string) (string, error) {
+	cmd := exec.Command("kubectl", "get", "deployment", "postgres", "-n", namespace, "-o", "name", "--ignore-not-found")
+	output, err := Run(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	target := strings.TrimSpace(output)
+	if target != "" {
+		return "deployment/postgres", nil
+	}
+
+	cmd = exec.Command("kubectl", "get", "pods", "-n", namespace, "-l", "cnpg.io/cluster=cnpg-postgres", "-o", "jsonpath={.items[0].metadata.name}")
+	output, err = Run(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	podName := strings.TrimSpace(output)
+	if podName == "" {
+		return "", fmt.Errorf("failed to find SQL exec target in namespace %q", namespace)
+	}
+
+	return "pod/" + podName, nil
+}
+
+// RunPostgresQuery executes a SQL query against the in-cluster PostgreSQL target.
 func RunPostgresQuery(namespace string, connection controller.ConnectionDetails, query string) (string, error) {
+	target, err := getPostgresExecTarget(namespace)
+	if err != nil {
+		return "", err
+	}
+
 	cmd := exec.Command(
 		"kubectl",
 		"exec",
 		"-n",
 		namespace,
-		"deployment/postgres",
+		target,
 		"--",
 		"env",
 		fmt.Sprintf("PGPASSWORD=%s", connection.Password),

@@ -19,7 +19,10 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net"
+	neturl "net/url"
 	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -398,53 +401,105 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 		return ConnectionDetails{}, fmt.Errorf("failed to get existing secret for connection details: %w", err)
 	}
 
-	existingUsername, ok := existingSec.Data["username"]
-	if !ok || len(existingUsername) == 0 {
-		return ConnectionDetails{}, fmt.Errorf("existing secret is missing username")
+	existingUsername, ok := getSecretValue(existingSec.Data, "username", "user")
+	if !ok {
+		return ConnectionDetails{}, fmt.Errorf("existing secret is missing username (username or user key)")
 	}
 
-	existingPassword, ok := existingSec.Data["password"]
-	if !ok || len(existingPassword) == 0 {
+	existingPassword, ok := getSecretValue(existingSec.Data, "password")
+	if !ok {
 		return ConnectionDetails{}, fmt.Errorf("existing secret is missing password")
 	}
 
-	existingHost, ok := existingSec.Data["host"]
-	if !ok || len(existingHost) == 0 {
+	existingHost, hasHost := getSecretValue(existingSec.Data, "host")
+	uriHost, uriPort := getHostAndPortFromURI(existingSec.Data, "fqdn-uri", "uri", "jdbc-uri")
+	if !hasHost {
+		existingHost = uriHost
+	}
+	if existingHost == "" {
 		return ConnectionDetails{}, fmt.Errorf("existing secret is missing host")
 	}
+	if uriHost != "" && !isQualifiedHost(existingHost) {
+		existingHost = uriHost
+	}
+	existingHost = qualifyServiceHost(existingHost, namespace)
 
-	existingPort, ok := existingSec.Data["port"]
-	if !ok || len(existingPort) == 0 {
+	existingPort, ok := getSecretValue(existingSec.Data, "port")
+	if !ok {
+		if uriPort != "" {
+			existingPort = uriPort
+		} else {
+			return ConnectionDetails{}, fmt.Errorf("existing secret is missing port")
+		}
+	}
+	if existingPort == "" {
 		return ConnectionDetails{}, fmt.Errorf("existing secret is missing port")
 	}
 
-	existingDatabase, ok := existingSec.Data["dbname"]
-	if !ok || len(existingDatabase) == 0 {
-		return ConnectionDetails{}, fmt.Errorf("existing secret is missing database")
-	}
-
-	// optionally allow "database" as an alternative key for the database name
+	existingDatabase, ok := getSecretValue(existingSec.Data, "dbname", "database")
 	if !ok {
-		existingDatabase, ok = existingSec.Data["database"]
-		if !ok || len(existingDatabase) == 0 {
-			return ConnectionDetails{}, fmt.Errorf("existing secret is missing database (dbname or database key)")
-		}
+		return ConnectionDetails{}, fmt.Errorf("existing secret is missing database (dbname or database key)")
 	}
 
 	// sslmode is optional, defaults to "require" for security
 	sslMode := "require"
-	if existingSSLMode, ok := existingSec.Data["sslmode"]; ok && len(existingSSLMode) > 0 {
-		sslMode = string(existingSSLMode)
+	if existingSSLMode, ok := getSecretValue(existingSec.Data, "sslmode"); ok {
+		sslMode = existingSSLMode
 	}
 
 	return ConnectionDetails{
-		Username: string(existingUsername),
-		Password: string(existingPassword),
-		Host:     string(existingHost),
-		Port:     string(existingPort),
-		Database: string(existingDatabase),
+		Username: existingUsername,
+		Password: existingPassword,
+		Host:     existingHost,
+		Port:     existingPort,
+		Database: existingDatabase,
 		SSLMode:  sslMode,
 	}, nil
+}
+
+func getSecretValue(secretData map[string][]byte, keys ...string) (string, bool) {
+	for _, key := range keys {
+		if data, ok := secretData[key]; ok && len(data) > 0 {
+			return strings.TrimSpace(string(data)), true
+		}
+	}
+
+	return "", false
+}
+
+func getHostAndPortFromURI(secretData map[string][]byte, keys ...string) (string, string) {
+	for _, key := range keys {
+		rawURI, ok := secretData[key]
+		if !ok || len(rawURI) == 0 {
+			continue
+		}
+
+		parsed, err := neturl.Parse(strings.TrimSpace(string(rawURI)))
+		if err != nil {
+			continue
+		}
+
+		host := parsed.Hostname()
+		if host == "" {
+			continue
+		}
+
+		return host, parsed.Port()
+	}
+
+	return "", ""
+}
+
+func isQualifiedHost(host string) bool {
+	return strings.Contains(host, ".") || net.ParseIP(host) != nil || strings.EqualFold(host, "localhost")
+}
+
+func qualifyServiceHost(host, namespace string) string {
+	if isQualifiedHost(host) || namespace == "" {
+		return host
+	}
+
+	return fmt.Sprintf("%s.%s.svc", host, namespace)
 }
 
 // UserGrants represents a username and their associated grants
