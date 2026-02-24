@@ -122,6 +122,28 @@ func GetDatabaseVariables() (string, controller.ConnectionDetails) {
 	}
 }
 
+func GetCNPGConnectionDetailsFromSecret(secretName string) (string, controller.ConnectionDetails) {
+	testNamespace, _ := GetDatabaseVariables()
+	var conn controller.ConnectionDetails
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", namespace, "-o", "jsonpath={.data}")
+		output, err := Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to get CNPG connection secret")
+
+		var data map[string]string
+		err = json.Unmarshal([]byte(output), &data)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to parse CNPG connection secret data")
+
+		conn.Host = string(b64.StdEncoding.DecodeString(data["host"]))
+		conn.Port = string(b64.StdEncoding.DecodeString(data["port"]))
+		conn.Database = string(b64.StdEncoding.DecodeString(data["dbname"]))
+		conn.Username = string(b64.StdEncoding.DecodeString(data["username"]))
+		conn.Password = string(b64.StdEncoding.DecodeString(data["password"]))
+	}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+	return testNamespace, conn
+}
+
 // DeployPostgresInstance deploys a postgres service/deployment into the provided namespace.
 func DeployPostgresInstance(namespace string, connection controller.ConnectionDetails) error {
 	manifest := fmt.Sprintf(`apiVersion: v1
@@ -165,6 +187,42 @@ spec:
           ports:
             - containerPort: 5432
 `, namespace, namespace, connection.Username, connection.Password, connection.Database)
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	_, err := Run(cmd)
+	return err
+}
+
+func DeletePostgresInstance(namespace string) error {
+	cmd := exec.Command("kubectl", "delete", "deployment,service", "postgres", "-n", namespace, "--ignore-not-found")
+	_, err := Run(cmd)
+	return err
+}
+
+func DeployCNPGInstance(namespace string) error {
+	// install CNPG first
+	cmd := exec.Command("kubectl", "apply", "--server-side", "-f",
+		"https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.1.yaml")
+	_, err := Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to deploy CNPG operator: %w", err)
+	}
+
+	// then deploy a CNPG cluster for testing
+	manifest := fmt.Sprintf(`apiVersion: cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cnpg-postgres
+  namespace: %s
+spec:
+  instances: 1
+  postgresql:
+    version: "15"
+    parameters:
+      shared_buffers: "256MB"
+      max_connections: "100"
+`, namespace)
 
 	cmd := exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(manifest)
@@ -216,7 +274,7 @@ type: Opaque
 data:
   host: %s
   port: %s
-  database: %s
+  dbname: %s
   username: %s
   password: %s
   sslmode: %s

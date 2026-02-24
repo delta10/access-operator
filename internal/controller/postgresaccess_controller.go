@@ -418,9 +418,17 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 		return ConnectionDetails{}, fmt.Errorf("existing secret is missing port")
 	}
 
-	existingDatabase, ok := existingSec.Data["database"]
+	existingDatabase, ok := existingSec.Data["dbname"]
 	if !ok || len(existingDatabase) == 0 {
 		return ConnectionDetails{}, fmt.Errorf("existing secret is missing database")
+	}
+
+	// optionally allow "database" as an alternative key for the database name
+	if !ok {
+		existingDatabase, ok = existingSec.Data["database"]
+		if !ok || len(existingDatabase) == 0 {
+			return ConnectionDetails{}, fmt.Errorf("existing secret is missing database (dbname or database key)")
+		}
 	}
 
 	// sslmode is optional, defaults to "require" for security
