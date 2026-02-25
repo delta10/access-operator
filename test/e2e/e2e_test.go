@@ -266,7 +266,7 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
 		})
 
-		Context("CPPG", func() {
+		Context("CNPG", func() {
 			BeforeAll(func() {
 				By("deploying a PGSQL instance for testing")
 				testNamespace := "pgsql-test"
@@ -276,6 +276,10 @@ var _ = Describe("Manager", Ordered, func() {
 
 				err = utils.DeployCNPGInstance(testNamespace)
 				Expect(err).NotTo(HaveOccurred(), "Failed to deploy PGSQL instance")
+
+				By("waiting for CNPG to accept SQL connections")
+				conn := utils.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-app")
+				utils.WaitForAuthenticationSuccess(testNamespace, conn, conn.Username, conn.Password)
 			})
 
 			AfterAll(func() {

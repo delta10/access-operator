@@ -267,6 +267,23 @@ spec:
 		return fmt.Errorf("failed waiting for CNPG cluster to become Ready: %w", err)
 	}
 
+	// CNPG cluster Ready can still race with pod readiness for exec operations.
+	cmd = exec.Command(
+		"kubectl",
+		"wait",
+		"--for=condition=Ready",
+		"pod",
+		"-l",
+		"cnpg.io/cluster=cnpg-postgres",
+		"-n",
+		namespace,
+		"--timeout=5m",
+	)
+	_, err = Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed waiting for CNPG pod readiness: %w", err)
+	}
+
 	return nil
 }
 
@@ -282,7 +299,18 @@ func getPostgresExecTarget(namespace string) (string, error) {
 		return "deployment/postgres", nil
 	}
 
-	cmd = exec.Command("kubectl", "get", "pods", "-n", namespace, "-l", "cnpg.io/cluster=cnpg-postgres", "-o", "jsonpath={.items[0].metadata.name}")
+	cmd = exec.Command(
+		"kubectl",
+		"get",
+		"pods",
+		"-n",
+		namespace,
+		"-l",
+		"cnpg.io/cluster=cnpg-postgres",
+		"--field-selector=status.phase=Running",
+		"-o",
+		"jsonpath={.items[0].metadata.name}",
+	)
 	output, err = Run(cmd)
 	if err != nil {
 		return "", err
@@ -291,6 +319,12 @@ func getPostgresExecTarget(namespace string) (string, error) {
 	podName := strings.TrimSpace(output)
 	if podName == "" {
 		return "", fmt.Errorf("failed to find SQL exec target in namespace %q", namespace)
+	}
+
+	cmd = exec.Command("kubectl", "wait", "--for=condition=Ready", "pod/"+podName, "-n", namespace, "--timeout=30s")
+	_, err = Run(cmd)
+	if err != nil {
+		return "", fmt.Errorf("pod %q is not ready for SQL exec: %w", podName, err)
 	}
 
 	return "pod/" + podName, nil
@@ -309,6 +343,8 @@ func RunPostgresQuery(namespace string, connection controller.ConnectionDetails,
 		"-n",
 		namespace,
 		target,
+		"-c",
+		"postgres",
 		"--",
 		"env",
 		fmt.Sprintf("PGPASSWORD=%s", connection.Password),
