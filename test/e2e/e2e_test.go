@@ -20,6 +20,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	b64 "encoding/base64"
 	"fmt"
 	"os/exec"
@@ -77,21 +78,28 @@ var _ = Describe("Manager", Ordered, func() {
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
 	// and deleting the namespace.
 	AfterAll(func() {
+		runCleanup := func(timeout time.Duration, name string, args ...string) {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, name, args...)
+			_, _ = utils.Run(cmd)
+		}
+
 		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
-		_, _ = utils.Run(cmd)
+		runCleanup(30*time.Second,
+			"kubectl", "delete", "pod", "curl-metrics", "-n", namespace,
+			"--ignore-not-found=true", "--wait=false")
 
 		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
+		runCleanup(90*time.Second, "make", "undeploy", "ignore-not-found=true")
 
 		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
+		runCleanup(90*time.Second, "make", "uninstall", "ignore-not-found=true")
 
 		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
-		_, _ = utils.Run(cmd)
+		runCleanup(30*time.Second,
+			"kubectl", "delete", "ns", namespace,
+			"--ignore-not-found=true", "--wait=false")
 	})
 
 	// After each test, check for failures and collect logs, events,
