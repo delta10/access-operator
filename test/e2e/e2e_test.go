@@ -20,6 +20,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	b64 "encoding/base64"
 	"fmt"
 	"os/exec"
@@ -77,21 +78,28 @@ var _ = Describe("Manager", Ordered, func() {
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
 	// and deleting the namespace.
 	AfterAll(func() {
+		runCleanup := func(timeout time.Duration, name string, args ...string) {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, name, args...)
+			_, _ = utils.Run(cmd)
+		}
+
 		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
-		_, _ = utils.Run(cmd)
+		runCleanup(30*time.Second,
+			"kubectl", "delete", "pod", "curl-metrics", "-n", namespace,
+			"--ignore-not-found=true", "--wait=false")
 
 		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
+		runCleanup(90*time.Second, "make", "undeploy", "ignore-not-found=true")
 
 		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
+		runCleanup(90*time.Second, "make", "uninstall", "ignore-not-found=true")
 
 		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
-		_, _ = utils.Run(cmd)
+		runCleanup(30*time.Second,
+			"kubectl", "delete", "ns", namespace,
+			"--ignore-not-found=true", "--wait=false")
 	})
 
 	// After each test, check for failures and collect logs, events,
@@ -266,7 +274,47 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
 		})
 
-		// +kubebuilder:scaffold:e2e-webhooks-checks
+		Context("CNPG", func() {
+			BeforeAll(func() {
+				By("deploying a PGSQL instance for testing")
+				testNamespace := "pgsql-test"
+				cmd := exec.Command("kubectl", "create", "ns", testNamespace)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create namespace for PGSQL testing")
+
+				err = utils.DeployCNPGInstance(testNamespace)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy PGSQL instance")
+
+				By("waiting for CNPG to accept SQL connections")
+				conn := utils.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-app")
+				utils.WaitForAuthenticationSuccess(testNamespace, conn, conn.Username, conn.Password)
+			})
+
+			AfterAll(func() {
+				By("cleaning up the PGSQL test namespace")
+				cmd := exec.Command("kubectl", "delete", "ns", "pgsql-test", "--ignore-not-found", "--wait=false")
+				_, _ = utils.Run(cmd)
+			})
+
+			It("should create a PostgresAccess resource and create a database user with the specified privileges on a CNPG instance", func() {
+				testNamespace := "pgsql-test"
+				conn := utils.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-app")
+
+				By("creating a PostgresAccess resource referencing the connection secret")
+				err := utils.CreateResourceFromSecretReference("test-username", testNamespace, "test-postgres-credentials-secret-ref", "cnpg-postgres-app", nil, accessv1.GrantSpec{
+					Database:   conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				})
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
+
+				By("waiting for the generated secret to be created")
+				utils.WaitForSecretField(testNamespace, "test-postgres-credentials-secret-ref", "username")
+
+				By("verifying the database user was created")
+				utils.WaitForDatabaseUserState(testNamespace, conn, "test-username", true)
+			})
+		})
+
 		Context("Postgres", func() {
 			BeforeEach(func() {
 				By("ensuring no stale test namespace exists")

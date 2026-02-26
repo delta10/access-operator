@@ -83,12 +83,20 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
+	@status=0; \
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v || status=$$?; \
+	$(MAKE) cleanup-test-e2e || status=$$?; \
+	exit $$status
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
-	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+	@case "$$($(KIND) get clusters)" in \
+		*"$(KIND_CLUSTER)"*) \
+			echo "Deleting Kind cluster '$(KIND_CLUSTER)'..."; \
+			$(KIND) delete cluster --name $(KIND_CLUSTER) ;; \
+		*) \
+			echo "Kind cluster '$(KIND_CLUSTER)' not found. Skipping deletion." ;; \
+	esac
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -160,7 +168,7 @@ install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~
 .PHONY: uninstall
 uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
+	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --wait=false --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
@@ -169,7 +177,12 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+	@out="$$( "$(KUSTOMIZE)" build config/default 2>/dev/null || true )"; \
+	if [ -n "$$out" ]; then \
+		echo "$$out" | "$(KUBECTL)" delete --wait=false --ignore-not-found=$(ignore-not-found) -f -; \
+	else \
+		echo "No controller resources to delete; skipping."; \
+	fi
 
 ##@ Dependencies
 
