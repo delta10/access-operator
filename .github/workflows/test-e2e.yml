@@ -28,7 +28,6 @@ jobs:
 
       - name: Running Test e2e
         env:
-          GOFLAGS: -timeout=15m
           POSTGRES_HOST: localhost
           POSTGRES_PORT: 5432
           POSTGRES_USER: postgres
