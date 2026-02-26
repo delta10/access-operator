@@ -13,6 +13,14 @@ First install the operator with the following command:
 ```bash
 make install
 ```
+
+## Install from a release
+Every tagged release publishes an `install.yaml` asset that references the prebuilt image on GHCR.
+
+```bash
+kubectl apply -f https://github.com/<org>/<repo>/releases/download/<tag>/install.yaml
+```
+
 If you wish to install the operator via its yaml you can find it in `config/crd/bases/access.k8s.delta10.nl_postgresaccesses.yaml`
 
 Then run it:
@@ -34,7 +42,7 @@ make test
 ```
 ### e2e tests
 for e2e tests, you can use:
-
+Make sure you have [kind](https://kind.sigs.k8s.io/) installed and running, then you can run the e2e tests with:
 ```bash
 make test-e2e
 ```
