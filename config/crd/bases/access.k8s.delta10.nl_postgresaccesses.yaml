@@ -63,7 +63,7 @@ spec:
                   existingSecret:
                     description: |-
                       existingSecret references an existing secret with connection details
-                      The secret must contain keys: host, port, database, username, password
+                      The secret must contain keys: host, port, dbname, username, password
                       Optionally can include: sslmode
                     type: string
                   host:

@@ -51,7 +51,7 @@ type SecretKeySelector struct {
 // ConnectionSpec defines connection information for PostgreSQL
 type ConnectionSpec struct {
 	// existingSecret references an existing secret with connection details
-	// The secret must contain keys: host, port, database, username, password
+	// The secret must contain keys: host, port, dbname, username, password
 	// Optionally can include: sslmode
 	// +optional
 	ExistingSecret *string `json:"existingSecret,omitempty"`

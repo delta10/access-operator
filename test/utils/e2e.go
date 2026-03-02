@@ -122,6 +122,38 @@ func GetDatabaseVariables() (string, controller.ConnectionDetails) {
 	}
 }
 
+func GetCNPGConnectionDetailsFromSecret(namespace, secretName string) controller.ConnectionDetails {
+	var conn controller.ConnectionDetails
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", namespace, "-o", "jsonpath={.data}")
+		output, err := Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to get CNPG connection secret")
+
+		var data map[string]string
+		err = json.Unmarshal([]byte(output), &data)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to parse CNPG connection secret data")
+
+		host, err := b64.StdEncoding.DecodeString(data["host"])
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to decode host")
+		port, err := b64.StdEncoding.DecodeString(data["port"])
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to decode port")
+		dbname, err := b64.StdEncoding.DecodeString(data["dbname"])
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to decode dbname")
+		username, err := b64.StdEncoding.DecodeString(data["username"])
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to decode username")
+		password, err := b64.StdEncoding.DecodeString(data["password"])
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to decode password")
+
+		conn.Host = string(host)
+		conn.Port = string(port)
+		conn.Database = string(dbname)
+		conn.Username = string(username)
+		conn.Password = string(password)
+	}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+	return conn
+}
+
 // DeployPostgresInstance deploys a postgres service/deployment into the provided namespace.
 func DeployPostgresInstance(namespace string, connection controller.ConnectionDetails) error {
 	manifest := fmt.Sprintf(`apiVersion: v1
@@ -172,14 +204,147 @@ spec:
 	return err
 }
 
-// RunPostgresQuery executes a SQL query against the in-cluster postgres deployment.
+func DeletePostgresInstance(namespace string) error {
+	cmd := exec.Command("kubectl", "delete", "deployment,service", "postgres", "-n", namespace, "--ignore-not-found")
+	_, err := Run(cmd)
+	return err
+}
+
+func DeployCNPGInstance(namespace string) error {
+	// install CNPG first
+	cmd := exec.Command("kubectl", "apply", "--server-side", "-f",
+		"https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.1.yaml")
+	_, err := Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to deploy CNPG operator: %w", err)
+	}
+
+	cmd = exec.Command("kubectl", "wait", "--for=condition=Established", "crd/clusters.postgresql.cnpg.io", "--timeout=2m")
+	_, err = Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed waiting for CNPG Cluster CRD: %w", err)
+	}
+
+	cmd = exec.Command("kubectl", "wait", "deployment/cnpg-controller-manager", "-n", "cnpg-system", "--for=condition=Available", "--timeout=3m")
+	_, err = Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed waiting for CNPG operator deployment: %w", err)
+	}
+
+	// then deploy a CNPG cluster for testing
+	manifest := fmt.Sprintf(`apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cnpg-postgres
+  namespace: %s
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:15
+  storage:
+    size: 1Gi
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+      postInitSQL:
+        - ALTER ROLE app SUPERUSER;
+  postgresql:
+    parameters:
+      shared_buffers: "256MB"
+      max_connections: "100"
+`, namespace)
+
+	cmd = exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	_, err = Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to apply CNPG cluster: %w", err)
+	}
+
+	cmd = exec.Command("kubectl", "wait", "cluster/cnpg-postgres", "-n", namespace, "--for=condition=Ready", "--timeout=5m")
+	_, err = Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed waiting for CNPG cluster to become Ready: %w", err)
+	}
+
+	// CNPG cluster Ready can still race with pod readiness for exec operations.
+	cmd = exec.Command(
+		"kubectl",
+		"wait",
+		"--for=condition=Ready",
+		"pod",
+		"-l",
+		"cnpg.io/cluster=cnpg-postgres",
+		"-n",
+		namespace,
+		"--timeout=5m",
+	)
+	_, err = Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed waiting for CNPG pod readiness: %w", err)
+	}
+
+	return nil
+}
+
+func getPostgresExecTarget(namespace string) (string, error) {
+	cmd := exec.Command("kubectl", "get", "deployment", "postgres", "-n", namespace, "-o", "name", "--ignore-not-found")
+	output, err := Run(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	target := strings.TrimSpace(output)
+	if target != "" {
+		return "deployment/postgres", nil
+	}
+
+	cmd = exec.Command(
+		"kubectl",
+		"get",
+		"pods",
+		"-n",
+		namespace,
+		"-l",
+		"cnpg.io/cluster=cnpg-postgres",
+		"--field-selector=status.phase=Running",
+		"-o",
+		"jsonpath={.items[0].metadata.name}",
+	)
+	output, err = Run(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	podName := strings.TrimSpace(output)
+	if podName == "" {
+		return "", fmt.Errorf("failed to find SQL exec target in namespace %q", namespace)
+	}
+
+	cmd = exec.Command("kubectl", "wait", "--for=condition=Ready", "pod/"+podName, "-n", namespace, "--timeout=30s")
+	_, err = Run(cmd)
+	if err != nil {
+		return "", fmt.Errorf("pod %q is not ready for SQL exec: %w", podName, err)
+	}
+
+	return "pod/" + podName, nil
+}
+
+// RunPostgresQuery executes a SQL query against the in-cluster PostgreSQL target.
 func RunPostgresQuery(namespace string, connection controller.ConnectionDetails, query string) (string, error) {
+	target, err := getPostgresExecTarget(namespace)
+	if err != nil {
+		return "", err
+	}
+
 	cmd := exec.Command(
 		"kubectl",
 		"exec",
 		"-n",
 		namespace,
-		"deployment/postgres",
+		target,
+		"-c",
+		"postgres",
 		"--",
 		"env",
 		fmt.Sprintf("PGPASSWORD=%s", connection.Password),
@@ -216,7 +381,7 @@ type: Opaque
 data:
   host: %s
   port: %s
-  database: %s
+  dbname: %s
   username: %s
   password: %s
   sslmode: %s
@@ -392,6 +557,15 @@ func WaitForDatabaseUserState(
 		)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
 		g.Expect(output).To(Equal(expected))
+
+		// log all users for debugging purposes
+		allUsersOutput, err := RunPostgresQuery(
+			namespace,
+			connection,
+			"SELECT rolname FROM pg_roles;",
+		)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to list all users")
+		fmt.Printf("Current database users: %s\n", allUsersOutput)
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 }
 
