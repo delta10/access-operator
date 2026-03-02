@@ -46,6 +46,7 @@ Make sure you have [kind](https://kind.sigs.k8s.io/) installed and running, then
 ```bash
 make test-e2e
 ```
+Though beware it'll consume quite a bit of memory, within WSL2 it consumed 9gb during the test run.
 
 if you don't have a database running locally you can use docker compose to start a postgres database:
 
