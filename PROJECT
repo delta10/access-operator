@@ -18,4 +18,13 @@ resources:
   kind: PostgresAccess
   path: github.com/delta10/access-operator/api/v1
   version: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: k8s.delta10.nl
+  group: access
+  kind: RabbitMQAccess
+  path: github.com/delta10/access-operator/api/v1
+  version: v1
 version: "3"

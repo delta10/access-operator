@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.0
-  name: postgresaccesses.access.k8s.delta10.nl
+  name: rabbitmqaccesses.access.k8s.delta10.nl
 spec:
   group: access.k8s.delta10.nl
   names:
-    kind: PostgresAccess
-    listKind: PostgresAccessList
-    plural: postgresaccesses
-    singular: postgresaccess
+    kind: RabbitMQAccess
+    listKind: RabbitMQAccessList
+    plural: rabbitmqaccesses
+    singular: rabbitmqaccess
   scope: Namespaced
   versions:
   - name: v1
     schema:
       openAPIV3Schema:
-        description: PostgresAccess is the Schema for the postgresaccesses API
+        description: RabbitMQAccess is the Schema for the rabbitmqaccesses API
         properties:
           apiVersion:
             description: |-
@@ -37,24 +37,11 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of PostgresAccess
+            description: spec defines the desired state of RabbitMQAccess
             properties:
-              cleanupPolicy:
-                default: Restrict
-                description: |-
-                  cleanupPolicy specifies how to handle owned objects when dropping a user
-                  Cascade: drops all objects owned by the user (destructive)
-                  Restrict: prevents dropping the user if they own any objects (safe default)
-                  Orphan: reassigns owned objects to the current database owner before dropping
-                enum:
-                - Cascade
-                - Restrict
-                - Orphan
-                type: string
               connection:
-                description: |-
-                  connection defines how to connect to PostgreSQL
-                  Can reference an existing secret or provide connection details directly
+                description: how to connect to the RabbitMQ instance, dbname is not
+                  needed; this is to keep consistency with postgresaccess
                 properties:
                   database:
                     description: database is the database name
@@ -150,49 +137,54 @@ spec:
                   credentials will be stored
                 minLength: 1
                 type: string
-              grants:
-                description: grants defines the database privileges to grant
+              permissions:
+                description: permissions defines the permissions to grant to the user
                 items:
-                  description: GrantSpec defines database grants to be applied
                   properties:
-                    database:
-                      description: database is the name of the database to grant privileges
-                        on
-                      minLength: 1
+                    configure:
+                      description: configure is the configure permission pattern
                       type: string
-                    privileges:
-                      description: privileges is the list of privileges to grant
-                      items:
-                        type: string
-                      minItems: 1
-                      type: array
-                    schema:
-                      default: public
-                      description: schema is the database schema (defaults to "public")
-                      minLength: 1
+                    read:
+                      description: read is the read permission pattern
+                      type: string
+                    vhost:
+                      description: vhost is the RabbitMQ virtual host to which the
+                        permissions apply
+                      type: string
+                    write:
+                      description: write is the write permission pattern
                       type: string
                   required:
-                  - database
-                  - privileges
+                  - configure
+                  - read
+                  - vhost
+                  - write
                   type: object
-                maxItems: 1
                 minItems: 1
                 type: array
               username:
                 description: username is the PostgreSQL username to create
                 type: string
+              vhostCreationPolicy:
+                description: VhostCreationPolicy defines if a vhost should be created
+                  if its existence is implied in the permissions spec
+                enum:
+                - Always
+                - IfNotExists
+                - Never
+                type: string
             required:
             - connection
             - generatedSecret
-            - grants
+            - permissions
             - username
             type: object
           status:
-            description: status defines the observed state of PostgresAccess
+            description: status defines the observed state of RabbitMQAccess
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the PostgresAccess resource.
+                  conditions represent the current state of the RabbitMQAccess resource.
                   Each condition has a unique type and reflects the status of a specific aspect of the resource.
 
                   Standard condition types include:
