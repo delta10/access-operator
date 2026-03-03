@@ -43,8 +43,9 @@ import (
 // PostgresAccessReconciler reconciles a PostgresAccess object
 type PostgresAccessReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	DB     DBInterface
+	Scheme                        *runtime.Scheme
+	DB                            DBInterface
+	AllowCrossNamespaceSecretRefs bool
 }
 
 const privilegeDriftRequeueInterval = 30 * time.Second
@@ -334,7 +335,12 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 // It supports both direct connection details and referencing an existing secret for connection information.
 func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {
 	if pg.Spec.Connection.ExistingSecret != nil && *pg.Spec.Connection.ExistingSecret != "" {
-		connection, err := getExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, pg.Namespace)
+		secretNamespace, err := r.resolveExistingSecretNamespace(pg)
+		if err != nil {
+			return "", err
+		}
+
+		connection, err := getExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, secretNamespace, pg)
 		if err != nil {
 			return "", err
 		}
@@ -402,7 +408,28 @@ func (r *PostgresAccessReconciler) resolveValueOrSecretRef(ctx context.Context, 
 	return "", fmt.Errorf("neither value nor secretRef is specified")
 }
 
-func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string) (ConnectionDetails, error) {
+func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(pg *accessv1.PostgresAccess) (string, error) {
+	secretNamespace := pg.Namespace
+	if pg.Spec.Connection.ExistingSecretNamespace == nil {
+		return secretNamespace, nil
+	}
+
+	requestedNamespace := strings.TrimSpace(*pg.Spec.Connection.ExistingSecretNamespace)
+	if requestedNamespace == "" {
+		return secretNamespace, nil
+	}
+
+	if requestedNamespace != pg.Namespace && !r.AllowCrossNamespaceSecretRefs {
+		return "", fmt.Errorf(
+			"cross-namespace connection secret references are disabled: requested namespace %q from PostgresAccess namespace %q",
+			requestedNamespace, pg.Namespace,
+		)
+	}
+
+	return requestedNamespace, nil
+}
+
+func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string, pg *accessv1.PostgresAccess) (ConnectionDetails, error) {
 	var existingSec corev1.Secret
 	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &existingSec); err != nil {
 		return ConnectionDetails{}, fmt.Errorf("failed to get existing secret for connection details: %w", err)
@@ -444,8 +471,16 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 	}
 
 	existingDatabase, ok := getSecretValue(existingSec.Data, "dbname", "database")
-	if !ok {
-		return ConnectionDetails{}, fmt.Errorf("existing secret is missing database (dbname or database key)")
+	invalidDatabases := []string{"*", "%", "(none)", "null", ""}
+	if !ok || slices.Contains(invalidDatabases, strings.ToLower(existingDatabase)) {
+		existingDatabase = "postgres"
+	}
+
+	if pg != nil {
+		conn := pg.Spec.Connection
+		if conn.Database != nil && *conn.Database != "" {
+			existingDatabase = *conn.Database
+		}
 	}
 
 	// sslmode is optional, defaults to "require" for security

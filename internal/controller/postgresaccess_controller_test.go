@@ -272,7 +272,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			)
 
-			connectionDetails, err := getExistingSecretConnectionDetails(context.Background(), fakeClient, "db-connection", "default")
+			connectionDetails, err := getExistingSecretConnectionDetails(context.Background(), fakeClient, "db-connection", "default", nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(connectionDetails.SSLMode).To(Equal("require"))
 		})
@@ -337,6 +337,79 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.default.svc:5432/appdb?sslmode=require"))
 		})
 
+		It("should reject cross-namespace existingSecret by default", func() {
+			fakeClient, _ := newFakeClientWithScheme(
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "db-connection",
+						Namespace: "shared-db",
+					},
+					Data: map[string][]byte{
+						"host":     []byte("postgres"),
+						"port":     []byte("5432"),
+						"database": []byte("appdb"),
+						"username": []byte("db-admin"),
+						"password": []byte("secret"),
+					},
+				},
+			)
+
+			reconciler := &PostgresAccessReconciler{Client: fakeClient}
+			secretName := "db-connection"
+			secretNamespace := "shared-db"
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"},
+				Spec: accessv1.PostgresAccessSpec{
+					Connection: accessv1.ConnectionSpec{
+						ExistingSecret:          &secretName,
+						ExistingSecretNamespace: &secretNamespace,
+					},
+				},
+			}
+
+			_, err := reconciler.getConnectionString(context.Background(), pg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cross-namespace connection secret references are disabled"))
+		})
+
+		It("should allow cross-namespace existingSecret when explicitly enabled", func() {
+			fakeClient, _ := newFakeClientWithScheme(
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "db-connection",
+						Namespace: "shared-db",
+					},
+					Data: map[string][]byte{
+						"host":     []byte("postgres"),
+						"port":     []byte("5432"),
+						"database": []byte("appdb"),
+						"username": []byte("db-admin"),
+						"password": []byte("secret"),
+					},
+				},
+			)
+
+			reconciler := &PostgresAccessReconciler{
+				Client:                        fakeClient,
+				AllowCrossNamespaceSecretRefs: true,
+			}
+			secretName := "db-connection"
+			secretNamespace := "shared-db"
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"},
+				Spec: accessv1.PostgresAccessSpec{
+					Connection: accessv1.ConnectionSpec{
+						ExistingSecret:          &secretName,
+						ExistingSecretNamespace: &secretNamespace,
+					},
+				},
+			}
+
+			connectionString, err := reconciler.getConnectionString(context.Background(), pg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.shared-db.svc:5432/appdb?sslmode=require"))
+		})
+
 		It("should return an error when no valid connection details are provided", func() {
 			reconciler := &PostgresAccessReconciler{}
 			pg := &accessv1.PostgresAccess{
@@ -372,7 +445,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					},
 				)
 
-				_, err := getExistingSecretConnectionDetails(context.Background(), fakeClient, "db-connection", "default")
+				_, err := getExistingSecretConnectionDetails(context.Background(), fakeClient, "db-connection", "default", nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring(expectedError))
 			},
@@ -380,8 +453,44 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Entry("missing password", "password", "missing password"),
 			Entry("missing host", "host", "missing host"),
 			Entry("missing port", "port", "missing port"),
-			Entry("missing database", "database", "missing database"),
 		)
+
+		It("should fall back to postgres database when database name is missing or invalid in existing secret", func() {
+			username := "db-admin"
+			password := "secret"
+			host := "postgres.default.svc"
+
+			fakeClient, _ := newFakeClientWithScheme(
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "db-connection",
+						Namespace: "default",
+					},
+					Data: map[string][]byte{
+						"host":     []byte(host),
+						"port":     []byte("5432"),
+						"database": []byte("*"), // invalid database name
+						"username": []byte(username),
+						"password": []byte(password),
+					},
+				},
+			)
+
+			reconciler := &PostgresAccessReconciler{Client: fakeClient}
+
+			secretName := "db-connection"
+
+			connectionString, err := reconciler.getConnectionString(context.Background(), &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default"},
+				Spec: accessv1.PostgresAccessSpec{
+					Connection: accessv1.ConnectionSpec{
+						ExistingSecret: &secretName,
+					},
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.default.svc:5432/postgres?sslmode=require"))
+		})
 
 		It("should compute grant and revoke sets for changed privileges", func() {
 			current := []accessv1.GrantSpec{

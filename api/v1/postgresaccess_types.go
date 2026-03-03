@@ -49,12 +49,21 @@ type SecretKeySelector struct {
 }
 
 // ConnectionSpec defines connection information for PostgreSQL
+// +kubebuilder:validation:XValidation:rule="!has(self.existingSecretNamespace) || has(self.existingSecret)",message="existingSecretNamespace can only be set when existingSecret is set"
 type ConnectionSpec struct {
 	// existingSecret references an existing secret with connection details
 	// The secret must contain keys: host, port, dbname, username, password
 	// Optionally can include: sslmode
 	// +optional
 	ExistingSecret *string `json:"existingSecret,omitempty"`
+
+	// existingSecretNamespace is the namespace where existingSecret is stored.
+	// If omitted, defaults to the PostgresAccess namespace.
+	// Cross-namespace secret references are rejected unless the operator is started
+	// with --allow-cross-namespace-secret-ref=true.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	ExistingSecretNamespace *string `json:"existingSecretNamespace,omitempty"`
 
 	// host is the PostgreSQL server hostname
 	// +optional
@@ -68,6 +77,7 @@ type ConnectionSpec struct {
 	Port *int32 `json:"port,omitempty"`
 
 	// database is the database name
+	// Defaults to "postgres" if not specified or has invalid syntax (e.g '*') and takes precedence over dbname in existingSecret
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	Database *string `json:"database,omitempty"`
