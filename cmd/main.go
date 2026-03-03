@@ -81,7 +81,8 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.BoolVar(&allowCrossNamespaceSecretRef, "allow-cross-namespace-secret-ref", false,
-		"If set, PostgresAccess resources may read connection.existingSecret from a different namespace via connection.existingSecretNamespace. Disabled by default for multi-tenant safety.")
+		"If set, PostgresAccess resources may read connection.existingSecret from a different namespace"+
+			" via connection.existingSecretNamespace Disabled by default for multi-tenant safety.")
 	opts := zap.Options{
 		Development: true,
 	}

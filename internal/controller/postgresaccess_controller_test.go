@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -176,7 +178,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					"username": []byte(username),
 					"password": []byte(password),
 					"host":     []byte(host),
-					"port":     []byte(string(port)),
+					"port":     []byte(strconv.Itoa(int(port))),
 					"database": []byte(db),
 				},
 			}
@@ -230,12 +232,15 @@ var _ = Describe("PostgresAccess Controller", func() {
 	})
 
 	Context("When testing helper logic with fake clients", func() {
+		var username = "db-admin"
+		var password = "secret"
+		var host = "postgres.default.svc"
+		var port = int32(5432)
+		var database = "appdb"
+		var secretName = "db-connection"
+
 		It("should default ssl mode to require for direct connection details", func() {
-			username := "db-admin"
-			password := "secret"
-			host := "postgres.default.svc"
-			port := int32(5432)
-			database := "appdb"
+			expectedString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=require", username, password, host, port, database)
 
 			reconciler := &PostgresAccessReconciler{}
 			pg := &accessv1.PostgresAccess{
@@ -252,38 +257,34 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 			connectionString, err := reconciler.getConnectionString(context.Background(), pg)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.default.svc:5432/appdb?sslmode=require"))
+			Expect(connectionString).To(Equal(expectedString))
 		})
 
 		It("should default ssl mode to require when missing in existing secret", func() {
 			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "db-connection",
+						Name:      secretName,
 						Namespace: "default",
 					},
 					Data: map[string][]byte{
-						"host":     []byte("postgres.default.svc"),
-						"port":     []byte("5432"),
-						"database": []byte("appdb"),
-						"username": []byte("db-admin"),
-						"password": []byte("secret"),
+						"host":     []byte(host),
+						"port":     []byte(strconv.Itoa(int(port))),
+						"database": []byte(database),
+						"username": []byte(username),
+						"password": []byte(password),
 					},
 				},
 			)
 
-			connectionDetails, err := getExistingSecretConnectionDetails(context.Background(), fakeClient, "db-connection", "default", nil)
+			connectionDetails, err := getExistingSecretConnectionDetails(context.Background(), fakeClient, secretName, "default", nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(connectionDetails.SSLMode).To(Equal("require"))
 		})
 
 		It("should use an optional explicitly configured ssl mode for direct connection details", func() {
-			username := "db-admin"
-			password := "secret"
-			host := "postgres.default.svc"
-			port := int32(5432)
-			database := "appdb"
 			sslMode := "disable"
+			expectedString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s", username, password, host, port, database, sslMode)
 
 			reconciler := &PostgresAccessReconciler{}
 			pg := &accessv1.PostgresAccess{
@@ -301,28 +302,28 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 			connectionString, err := reconciler.getConnectionString(context.Background(), pg)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.default.svc:5432/appdb?sslmode=disable"))
+			Expect(connectionString).To(Equal(expectedString))
 		})
 
 		It("should build connection strings from an existing secret", func() {
+			expectedString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=require", username, password, host, port, database)
 			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "db-connection",
+						Name:      secretName,
 						Namespace: "default",
 					},
 					Data: map[string][]byte{
-						"host":     []byte("postgres.default.svc"),
-						"port":     []byte("5432"),
-						"database": []byte("appdb"),
-						"username": []byte("db-admin"),
-						"password": []byte("secret"),
+						"host":     []byte(host),
+						"port":     []byte(strconv.Itoa(int(port))),
+						"database": []byte(database),
+						"username": []byte(username),
+						"password": []byte(password),
 					},
 				},
 			)
 
 			reconciler := &PostgresAccessReconciler{Client: fakeClient}
-			secretName := "db-connection"
 			pg := &accessv1.PostgresAccess{
 				ObjectMeta: metav1.ObjectMeta{Namespace: "default"},
 				Spec: accessv1.PostgresAccessSpec{
@@ -334,20 +335,20 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 			connectionString, err := reconciler.getConnectionString(context.Background(), pg)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.default.svc:5432/appdb?sslmode=require"))
+			Expect(connectionString).To(Equal(expectedString))
 		})
 
 		It("should reject cross-namespace existingSecret by default", func() {
 			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "db-connection",
+						Name:      secretName,
 						Namespace: "shared-db",
 					},
 					Data: map[string][]byte{
 						"host":     []byte("postgres"),
-						"port":     []byte("5432"),
-						"database": []byte("appdb"),
+						"port":     []byte(strconv.Itoa(int(port))),
+						"database": []byte(database),
 						"username": []byte("db-admin"),
 						"password": []byte("secret"),
 					},
@@ -355,7 +356,6 @@ var _ = Describe("PostgresAccess Controller", func() {
 			)
 
 			reconciler := &PostgresAccessReconciler{Client: fakeClient}
-			secretName := "db-connection"
 			secretNamespace := "shared-db"
 			pg := &accessv1.PostgresAccess{
 				ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"},
@@ -376,13 +376,13 @@ var _ = Describe("PostgresAccess Controller", func() {
 			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "db-connection",
+						Name:      secretName,
 						Namespace: "shared-db",
 					},
 					Data: map[string][]byte{
 						"host":     []byte("postgres"),
-						"port":     []byte("5432"),
-						"database": []byte("appdb"),
+						"port":     []byte(strconv.Itoa(int(port))),
+						"database": []byte(database),
 						"username": []byte("db-admin"),
 						"password": []byte("secret"),
 					},
@@ -393,7 +393,6 @@ var _ = Describe("PostgresAccess Controller", func() {
 				Client:                        fakeClient,
 				AllowCrossNamespaceSecretRefs: true,
 			}
-			secretName := "db-connection"
 			secretNamespace := "shared-db"
 			pg := &accessv1.PostgresAccess{
 				ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"},
@@ -427,25 +426,25 @@ var _ = Describe("PostgresAccess Controller", func() {
 			"secret validation",
 			func(missingKey string, expectedError string) {
 				data := map[string][]byte{
-					"host":     []byte("postgres.default.svc"),
-					"port":     []byte("5432"),
-					"database": []byte("appdb"),
-					"username": []byte("db-admin"),
-					"password": []byte("secret"),
+					"host":     []byte(host),
+					"port":     []byte(strconv.Itoa(int(port))),
+					"database": []byte(database),
+					"username": []byte(username),
+					"password": []byte(password),
 				}
 				delete(data, missingKey)
 
 				fakeClient, _ := newFakeClientWithScheme(
 					&corev1.Secret{
 						ObjectMeta: metav1.ObjectMeta{
-							Name:      "db-connection",
+							Name:      secretName,
 							Namespace: "default",
 						},
 						Data: data,
 					},
 				)
 
-				_, err := getExistingSecretConnectionDetails(context.Background(), fakeClient, "db-connection", "default", nil)
+				_, err := getExistingSecretConnectionDetails(context.Background(), fakeClient, secretName, "default", nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring(expectedError))
 			},
@@ -456,19 +455,16 @@ var _ = Describe("PostgresAccess Controller", func() {
 		)
 
 		It("should fall back to postgres database when database name is missing or invalid in existing secret", func() {
-			username := "db-admin"
-			password := "secret"
-			host := "postgres.default.svc"
-
+			expectedString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=require", username, password, host, port, "postgres")
 			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "db-connection",
+						Name:      secretName,
 						Namespace: "default",
 					},
 					Data: map[string][]byte{
 						"host":     []byte(host),
-						"port":     []byte("5432"),
+						"port":     []byte(strconv.Itoa(int(port))),
 						"database": []byte("*"), // invalid database name
 						"username": []byte(username),
 						"password": []byte(password),
@@ -477,8 +473,6 @@ var _ = Describe("PostgresAccess Controller", func() {
 			)
 
 			reconciler := &PostgresAccessReconciler{Client: fakeClient}
-
-			secretName := "db-connection"
 
 			connectionString, err := reconciler.getConnectionString(context.Background(), &accessv1.PostgresAccess{
 				ObjectMeta: metav1.ObjectMeta{Namespace: "default"},
@@ -489,15 +483,15 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.default.svc:5432/postgres?sslmode=require"))
+			Expect(connectionString).To(Equal(expectedString))
 		})
 
 		It("should compute grant and revoke sets for changed privileges", func() {
 			current := []accessv1.GrantSpec{
-				{Database: "appdb", Privileges: []string{"CONNECT", "SELECT"}},
+				{Database: database, Privileges: []string{"CONNECT", "SELECT"}},
 			}
 			desired := []accessv1.GrantSpec{
-				{Database: "appdb", Privileges: []string{"CONNECT", "INSERT"}},
+				{Database: database, Privileges: []string{"CONNECT", "INSERT"}},
 			}
 
 			toGrant, toRevoke := diffGrants(current, desired)
@@ -514,7 +508,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 		It("should grant all desired privileges when there are no current privileges", func() {
 			desired := []accessv1.GrantSpec{
-				{Database: "appdb", Privileges: []string{"CONNECT", "SELECT"}},
+				{Database: database, Privileges: []string{"CONNECT", "SELECT"}},
 			}
 
 			toGrant, toRevoke := diffGrants(nil, desired)
