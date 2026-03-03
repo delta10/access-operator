@@ -6,4 +6,21 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: rabbitmqaccess-sample
 spec:
-  # TODO(user): Add fields here
+    username: app-user
+    generatedSecret: app-user-rabbitmq-credentials
+    connection:
+        host: rabbitmq.default.svc.cluster.local
+        port: 5672
+        username:
+            secretRef:
+                name: rabbitmq-admin-conn
+                key: username
+        password:
+            secretRef:
+                name: rabbitmq-admin-conn
+                key: password
+    permissions:
+        - vhost: /app
+          configure: ".*"
+          write: ".*"
+          read: ".*"
