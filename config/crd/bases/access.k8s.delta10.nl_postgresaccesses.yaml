@@ -57,7 +57,9 @@ spec:
                   Can reference an existing secret or provide connection details directly
                 properties:
                   database:
-                    description: database is the database name
+                    description: |-
+                      database is the database name
+                      Defaults to "postgres" if not specified or has invalid syntax (e.g '*') and takes precedence over dbname in existingSecret
                     minLength: 1
                     type: string
                   existingSecret:
@@ -65,6 +67,14 @@ spec:
                       existingSecret references an existing secret with connection details
                       The secret must contain keys: host, port, dbname, username, password
                       Optionally can include: sslmode
+                    type: string
+                  existingSecretNamespace:
+                    description: |-
+                      existingSecretNamespace is the namespace where existingSecret is stored.
+                      If omitted, defaults to the PostgresAccess namespace.
+                      Cross-namespace secret references are rejected unless the operator is started
+                      with --allow-cross-namespace-secret-ref=true.
+                    minLength: 1
                     type: string
                   host:
                     description: host is the PostgreSQL server hostname
@@ -145,6 +155,10 @@ spec:
                     - message: either value or secretRef must be specified
                       rule: has(self.value) || has(self.secretRef)
                 type: object
+                x-kubernetes-validations:
+                - message: existingSecretNamespace can only be set when existingSecret
+                    is set
+                  rule: '!has(self.existingSecretNamespace) || has(self.existingSecret)'
               generatedSecret:
                 description: generatedSecret is the name of the secret where generated
                   credentials will be stored

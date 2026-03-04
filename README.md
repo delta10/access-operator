@@ -28,6 +28,15 @@ Then run it:
 make run
 ```
 
+## Cross-namespace existing secrets (optional)
+By default, `PostgresAccess.spec.connection.existingSecret` is resolved in the same namespace as the `PostgresAccess` resource.
+
+If you want to reference a connection secret in another namespace, set:
+- `spec.connection.existingSecretNamespace` in the `PostgresAccess`
+- manager flag `--allow-cross-namespace-secret-ref=true`
+
+The flag defaults to `false` for safer multi-tenant deployments.
+
 When using the docker compose you can use a simple sample config with:
 ```bash
 kubectl apply -f config/samples/access_v1_postgresaccess.yaml

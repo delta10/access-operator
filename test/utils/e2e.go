@@ -487,9 +487,55 @@ func CreateResourceFromSecretReference(
 	cleanupPolicy *accessv1.CleanupPolicy,
 	grants accessv1.GrantSpec,
 ) error {
+	return createResourceFromSecretReference(
+		username,
+		namespace,
+		generatedSecretName,
+		connSecret,
+		nil,
+		cleanupPolicy,
+		grants,
+	)
+}
+
+// CreateResourceFromSecretReferenceWithNamespace creates a PostgresAccess that references an existing secret in another namespace.
+func CreateResourceFromSecretReferenceWithNamespace(
+	username,
+	namespace,
+	generatedSecretName,
+	connSecret,
+	connSecretNamespace string,
+	cleanupPolicy *accessv1.CleanupPolicy,
+	grants accessv1.GrantSpec,
+) error {
+	return createResourceFromSecretReference(
+		username,
+		namespace,
+		generatedSecretName,
+		connSecret,
+		&connSecretNamespace,
+		cleanupPolicy,
+		grants,
+	)
+}
+
+func createResourceFromSecretReference(
+	username,
+	namespace,
+	generatedSecretName,
+	connSecret string,
+	connSecretNamespace *string,
+	cleanupPolicy *accessv1.CleanupPolicy,
+	grants accessv1.GrantSpec,
+) error {
 	cleanupPolicyYAML := ""
 	if cleanupPolicy != nil && *cleanupPolicy != "" {
 		cleanupPolicyYAML = fmt.Sprintf("  cleanupPolicy: %s\n", *cleanupPolicy)
+	}
+
+	existingSecretNamespaceYAML := ""
+	if connSecretNamespace != nil && strings.TrimSpace(*connSecretNamespace) != "" {
+		existingSecretNamespaceYAML = fmt.Sprintf("    existingSecretNamespace: %s\n", strings.TrimSpace(*connSecretNamespace))
 	}
 
 	pgAccessYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
@@ -503,15 +549,39 @@ spec:
   connection:
     existingSecret: %s
 %s
+%s
   grants:
     - database: %s
       privileges:
 %s
-`, username, namespace, generatedSecretName, username, connSecret, cleanupPolicyYAML, grants.Database, formatPrivilegesYAML(grants.Privileges, "        "))
+`, username, namespace, generatedSecretName, username, connSecret, existingSecretNamespaceYAML, cleanupPolicyYAML, grants.Database, formatPrivilegesYAML(grants.Privileges, "        "))
 
 	cmd := exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(pgAccessYAML)
 	_, err := Run(cmd)
+	return err
+}
+
+// EnsureManagerDeploymentArg ensures the manager deployment contains the provided arg and waits for rollout.
+func EnsureManagerDeploymentArg(namespace, deploymentName, arg string) error {
+	cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[?(@.name=='manager')].args}")
+	output, err := Run(cmd)
+	if err != nil {
+		return err
+	}
+
+	if strings.Contains(output, arg) {
+		return nil
+	}
+
+	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"%s"}]`, arg)
+	cmd = exec.Command("kubectl", "patch", "deployment", deploymentName, "-n", namespace, "--type=json", "-p", patch)
+	if _, err = Run(cmd); err != nil {
+		return err
+	}
+
+	cmd = exec.Command("kubectl", "rollout", "status", fmt.Sprintf("deployment/%s", deploymentName), "-n", namespace, "--timeout=3m")
+	_, err = Run(cmd)
 	return err
 }
 
