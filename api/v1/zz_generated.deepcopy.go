@@ -34,6 +34,11 @@ func (in *ConnectionSpec) DeepCopyInto(out *ConnectionSpec) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.ExistingSecretNamespace != nil {
+		in, out := &in.ExistingSecretNamespace, &out.ExistingSecretNamespace
+		*out = new(string)
+		**out = **in
+	}
 	if in.Host != nil {
 		in, out := &in.Host, &out.Host
 		*out = new(string)

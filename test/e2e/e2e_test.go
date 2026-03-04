@@ -36,6 +36,7 @@ import (
 
 // namespace where the project is deployed in
 const namespace = "access-operator-system"
+const managerDeploymentName = "access-operator-controller-manager"
 
 // serviceAccountName created for the project
 const serviceAccountName = "access-operator-controller-manager"
@@ -73,6 +74,10 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("enabling cross-namespace existingSecret references for e2e coverage")
+		err = utils.EnsureManagerDeploymentArg(namespace, managerDeploymentName, "--allow-cross-namespace-secret-ref=true")
+		Expect(err).NotTo(HaveOccurred(), "Failed to enable cross-namespace existingSecret references")
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
@@ -274,6 +279,87 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
 		})
 
+		It("should log reconcile errors and set Ready=False when connection details are invalid", func() {
+			testNamespace := "postgres-access-error-test"
+			resourceName := "invalid-connection"
+			generatedSecretName := "invalid-connection-secret"
+
+			By("resetting the test namespace")
+			cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--timeout=1m")
+			_, _ = utils.Run(cmd)
+
+			cmd = exec.Command("kubectl", "create", "ns", testNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
+
+			DeferCleanup(func() {
+				cleanupCmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--wait=false")
+				_, _ = utils.Run(cleanupCmd)
+			})
+
+			By("creating a PostgresAccess resource with invalid connection details")
+			invalidResource := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: PostgresAccess
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  generatedSecret: %s
+  username: %s
+  connection: {}
+  grants:
+    - database: postgres
+      privileges:
+        - CONNECT
+`, resourceName, testNamespace, generatedSecretName, resourceName)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(invalidResource)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create invalid PostgresAccess resource")
+
+			By("verifying the PostgresAccess status reports the reconcile failure")
+			Eventually(func(g Gomega) {
+				statusCmd := exec.Command(
+					"kubectl", "get", "postgresaccess", resourceName, "-n", testNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+				)
+				statusOutput, statusErr := utils.Run(statusCmd)
+				g.Expect(statusErr).NotTo(HaveOccurred(), "Failed to retrieve Ready condition status")
+				g.Expect(strings.TrimSpace(statusOutput)).To(Equal("False"))
+
+				reasonCmd := exec.Command(
+					"kubectl", "get", "postgresaccess", resourceName, "-n", testNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}",
+				)
+				reasonOutput, reasonErr := utils.Run(reasonCmd)
+				g.Expect(reasonErr).NotTo(HaveOccurred(), "Failed to retrieve Ready condition reason")
+				g.Expect(strings.TrimSpace(reasonOutput)).To(Equal("DatabaseSyncFailed"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("verifying the controller logs the expected reconcile error")
+			Eventually(func(g Gomega) {
+				if controllerPodName == "" {
+					podCmd := exec.Command(
+						"kubectl", "get", "pods", "-l", "control-plane=controller-manager",
+						"-o", "jsonpath={.items[0].metadata.name}",
+						"-n", namespace,
+					)
+					podOutput, podErr := utils.Run(podCmd)
+					g.Expect(podErr).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod")
+					controllerPodName = strings.TrimSpace(podOutput)
+					g.Expect(controllerPodName).NotTo(BeEmpty(), "Controller pod name should not be empty")
+				}
+
+				logCmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace, "--since=10m")
+				logOutput, logErr := utils.Run(logCmd)
+				g.Expect(logErr).NotTo(HaveOccurred(), "Failed to read controller logs")
+				g.Expect(logOutput).To(ContainSubstring(resourceName))
+				g.Expect(logOutput).To(ContainSubstring("failed to reconcile PostgresAccess"))
+				g.Expect(logOutput).To(ContainSubstring("no valid connection details provided"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+		})
+
 		Context("CNPG", func() {
 			BeforeAll(func() {
 				By("deploying a PGSQL instance for testing")
@@ -423,6 +509,50 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("verifying the database user was created")
 				utils.WaitForDatabaseUserState(testNamespace, conn, "test-username", true)
+			})
+
+			It("should create a PostgresAccess resource using an existing connection secret from another namespace", func() {
+				testNamespace, conn := utils.GetDatabaseVariables()
+				connectionSecretNamespace := fmt.Sprintf("%s-shared", testNamespace)
+
+				By("resetting the shared secret namespace used for cross-namespace secret references")
+				cmd := exec.Command("kubectl", "delete", "ns", connectionSecretNamespace, "--ignore-not-found", "--timeout=1m")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to clean up existing shared secret namespace")
+
+				cmd = exec.Command("kubectl", "create", "ns", connectionSecretNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create shared secret namespace")
+
+				DeferCleanup(func() {
+					cleanupCmd := exec.Command("kubectl", "delete", "ns", connectionSecretNamespace, "--ignore-not-found", "--wait=false")
+					_, _ = utils.Run(cleanupCmd)
+				})
+
+				By("creating the connection secret in the shared namespace")
+				secretName, err := utils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
+
+				By("creating a PostgresAccess resource in the workload namespace that references the shared secret")
+				err = utils.CreateResourceFromSecretReferenceWithNamespace(
+					"test-username-cross-namespace",
+					testNamespace,
+					"test-postgres-credentials-cross-namespace",
+					secretName,
+					connectionSecretNamespace,
+					nil,
+					accessv1.GrantSpec{
+						Database:   conn.Database,
+						Privileges: []string{"CONNECT", "SELECT"},
+					},
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with cross-namespace secret reference")
+
+				By("waiting for the generated secret to be created")
+				utils.WaitForSecretField(testNamespace, "test-postgres-credentials-cross-namespace", "username")
+
+				By("verifying the database user was created")
+				utils.WaitForDatabaseUserState(testNamespace, conn, "test-username-cross-namespace", true)
 			})
 
 			It("should create a database user when connection is provided via direct connection details but user and pass via secret reference", func() {
