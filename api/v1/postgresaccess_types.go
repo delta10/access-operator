@@ -142,7 +142,6 @@ type PostgresAccessSpec struct {
 	GeneratedSecret string `json:"generatedSecret"`
 
 	// username is the PostgreSQL username to create
-	// If empty, the operator will generate one
 	// +kubebuilder:validation:Required
 	Username string `json:"username"`
 

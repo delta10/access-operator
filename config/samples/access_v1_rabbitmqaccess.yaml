@@ -1,0 +1,26 @@
+apiVersion: access.k8s.delta10.nl/v1
+kind: RabbitMQAccess
+metadata:
+  labels:
+    app.kubernetes.io/name: access-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: rabbitmqaccess-sample
+spec:
+    username: app-user
+    generatedSecret: app-user-rabbitmq-credentials
+    connection:
+        host: rabbitmq.default.svc.cluster.local
+        port: 5672
+        username:
+            secretRef:
+                name: rabbitmq-admin-conn
+                key: username
+        password:
+            secretRef:
+                name: rabbitmq-admin-conn
+                key: password
+    permissions:
+        - vhost: /app
+          configure: ".*"
+          write: ".*"
+          read: ".*"

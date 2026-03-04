@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/access.k8s.delta10.nl_postgresaccesses.yaml
+- bases/access.k8s.delta10.nl_rabbitmqaccesses.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
