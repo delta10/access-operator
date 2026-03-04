@@ -26,6 +26,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -631,6 +632,98 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(finalized).To(BeTrue())
 		})
+
+		It("should set Ready=False when reconcile returns an error", func() {
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "status-error",
+					Namespace: "default",
+				},
+				Spec: accessv1.PostgresAccessSpec{
+					GeneratedSecret: "status-error-secret",
+					Username:        "demo-user",
+					Connection:      accessv1.ConnectionSpec{},
+					Grants: []accessv1.GrantSpec{
+						{Database: "appdb", Privileges: []string{"CONNECT"}},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(pg)
+			reconciler := &PostgresAccessReconciler{
+				Client: fakeClient,
+				Scheme: fakeScheme,
+				DB:     NewMockDB(),
+			}
+
+			_, err := reconciler.Reconcile(context.Background(), reconcile.Request{
+				NamespacedName: client.ObjectKeyFromObject(pg),
+			})
+			Expect(err).To(HaveOccurred())
+
+			updated := &accessv1.PostgresAccess{}
+			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
+			Expect(err).NotTo(HaveOccurred())
+
+			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCondition.Reason).To(Equal("DatabaseSyncFailed"))
+		})
+
+		It("should set Ready=True when reconcile succeeds in syncing state", func() {
+			host := "localhost"
+			port := int32(5432)
+			database := "appdb"
+			username := "user1"
+			password := "secret"
+
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "status-ready",
+					Namespace: "default",
+				},
+				Spec: accessv1.PostgresAccessSpec{
+					GeneratedSecret: "status-ready-secret",
+					Username:        username,
+					Connection: accessv1.ConnectionSpec{
+						Host:     &host,
+						Port:     &port,
+						Database: &database,
+						Username: &accessv1.SecretKeySelector{Value: &username},
+						Password: &accessv1.SecretKeySelector{Value: &password},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(pg)
+			reconciler := &PostgresAccessReconciler{
+				Client: fakeClient,
+				Scheme: fakeScheme,
+				DB:     NewMockDB(),
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), reconcile.Request{
+				NamespacedName: client.ObjectKeyFromObject(pg),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(privilegeDriftRequeueInterval))
+
+			result, err = reconciler.Reconcile(context.Background(), reconcile.Request{
+				NamespacedName: client.ObjectKeyFromObject(pg),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(syncedRequeueInterval))
+
+			updated := &accessv1.PostgresAccess{}
+			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
+			Expect(err).NotTo(HaveOccurred())
+
+			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(readyCondition.Reason).To(Equal("Ready"))
+		})
 	})
 })
 
@@ -651,6 +744,7 @@ func newFakeClientWithScheme(objs ...client.Object) (client.Client, *runtime.Sch
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
+		WithStatusSubresource(&accessv1.PostgresAccess{}).
 		WithObjects(objs...).
 		Build()
 

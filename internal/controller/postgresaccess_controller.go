@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	neturl "net/url"
@@ -27,6 +28,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -51,6 +53,7 @@ type PostgresAccessReconciler struct {
 const privilegeDriftRequeueInterval = 30 * time.Second
 const syncedRequeueInterval = 5 * time.Minute
 const postgresAccessFinalizer = "access.k8s.delta10.nl/finalizer"
+const postgresAccessReadyConditionType = "Ready"
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses,verbs=get;list;watch;create;update;patch;delete
@@ -94,7 +97,7 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	finalized, err := r.finalizePostgresAccess(ctx, &pg)
 	if err != nil {
-		return ctrl.Result{}, err
+		return r.returnWithErrorStatus(ctx, req.NamespacedName, "FinalizeFailed", err)
 	}
 	// If the resource is finalized, we return early to avoid requeuing.
 	// The finalizer will have been removed, so no further reconciliation will occur for this resource.
@@ -126,13 +129,13 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	})
 	if err != nil {
 		log.Error(err, "failed to create/update secret", "secret", key.String())
-		return ctrl.Result{}, err
+		return r.returnWithErrorStatus(ctx, req.NamespacedName, "SecretSyncFailed", err)
 	}
 
 	pgSync, err := r.reconcilePostgresAccess(ctx, &pg)
 	if err != nil {
 		log.Error(err, "failed to reconcile PostgresAccess")
-		return ctrl.Result{}, err
+		return r.returnWithErrorStatus(ctx, req.NamespacedName, "DatabaseSyncFailed", err)
 	}
 
 	if inSync {
@@ -140,10 +143,59 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	if inSync {
+		if err := r.setReadyCondition(
+			ctx, req.NamespacedName, metav1.ConditionTrue, "Ready", "PostgresAccess is in sync",
+		); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
 	}
 
+	if err := r.setReadyCondition(
+		ctx, req.NamespacedName, metav1.ConditionFalse, "Reconciling", "PostgresAccess is not yet in sync",
+	); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
+}
+
+func (r *PostgresAccessReconciler) returnWithErrorStatus(
+	ctx context.Context,
+	key types.NamespacedName,
+	reason string,
+	reconcileErr error,
+) (ctrl.Result, error) {
+	if statusErr := r.setReadyCondition(ctx, key, metav1.ConditionFalse, reason, reconcileErr.Error()); statusErr != nil {
+		return ctrl.Result{}, errors.Join(reconcileErr, fmt.Errorf("failed to update status condition: %w", statusErr))
+	}
+
+	return ctrl.Result{}, reconcileErr
+}
+
+func (r *PostgresAccessReconciler) setReadyCondition(
+	ctx context.Context,
+	key types.NamespacedName,
+	status metav1.ConditionStatus,
+	reason, message string,
+) error {
+	var latest accessv1.PostgresAccess
+	if err := r.Get(ctx, key, &latest); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
+		Type:               postgresAccessReadyConditionType,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: latest.GetGeneration(),
+	})
+
+	return r.Status().Update(ctx, &latest)
 }
 
 // reconcilePostgresAccess connects to the PostgreSQL database, retrieves current grants and users.
