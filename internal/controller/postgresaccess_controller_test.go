@@ -81,13 +81,14 @@ var _ = Describe("PostgresAccess Controller", func() {
 			})
 		})
 
+		host := "localhost"
+		port := int32(5432)
+		db := "testdb"
+		username := "demo-user"
+		password := "demo-password"
+
 		It("should create secret and user with a connection and username specified", func() {
 			By("creating a PostgresAccess resource with valid connection host and a user in postgres")
-			host := "localhost"
-			port := int32(5432)
-			db := "testdb"
-			username := "demo-user"
-			password := "demo-password"
 			resource := &accessv1.PostgresAccess{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      connectionTestResourceName,
@@ -163,11 +164,6 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 		It("should create secret and user with a connection and username specified in an existing secret", func() {
 			By("creating a PostgresAccess resource with valid connection host and a user in postgres")
-			host := "localhost"
-			port := int32(5432)
-			db := "testdb"
-			username := "demo-user"
-			password := "demo-password"
 			secretName := "db-credentials"
 
 			secret := &corev1.Secret{
