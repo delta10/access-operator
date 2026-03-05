@@ -74,6 +74,7 @@ type ControllerReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile enforces singleton Controller behavior across the cluster.
 func (r *ControllerReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {

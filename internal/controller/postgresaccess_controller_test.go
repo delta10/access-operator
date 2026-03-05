@@ -761,10 +761,12 @@ var _ = Describe("PostgresAccess Controller", func() {
 			}
 
 			fakeClient, fakeScheme := newFakeClientWithScheme(pg)
+			eventRecorder := events.NewFakeRecorder(5)
 			reconciler := &PostgresAccessReconciler{
-				Client: fakeClient,
-				Scheme: fakeScheme,
-				DB:     NewMockDB(),
+				Client:   fakeClient,
+				Scheme:   fakeScheme,
+				DB:       NewMockDB(),
+				Recorder: eventRecorder,
 			}
 
 			_, err := reconciler.Reconcile(context.Background(), reconcile.Request{
@@ -780,6 +782,21 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(readyCondition.Reason).To(Equal("DatabaseSyncFailed"))
+
+			successCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessSuccessConditionType)
+			Expect(successCondition).NotTo(BeNil())
+			Expect(successCondition.Status).To(Equal(metav1.ConditionFalse))
+
+			inProgressCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessInProgressConditionType)
+			Expect(inProgressCondition).NotTo(BeNil())
+			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionFalse))
+
+			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateError))
+			Expect(updated.Status.LastLog).To(ContainSubstring("no valid connection details provided"))
+
+			var event string
+			Eventually(eventRecorder.Events).Should(Receive(&event))
+			Expect(event).To(ContainSubstring("DatabaseSyncFailed"))
 		})
 
 		It("should set Ready=True when reconcile succeeds in syncing state", func() {
@@ -820,6 +837,26 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(privilegeDriftRequeueInterval))
 
+			inProgressStatus := &accessv1.PostgresAccess{}
+			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), inProgressStatus)
+			Expect(err).NotTo(HaveOccurred())
+
+			readyCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessReadyConditionType)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCondition.Reason).To(Equal("Reconciling"))
+
+			successCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessSuccessConditionType)
+			Expect(successCondition).NotTo(BeNil())
+			Expect(successCondition.Status).To(Equal(metav1.ConditionFalse))
+
+			inProgressCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessInProgressConditionType)
+			Expect(inProgressCondition).NotTo(BeNil())
+			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionTrue))
+
+			Expect(inProgressStatus.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateInProgress))
+			Expect(inProgressStatus.Status.LastLog).To(Equal("PostgresAccess is not yet in sync"))
+
 			result, err = reconciler.Reconcile(context.Background(), reconcile.Request{
 				NamespacedName: client.ObjectKeyFromObject(pg),
 			})
@@ -830,10 +867,21 @@ var _ = Describe("PostgresAccess Controller", func() {
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
 			Expect(err).NotTo(HaveOccurred())
 
-			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			readyCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(readyCondition.Reason).To(Equal("Ready"))
+
+			successCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessSuccessConditionType)
+			Expect(successCondition).NotTo(BeNil())
+			Expect(successCondition.Status).To(Equal(metav1.ConditionTrue))
+
+			inProgressCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessInProgressConditionType)
+			Expect(inProgressCondition).NotTo(BeNil())
+			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionFalse))
+
+			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateSuccess))
+			Expect(updated.Status.LastLog).To(Equal("PostgresAccess is in sync"))
 		})
 	})
 })

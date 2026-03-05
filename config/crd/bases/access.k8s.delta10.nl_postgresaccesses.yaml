@@ -14,7 +14,14 @@ spec:
     singular: postgresaccess
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - jsonPath: .status.lastReconcileState
+      name: Status
+      type: string
+    - jsonPath: .status.lastLog
+      name: LastLog
+      type: string
+    name: v1
     schema:
       openAPIV3Schema:
         description: PostgresAccess is the Schema for the postgresaccesses API
@@ -275,6 +282,17 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastLog:
+                description: lastLog is the latest reconcile log message or error.
+                type: string
+              lastReconcileState:
+                default: InProgress
+                description: lastReconcileState is the latest reconcile outcome.
+                enum:
+                - Success
+                - InProgress
+                - Error
+                type: string
             type: object
         required:
         - spec

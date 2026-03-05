@@ -54,7 +54,11 @@ type PostgresAccessReconciler struct {
 const privilegeDriftRequeueInterval = 30 * time.Second
 const syncedRequeueInterval = 5 * time.Minute
 const postgresAccessFinalizer = "access.k8s.delta10.nl/finalizer"
-const postgresAccessReadyConditionType = "Ready"
+const (
+	postgresAccessReadyConditionType      = "Ready"
+	postgresAccessSuccessConditionType    = "Success"
+	postgresAccessInProgressConditionType = "InProgress"
+)
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses,verbs=get;list;watch;create;update;patch;delete
@@ -62,6 +66,7 @@ const postgresAccessReadyConditionType = "Ready"
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/finalizers,verbs=update
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=controllers,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // RBAC permissions for CronJobs, if needed for finalizer cleanup.
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
@@ -100,7 +105,7 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	finalized, err := r.finalizePostgresAccess(ctx, &pg)
 	if err != nil {
-		return r.returnWithErrorStatus(ctx, req.NamespacedName, "FinalizeFailed", err)
+		return r.returnWithErrorStatus(ctx, &pg, "FinalizeFailed", err)
 	}
 	// If the resource is finalized, we return early to avoid requeuing.
 	// The finalizer will have been removed, so no further reconciliation will occur for this resource.
@@ -132,13 +137,13 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	})
 	if err != nil {
 		log.Error(err, "failed to create/update secret", "secret", key.String())
-		return r.returnWithErrorStatus(ctx, req.NamespacedName, "SecretSyncFailed", err)
+		return r.returnWithErrorStatus(ctx, &pg, "SecretSyncFailed", err)
 	}
 
 	pgSync, err := r.reconcilePostgresAccess(ctx, &pg)
 	if err != nil {
 		log.Error(err, "failed to reconcile PostgresAccess")
-		return r.returnWithErrorStatus(ctx, req.NamespacedName, "DatabaseSyncFailed", err)
+		return r.returnWithErrorStatus(ctx, &pg, "DatabaseSyncFailed", err)
 	}
 
 	if inSync {
@@ -146,16 +151,24 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	if inSync {
-		if err := r.setReadyCondition(
-			ctx, req.NamespacedName, metav1.ConditionTrue, "Ready", "PostgresAccess is in sync",
+		if err := r.setReconcileStatus(
+			ctx,
+			req.NamespacedName,
+			accessv1.ReconcileStateSuccess,
+			"Ready",
+			"PostgresAccess is in sync",
 		); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
 	}
 
-	if err := r.setReadyCondition(
-		ctx, req.NamespacedName, metav1.ConditionFalse, "Reconciling", "PostgresAccess is not yet in sync",
+	if err := r.setReconcileStatus(
+		ctx,
+		req.NamespacedName,
+		accessv1.ReconcileStateInProgress,
+		"Reconciling",
+		"PostgresAccess is not yet in sync",
 	); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -165,23 +178,42 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 func (r *PostgresAccessReconciler) returnWithErrorStatus(
 	ctx context.Context,
-	key types.NamespacedName,
+	pg *accessv1.PostgresAccess,
 	reason string,
 	reconcileErr error,
 ) (ctrl.Result, error) {
-	if statusErr := r.setReadyCondition(ctx, key, metav1.ConditionFalse, reason, reconcileErr.Error()); statusErr != nil {
+	if pg != nil {
+		r.emitWarningEvent(pg, reason, reconcileErr.Error())
+	}
+
+	key := types.NamespacedName{}
+	if pg != nil {
+		key = types.NamespacedName{Name: pg.Name, Namespace: pg.Namespace}
+	}
+
+	if statusErr := r.setReconcileStatus(
+		ctx,
+		key,
+		accessv1.ReconcileStateError,
+		reason,
+		reconcileErr.Error(),
+	); statusErr != nil {
 		return ctrl.Result{}, errors.Join(reconcileErr, fmt.Errorf("failed to update status condition: %w", statusErr))
 	}
 
 	return ctrl.Result{}, reconcileErr
 }
 
-func (r *PostgresAccessReconciler) setReadyCondition(
+func (r *PostgresAccessReconciler) setReconcileStatus(
 	ctx context.Context,
 	key types.NamespacedName,
-	status metav1.ConditionStatus,
+	reconcileState accessv1.ReconcileState,
 	reason, message string,
 ) error {
+	if key.Name == "" || key.Namespace == "" {
+		return nil
+	}
+
 	var latest accessv1.PostgresAccess
 	if err := r.Get(ctx, key, &latest); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -190,13 +222,44 @@ func (r *PostgresAccessReconciler) setReadyCondition(
 		return err
 	}
 
+	readyStatus := metav1.ConditionFalse
+	successStatus := metav1.ConditionFalse
+	inProgressStatus := metav1.ConditionFalse
+
+	switch reconcileState {
+	case accessv1.ReconcileStateSuccess:
+		readyStatus = metav1.ConditionTrue
+		successStatus = metav1.ConditionTrue
+	case accessv1.ReconcileStateInProgress:
+		inProgressStatus = metav1.ConditionTrue
+	case accessv1.ReconcileStateError:
+	default:
+		return fmt.Errorf("invalid reconcile state %q", reconcileState)
+	}
+
 	meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
 		Type:               postgresAccessReadyConditionType,
-		Status:             status,
+		Status:             readyStatus,
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: latest.GetGeneration(),
 	})
+	meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
+		Type:               postgresAccessSuccessConditionType,
+		Status:             successStatus,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: latest.GetGeneration(),
+	})
+	meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
+		Type:               postgresAccessInProgressConditionType,
+		Status:             inProgressStatus,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: latest.GetGeneration(),
+	})
+	latest.Status.LastLog = message
+	latest.Status.LastReconcileState = reconcileState
 
 	return r.Status().Update(ctx, &latest)
 }
