@@ -23,10 +23,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -59,7 +60,7 @@ var _ = Describe("Controller Controller", func() {
 			},
 		)
 
-		eventRecorder := record.NewFakeRecorder(20)
+		eventRecorder := events.NewFakeRecorder(20)
 		reconciler := &ControllerReconciler{
 			Client:   fakeClient,
 			Scheme:   fakeScheme,
@@ -92,12 +93,44 @@ var _ = Describe("Controller Controller", func() {
 
 	It("should reconcile the manager deployment idempotently for the singleton Controller", func() {
 		controllerKey := types.NamespacedName{Name: "cluster-settings", Namespace: "system"}
+		deploymentKey := client.ObjectKey{
+			Name:      defaultManagerDeploymentName,
+			Namespace: defaultManagerDeploymentNamespace,
+		}
 		fakeClient, fakeScheme := newFakeClientWithScheme(
 			&accessv1.Controller{
 				ObjectMeta: metav1.ObjectMeta{Name: controllerKey.Name, Namespace: controllerKey.Namespace},
 				Spec: accessv1.ControllerSpec{
 					Settings: accessv1.ControllerSettings{
 						ExistingSecretNamespace: true,
+					},
+				},
+			},
+			&appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentKey.Name,
+					Namespace: deploymentKey.Namespace,
+					Labels: map[string]string{
+						managerControlPlaneLabelKey: managerControlPlaneLabelValue,
+						managerAppNameLabelKey:      managerAppNameLabelValue,
+					},
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": "manager",
+						},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{"app": "manager"},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{{
+								Name:  "manager",
+								Image: "example.com/access-operator:v0.0.1",
+							}},
+						},
 					},
 				},
 			},
@@ -111,10 +144,6 @@ var _ = Describe("Controller Controller", func() {
 		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: controllerKey})
 		Expect(err).NotTo(HaveOccurred())
 
-		deploymentKey := client.ObjectKey{
-			Name:      defaultManagerDeploymentName,
-			Namespace: defaultManagerDeploymentNamespace,
-		}
 		firstDeployment := &appsv1.Deployment{}
 		Expect(fakeClient.Get(ctx, deploymentKey, firstDeployment)).To(Succeed())
 		Expect(firstDeployment.Annotations).To(HaveKeyWithValue(managerPolicyAnnotationKey, "true"))

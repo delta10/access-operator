@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -492,7 +492,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			)
 
-			eventRecorder := record.NewFakeRecorder(10)
+			eventRecorder := events.NewFakeRecorder(10)
 			reconciler := &PostgresAccessReconciler{
 				Client:   fakeClient,
 				Recorder: eventRecorder,

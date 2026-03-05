@@ -31,8 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -66,7 +65,7 @@ const (
 type ControllerReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=controllers,verbs=get;list;watch;create;update;patch;delete
@@ -133,67 +132,25 @@ func (r *ControllerReconciler) reconcileManagerDeployment(ctx context.Context, c
 		return err
 	}
 
-	deployment := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      key.Name,
-			Namespace: key.Namespace,
-		},
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, key, deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf(
+				"manager deployment %s/%s not found; deploy operator manifests before configuring Controller singleton policy",
+				key.Namespace,
+				key.Name,
+			)
+		}
+		return err
 	}
 
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
-		if deployment.Labels == nil {
-			deployment.Labels = map[string]string{}
-		}
-		deployment.Labels[managerControlPlaneLabelKey] = managerControlPlaneLabelValue
-		deployment.Labels[managerAppNameLabelKey] = managerAppNameLabelValue
-
 		if deployment.Annotations == nil {
 			deployment.Annotations = map[string]string{}
 		}
 		deployment.Annotations[managerPolicyAnnotationKey] = strconv.FormatBool(
 			controllerObj.Spec.Settings.ExistingSecretNamespace,
 		)
-
-		if deployment.CreationTimestamp.IsZero() {
-			deployment.Spec = appsv1.DeploymentSpec{
-				Replicas: ptr.To[int32](1),
-				Selector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						managerControlPlaneLabelKey: managerControlPlaneLabelValue,
-						managerAppNameLabelKey:      managerAppNameLabelValue,
-					},
-				},
-				Template: corev1.PodTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{
-						Labels: map[string]string{
-							managerControlPlaneLabelKey: managerControlPlaneLabelValue,
-							managerAppNameLabelKey:      managerAppNameLabelValue,
-						},
-					},
-					Spec: corev1.PodSpec{
-						ServiceAccountName: defaultManagerDeploymentName,
-						Containers: []corev1.Container{
-							{
-								Name:    "manager",
-								Image:   "controller:latest",
-								Command: []string{"/manager"},
-								Args: []string{
-									"--leader-elect",
-									"--health-probe-bind-address=:8081",
-								},
-							},
-						},
-					},
-				},
-			}
-			return nil
-		}
-
-		if deployment.Spec.Template.Labels == nil {
-			deployment.Spec.Template.Labels = map[string]string{}
-		}
-		deployment.Spec.Template.Labels[managerControlPlaneLabelKey] = managerControlPlaneLabelValue
-		deployment.Spec.Template.Labels[managerAppNameLabelKey] = managerAppNameLabelValue
 
 		return nil
 	})
@@ -251,7 +208,10 @@ func (r *ControllerReconciler) listManagerDeployments(ctx context.Context) ([]ap
 	if err := r.List(
 		ctx,
 		&deploymentList,
-		client.MatchingLabels{managerControlPlaneLabelKey: managerControlPlaneLabelValue},
+		client.MatchingLabels{
+			managerControlPlaneLabelKey: managerControlPlaneLabelValue,
+			managerAppNameLabelKey:      managerAppNameLabelValue,
+		},
 	); err != nil {
 		return nil, err
 	}
@@ -280,7 +240,7 @@ func (r *ControllerReconciler) emitWarningEvent(object client.Object, reason, me
 		return
 	}
 
-	r.Recorder.Eventf(object, corev1.EventTypeWarning, reason, "%s", message)
+	r.Recorder.Eventf(object, nil, corev1.EventTypeWarning, reason, "PolicyValidation", "%s", message)
 }
 
 func (r *ControllerReconciler) setControllerReadyCondition(

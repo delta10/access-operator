@@ -32,7 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"crypto/rand"
@@ -48,7 +48,7 @@ type PostgresAccessReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	DB       DBInterface
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 const privilegeDriftRequeueInterval = 30 * time.Second
@@ -521,7 +521,7 @@ func (r *PostgresAccessReconciler) emitWarningEvent(object client.Object, reason
 		return
 	}
 
-	r.Recorder.Eventf(object, corev1.EventTypeWarning, reason, "%s", message)
+	r.Recorder.Eventf(object, nil, corev1.EventTypeWarning, reason, "PolicyValidation", "%s", message)
 }
 
 func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string, pg *accessv1.PostgresAccess) (ConnectionDetails, error) {

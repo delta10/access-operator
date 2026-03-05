@@ -179,20 +179,18 @@ func main() {
 	}
 
 	if err := (&controller.ControllerReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		//nolint:staticcheck // Uses legacy recorder interface expected by controller-runtime event helpers.
-		Recorder: mgr.GetEventRecorderFor("controller-controller"),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("controller-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Controller")
 		os.Exit(1)
 	}
 
 	if err := (&controller.PostgresAccessReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		//nolint:staticcheck // Uses legacy recorder interface expected by controller-runtime event helpers.
-		Recorder: mgr.GetEventRecorderFor("postgresaccess-controller"),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("postgresaccess-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PostgresAccess")
 		os.Exit(1)
