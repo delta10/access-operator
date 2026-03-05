@@ -7,6 +7,21 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - secrets
   verbs:
   - create
@@ -19,6 +34,7 @@ rules:
 - apiGroups:
   - access.k8s.delta10.nl
   resources:
+  - controllers
   - cronjobs
   - postgresaccesses
   verbs:
@@ -32,6 +48,7 @@ rules:
 - apiGroups:
   - access.k8s.delta10.nl
   resources:
+  - controllers/finalizers
   - cronjobs/finalizers
   - postgresaccesses/finalizers
   verbs:
@@ -39,9 +56,21 @@ rules:
 - apiGroups:
   - access.k8s.delta10.nl
   resources:
+  - controllers/status
   - cronjobs/status
   - postgresaccesses/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
