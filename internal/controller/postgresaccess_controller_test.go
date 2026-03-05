@@ -20,15 +20,18 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -235,6 +238,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		var port = int32(5432)
 		var database = "appdb"
 		var secretName = "db-connection"
+		var sharedSecretNamespace = "shared-db"
 
 		It("should default ssl mode to require for direct connection details", func() {
 			expectedString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=require", username, password, host, port, database)
@@ -335,12 +339,12 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(connectionString).To(Equal(expectedString))
 		})
 
-		It("should reject cross-namespace existingSecret by default", func() {
+		It("should reject cross-namespace existingSecret when no Controller resource exists", func() {
 			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
-						Namespace: "shared-db",
+						Namespace: sharedSecretNamespace,
 					},
 					Data: map[string][]byte{
 						"host":     []byte("postgres"),
@@ -353,7 +357,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			)
 
 			reconciler := &PostgresAccessReconciler{Client: fakeClient}
-			secretNamespace := "shared-db"
+			secretNamespace := sharedSecretNamespace
 			pg := &accessv1.PostgresAccess{
 				ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"},
 				Spec: accessv1.PostgresAccessSpec{
@@ -369,8 +373,110 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(err.Error()).To(ContainSubstring("cross-namespace connection secret references are disabled"))
 		})
 
-		It("should allow cross-namespace existingSecret when explicitly enabled", func() {
+		It("should reject cross-namespace existingSecret when singleton Controller policy is false", func() {
 			fakeClient, _ := newFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "cluster-settings",
+						Namespace: "system",
+					},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{
+							ExistingSecretNamespace: false,
+						},
+					},
+				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      secretName,
+						Namespace: sharedSecretNamespace,
+					},
+					Data: map[string][]byte{
+						"host":     []byte("postgres"),
+						"port":     []byte(strconv.Itoa(int(port))),
+						"database": []byte(database),
+						"username": []byte("db-admin"),
+						"password": []byte("secret"),
+					},
+				},
+			)
+
+			reconciler := &PostgresAccessReconciler{Client: fakeClient}
+			secretNamespace := sharedSecretNamespace
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"},
+				Spec: accessv1.PostgresAccessSpec{
+					Connection: accessv1.ConnectionSpec{
+						ExistingSecret:          &secretName,
+						ExistingSecretNamespace: &secretNamespace,
+					},
+				},
+			}
+
+			_, err := reconciler.getConnectionString(context.Background(), pg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cross-namespace connection secret references are disabled"))
+		})
+
+		It("should allow cross-namespace existingSecret when singleton Controller policy is true", func() {
+			fakeClient, _ := newFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "cluster-settings",
+						Namespace: "system",
+					},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{
+							ExistingSecretNamespace: true,
+						},
+					},
+				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      secretName,
+						Namespace: sharedSecretNamespace,
+					},
+					Data: map[string][]byte{
+						"host":     []byte("postgres"),
+						"port":     []byte(strconv.Itoa(int(port))),
+						"database": []byte(database),
+						"username": []byte("db-admin"),
+						"password": []byte("secret"),
+					},
+				},
+			)
+
+			reconciler := &PostgresAccessReconciler{Client: fakeClient}
+			secretNamespace := sharedSecretNamespace
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"},
+				Spec: accessv1.PostgresAccessSpec{
+					Connection: accessv1.ConnectionSpec{
+						ExistingSecret:          &secretName,
+						ExistingSecretNamespace: &secretNamespace,
+					},
+				},
+			}
+
+			connectionString, err := reconciler.getConnectionString(context.Background(), pg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.shared-db.svc:5432/appdb?sslmode=require"))
+		})
+
+		It("should hard fail cross-namespace existingSecret when multiple Controller resources exist", func() {
+			fakeClient, _ := newFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{Name: "controller-a", Namespace: "system"},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
+					},
+				},
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{Name: "controller-b", Namespace: "default"},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
+					},
+				},
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -386,13 +492,14 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			)
 
+			eventRecorder := record.NewFakeRecorder(10)
 			reconciler := &PostgresAccessReconciler{
-				Client:                        fakeClient,
-				AllowCrossNamespaceSecretRefs: true,
+				Client:   fakeClient,
+				Recorder: eventRecorder,
 			}
 			secretNamespace := "shared-db"
 			pg := &accessv1.PostgresAccess{
-				ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"},
+				ObjectMeta: metav1.ObjectMeta{Name: "tenant-access", Namespace: "tenant-a"},
 				Spec: accessv1.PostgresAccessSpec{
 					Connection: accessv1.ConnectionSpec{
 						ExistingSecret:          &secretName,
@@ -401,9 +508,17 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			connectionString, err := reconciler.getConnectionString(context.Background(), pg)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.shared-db.svc:5432/appdb?sslmode=require"))
+			_, err := reconciler.getConnectionString(context.Background(), pg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("multiple Controller resources found"))
+
+			var eventOne, eventTwo, eventThree string
+			Eventually(eventRecorder.Events).Should(Receive(&eventOne))
+			Eventually(eventRecorder.Events).Should(Receive(&eventTwo))
+			Eventually(eventRecorder.Events).Should(Receive(&eventThree))
+
+			allEvents := strings.Join([]string{eventOne, eventTwo, eventThree}, " ")
+			Expect(allEvents).To(ContainSubstring(multipleControllersFoundReason))
 		})
 
 		It("should return an error when no valid connection details are provided", func() {
@@ -737,10 +852,11 @@ func newFakeClientWithScheme(objs ...client.Object) (client.Client, *runtime.Sch
 	scheme := runtime.NewScheme()
 	Expect(accessv1.AddToScheme(scheme)).To(Succeed())
 	Expect(corev1.AddToScheme(scheme)).To(Succeed())
+	Expect(appsv1.AddToScheme(scheme)).To(Succeed())
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&accessv1.PostgresAccess{}).
+		WithStatusSubresource(&accessv1.PostgresAccess{}, &accessv1.Controller{}).
 		WithObjects(objs...).
 		Build()
 

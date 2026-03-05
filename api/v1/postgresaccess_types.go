@@ -59,8 +59,8 @@ type ConnectionSpec struct {
 
 	// existingSecretNamespace is the namespace where existingSecret is stored.
 	// If omitted, defaults to the PostgresAccess namespace.
-	// Cross-namespace secret references are rejected unless the operator is started
-	// with --allow-cross-namespace-secret-ref=true.
+	// Cross-namespace secret references are rejected unless a single Controller
+	// resource exists with spec.settings.existingSecretNamespace=true.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	ExistingSecretNamespace *string `json:"existingSecretNamespace,omitempty"`

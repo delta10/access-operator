@@ -32,6 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"crypto/rand"
@@ -45,9 +46,9 @@ import (
 // PostgresAccessReconciler reconciles a PostgresAccess object
 type PostgresAccessReconciler struct {
 	client.Client
-	Scheme                        *runtime.Scheme
-	DB                            DBInterface
-	AllowCrossNamespaceSecretRefs bool
+	Scheme   *runtime.Scheme
+	DB       DBInterface
+	Recorder record.EventRecorder
 }
 
 const privilegeDriftRequeueInterval = 30 * time.Second
@@ -59,6 +60,8 @@ const postgresAccessReadyConditionType = "Ready"
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/finalizers,verbs=update
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=controllers,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // RBAC permissions for CronJobs, if needed for finalizer cleanup.
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
@@ -387,7 +390,7 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 // It supports both direct connection details and referencing an existing secret for connection information.
 func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {
 	if pg.Spec.Connection.ExistingSecret != nil && *pg.Spec.Connection.ExistingSecret != "" {
-		secretNamespace, err := r.resolveExistingSecretNamespace(pg)
+		secretNamespace, err := r.resolveExistingSecretNamespace(ctx, pg)
 		if err != nil {
 			return "", err
 		}
@@ -460,7 +463,7 @@ func (r *PostgresAccessReconciler) resolveValueOrSecretRef(ctx context.Context, 
 	return "", fmt.Errorf("neither value nor secretRef is specified")
 }
 
-func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(pg *accessv1.PostgresAccess) (string, error) {
+func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {
 	secretNamespace := pg.Namespace
 	if pg.Spec.Connection.ExistingSecretNamespace == nil {
 		return secretNamespace, nil
@@ -471,7 +474,16 @@ func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(pg *accessv1.P
 		return secretNamespace, nil
 	}
 
-	if requestedNamespace != pg.Namespace && !r.AllowCrossNamespaceSecretRefs {
+	if requestedNamespace == pg.Namespace {
+		return requestedNamespace, nil
+	}
+
+	allowed, err := r.resolveExistingSecretNamespacePolicy(ctx)
+	if err != nil {
+		r.emitWarningEvent(pg, multipleControllersFoundReason, err.Error())
+		return "", err
+	}
+	if !allowed {
 		return "", fmt.Errorf(
 			"cross-namespace connection secret references are disabled: requested namespace %q from PostgresAccess namespace %q",
 			requestedNamespace, pg.Namespace,
@@ -479,6 +491,37 @@ func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(pg *accessv1.P
 	}
 
 	return requestedNamespace, nil
+}
+
+func (r *PostgresAccessReconciler) resolveExistingSecretNamespacePolicy(ctx context.Context) (bool, error) {
+	var controllers accessv1.ControllerList
+	if err := r.List(ctx, &controllers); err != nil {
+		return false, err
+	}
+
+	switch len(controllers.Items) {
+	case 0:
+		return false, nil
+	case 1:
+		return controllers.Items[0].Spec.Settings.ExistingSecretNamespace, nil
+	default:
+		message := fmt.Sprintf(
+			"multiple Controller resources found (%d); exactly one is allowed cluster-wide",
+			len(controllers.Items),
+		)
+		for _, controllerObj := range controllers.Items {
+			r.emitWarningEvent(&controllerObj, multipleControllersFoundReason, message)
+		}
+		return false, errors.New(message)
+	}
+}
+
+func (r *PostgresAccessReconciler) emitWarningEvent(object client.Object, reason, message string) {
+	if r.Recorder == nil || object == nil {
+		return
+	}
+
+	r.Recorder.Eventf(object, corev1.EventTypeWarning, reason, "%s", message)
 }
 
 func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string, pg *accessv1.PostgresAccess) (ConnectionDetails, error) {

@@ -31,11 +31,11 @@ make run
 ## Cross-namespace existing secrets (optional)
 By default, `PostgresAccess.spec.connection.existingSecret` is resolved in the same namespace as the `PostgresAccess` resource.
 
-If you want to reference a connection secret in another namespace, set:
-- `spec.connection.existingSecretNamespace` in the `PostgresAccess`
-- manager flag `--allow-cross-namespace-secret-ref=true`
+To allow cross-namespace references, create exactly one `Controller` resource and set:
+- `spec.settings.existingSecretNamespace=true`
 
-The flag defaults to `false` for safer multi-tenant deployments.
+If there are zero `Controller` resources, the safe default is `false`.
+If there are multiple `Controller` resources, cross-namespace lookups fail with `MultipleControllersFound`.
 
 When using the docker compose you can use a simple sample config with:
 ```bash
