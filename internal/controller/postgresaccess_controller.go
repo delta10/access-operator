@@ -160,6 +160,11 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		); err != nil {
 			return ctrl.Result{}, err
 		}
+
+		if &pg != nil {
+			r.emitEvent(&pg, corev1.EventTypeNormal, "ReconcileSuccess", "PostgresAccess is in sync and ready")
+		}
+
 		return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
 	}
 
@@ -183,7 +188,7 @@ func (r *PostgresAccessReconciler) returnWithErrorStatus(
 	reconcileErr error,
 ) (ctrl.Result, error) {
 	if pg != nil {
-		r.emitWarningEvent(pg, reason, reconcileErr.Error())
+		r.emitEvent(pg, corev1.EventTypeWarning, reason, reconcileErr.Error())
 	}
 
 	key := types.NamespacedName{}
@@ -344,9 +349,6 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 		}
 
 		toGrant, toRevoke := diffGrants(grants[config.Username], config.Grants)
-		if len(toGrant) > 0 || len(toRevoke) > 0 {
-			inSync = false
-		}
 
 		err = r.DB.GrantPrivileges(ctx, toGrant, config.Username)
 		if err != nil {
@@ -543,7 +545,7 @@ func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(ctx context.Co
 
 	allowed, err := r.resolveExistingSecretNamespacePolicy(ctx)
 	if err != nil {
-		r.emitWarningEvent(pg, multipleControllersFoundReason, err.Error())
+		r.emitEvent(pg, corev1.EventTypeWarning, multipleControllersFoundReason, err.Error())
 		return "", err
 	}
 	if !allowed {
@@ -573,18 +575,20 @@ func (r *PostgresAccessReconciler) resolveExistingSecretNamespacePolicy(ctx cont
 			len(controllers.Items),
 		)
 		for _, controllerObj := range controllers.Items {
-			r.emitWarningEvent(&controllerObj, multipleControllersFoundReason, message)
+			r.emitEvent(&controllerObj, corev1.EventTypeWarning, multipleControllersFoundReason, message)
 		}
 		return false, errors.New(message)
 	}
 }
 
-func (r *PostgresAccessReconciler) emitWarningEvent(object client.Object, reason, message string) {
+func (r *PostgresAccessReconciler) emitEvent(object client.Object, eventType, reason, message string) {
 	if r.Recorder == nil || object == nil {
 		return
 	}
 
-	r.Recorder.Eventf(object, nil, corev1.EventTypeWarning, reason, "PolicyValidation", "%s", message)
+	message = fmt.Sprintf("%s (at %s)", message, time.Now().Format(time.RFC3339))
+
+	r.Recorder.Eventf(object, nil, eventType, reason, "PolicyValidation", "%s", message)
 }
 
 func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string, pg *accessv1.PostgresAccess) (ConnectionDetails, error) {
@@ -742,22 +746,24 @@ func diffGrants(current, desired []accessv1.GrantSpec) (toGrant, toRevoke []acce
 
 	for _, grant := range current {
 		for _, privilege := range grant.Privileges {
-			key := fmt.Sprintf("%s:%s", grant.Database, privilege)
+			normalizedGrant := normalizeGrant(grant, privilege)
+			key := grantKey(normalizedGrant)
 			currentMap[key] = accessv1.GrantSpec{
-				Database:   grant.Database,
-				Schema:     grant.Schema,
-				Privileges: []string{privilege},
+				Database:   normalizedGrant.Database,
+				Schema:     normalizedGrant.Schema,
+				Privileges: normalizedGrant.Privileges,
 			}
 		}
 	}
 
 	for _, grant := range desired {
 		for _, privilege := range grant.Privileges {
-			key := fmt.Sprintf("%s:%s", grant.Database, privilege)
+			normalizedGrant := normalizeGrant(grant, privilege)
+			key := grantKey(normalizedGrant)
 			desiredMap[key] = accessv1.GrantSpec{
-				Database:   grant.Database,
-				Schema:     grant.Schema,
-				Privileges: []string{privilege},
+				Database:   normalizedGrant.Database,
+				Schema:     normalizedGrant.Schema,
+				Privileges: normalizedGrant.Privileges,
 			}
 		}
 	}
@@ -777,6 +783,35 @@ func diffGrants(current, desired []accessv1.GrantSpec) (toGrant, toRevoke []acce
 	}
 
 	return toGrant, toRevoke
+}
+
+func normalizeGrant(grant accessv1.GrantSpec, privilege string) accessv1.GrantSpec {
+	normalized := accessv1.GrantSpec{
+		Database:   strings.TrimSpace(grant.Database),
+		Privileges: []string{strings.ToUpper(strings.TrimSpace(privilege))},
+	}
+
+	schema := defaultSchemaName
+	if grant.Schema != nil && strings.TrimSpace(*grant.Schema) != "" {
+		schema = strings.TrimSpace(*grant.Schema)
+	}
+	normalized.Schema = &schema
+
+	return normalized
+}
+
+func grantKey(grant accessv1.GrantSpec) string {
+	schema := ""
+	if grant.Schema != nil {
+		schema = strings.TrimSpace(*grant.Schema)
+	}
+
+	privilege := ""
+	if len(grant.Privileges) > 0 {
+		privilege = strings.ToUpper(strings.TrimSpace(grant.Privileges[0]))
+	}
+
+	return fmt.Sprintf("%s:%s:%s", strings.TrimSpace(grant.Database), schema, privilege)
 }
 
 func getUserPassword(ctx context.Context, c client.Client, namespace, secretName string) (string, error) {
