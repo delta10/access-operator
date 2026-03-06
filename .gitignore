@@ -18,3 +18,6 @@ bin
 # Editor directories and files
 .idea/
 .vscode/
+
+# MacOS files
+.DS_Store
