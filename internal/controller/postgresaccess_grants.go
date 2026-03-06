@@ -10,30 +10,8 @@ import (
 // diffGrants compares the current grants with the desired grants and determines which grants need to be added or revoked.
 // When current is nil or empty, all desired grants will be returned in toGrant and toRevoke will be empty.
 func diffGrants(current, desired []accessv1.GrantSpec) (toGrant, toRevoke []accessv1.GrantSpec) {
-	currentMap := make(map[string]accessv1.GrantSpec)
-	desiredMap := make(map[string]accessv1.GrantSpec)
-
-	for _, grant := range current {
-		for _, privilege := range grant.Privileges {
-			normalizedGrant := normalizeGrant(grant, privilege)
-			currentMap[grantKey(normalizedGrant)] = accessv1.GrantSpec{
-				Database:   normalizedGrant.Database,
-				Schema:     normalizedGrant.Schema,
-				Privileges: normalizedGrant.Privileges,
-			}
-		}
-	}
-
-	for _, grant := range desired {
-		for _, privilege := range grant.Privileges {
-			normalizedGrant := normalizeGrant(grant, privilege)
-			desiredMap[grantKey(normalizedGrant)] = accessv1.GrantSpec{
-				Database:   normalizedGrant.Database,
-				Schema:     normalizedGrant.Schema,
-				Privileges: normalizedGrant.Privileges,
-			}
-		}
-	}
+	currentMap := indexGrantPrivileges(current)
+	desiredMap := indexGrantPrivileges(desired)
 
 	for key, grant := range desiredMap {
 		if _, exists := currentMap[key]; !exists {
@@ -50,6 +28,25 @@ func diffGrants(current, desired []accessv1.GrantSpec) (toGrant, toRevoke []acce
 	return toGrant, toRevoke
 }
 
+// indexGrantPrivileges creates a map of grants keyed by a combination of database, schema, and privilege.
+func indexGrantPrivileges(grants []accessv1.GrantSpec) map[string]accessv1.GrantSpec {
+	grantMap := make(map[string]accessv1.GrantSpec)
+
+	for _, grant := range grants {
+		for _, privilege := range grant.Privileges {
+			normalizedGrant := normalizeGrant(grant, privilege)
+			grantMap[grantKey(normalizedGrant)] = accessv1.GrantSpec{
+				Database:   normalizedGrant.Database,
+				Schema:     normalizedGrant.Schema,
+				Privileges: normalizedGrant.Privileges,
+			}
+		}
+	}
+
+	return grantMap
+}
+
+// normalizeGrant standardizes the grant specification by trimming whitespace and converting privileges to uppercase.
 func normalizeGrant(grant accessv1.GrantSpec, privilege string) accessv1.GrantSpec {
 	normalized := accessv1.GrantSpec{
 		Database:   strings.TrimSpace(grant.Database),
@@ -65,6 +62,7 @@ func normalizeGrant(grant accessv1.GrantSpec, privilege string) accessv1.GrantSp
 	return normalized
 }
 
+// grantKey generates a unique key for a grant based on the database, schema, and privilege.
 func grantKey(grant accessv1.GrantSpec) string {
 	schema := ""
 	if grant.Schema != nil {

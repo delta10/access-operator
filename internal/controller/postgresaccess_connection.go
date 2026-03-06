@@ -16,6 +16,9 @@ import (
 	accessv1 "github.com/delta10/access-operator/api/v1"
 )
 
+const defaultPostgresDatabase = "postgres"
+const defaultPostgresSSLMode = "require"
+
 // getConnectionString constructs the PostgreSQL connection string based on the PostgresAccess spec.
 // It supports both direct connection details and referencing an existing secret for connection information.
 func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {
@@ -29,34 +32,52 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=%s",
-			connection.Username, connection.Password, connection.Host, connection.Port, connection.Database, connection.SSLMode), nil
+		return formatConnectionString(connection), nil
 	}
 
 	c := pg.Spec.Connection
-	if c.Username != nil && c.Password != nil &&
-		c.Host != nil && *c.Host != "" && c.Port != nil && c.Database != nil && *c.Database != "" {
-
-		sslMode := "require" // secure default
-		if c.SSLMode != nil && *c.SSLMode != "" {
-			sslMode = *c.SSLMode
-		}
-
-		username, err := r.resolveValueOrSecretRef(ctx, c.Username, pg.Namespace)
+	if hasDirectConnectionDetails(c) {
+		connection, err := r.getDirectConnectionDetails(ctx, c, pg.Namespace)
 		if err != nil {
-			return "", fmt.Errorf("failed to resolve username: %w", err)
+			return "", err
 		}
 
-		password, err := r.resolveValueOrSecretRef(ctx, c.Password, pg.Namespace)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve password: %w", err)
-		}
-
-		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
-			username, password, *c.Host, *c.Port, *c.Database, sslMode), nil
+		return formatConnectionString(connection), nil
 	}
 
 	return "", fmt.Errorf("no valid connection details provided")
+}
+
+func hasDirectConnectionDetails(c accessv1.ConnectionSpec) bool {
+	return c.Username != nil && c.Password != nil &&
+		c.Host != nil && *c.Host != "" &&
+		c.Port != nil &&
+		c.Database != nil && *c.Database != ""
+}
+
+func (r *PostgresAccessReconciler) getDirectConnectionDetails(
+	ctx context.Context,
+	connection accessv1.ConnectionSpec,
+	namespace string,
+) (ConnectionDetails, error) {
+	username, err := r.resolveValueOrSecretRef(ctx, connection.Username, namespace)
+	if err != nil {
+		return ConnectionDetails{}, fmt.Errorf("failed to resolve username: %w", err)
+	}
+
+	password, err := r.resolveValueOrSecretRef(ctx, connection.Password, namespace)
+	if err != nil {
+		return ConnectionDetails{}, fmt.Errorf("failed to resolve password: %w", err)
+	}
+
+	return ConnectionDetails{
+		Username: username,
+		Password: password,
+		Host:     *connection.Host,
+		Port:     fmt.Sprintf("%d", *connection.Port),
+		Database: *connection.Database,
+		SSLMode:  resolveSSLMode(connection.SSLMode),
+	}, nil
 }
 
 // resolveValueOrSecretRef resolves a value that can be either a direct value or a secret reference.
@@ -181,20 +202,15 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 	existingDatabase, ok := getSecretValue(existingSec.Data, "dbname", "database")
 	invalidDatabases := []string{"*", "%", "(none)", "null", ""}
 	if !ok || slices.Contains(invalidDatabases, strings.ToLower(existingDatabase)) {
-		existingDatabase = "postgres"
+		existingDatabase = defaultPostgresDatabase
 	}
 
+	// if a database is specified, it's more important than the existing secret
 	if pg != nil {
 		conn := pg.Spec.Connection
 		if conn.Database != nil && *conn.Database != "" {
 			existingDatabase = *conn.Database
 		}
-	}
-
-	// sslmode is optional, defaults to "require" for security
-	sslMode := "require"
-	if existingSSLMode, ok := getSecretValue(existingSec.Data, "sslmode"); ok {
-		sslMode = existingSSLMode
 	}
 
 	return ConnectionDetails{
@@ -203,8 +219,36 @@ func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, se
 		Host:     existingHost,
 		Port:     existingPort,
 		Database: existingDatabase,
-		SSLMode:  sslMode,
+		SSLMode:  resolveSSLModeFromSecret(existingSec.Data),
 	}, nil
+}
+
+func formatConnectionString(connection ConnectionDetails) string {
+	return fmt.Sprintf(
+		"postgresql://%s:%s@%s:%s/%s?sslmode=%s",
+		connection.Username,
+		connection.Password,
+		connection.Host,
+		connection.Port,
+		connection.Database,
+		connection.SSLMode,
+	)
+}
+
+func resolveSSLMode(sslMode *string) string {
+	if sslMode != nil && *sslMode != "" {
+		return *sslMode
+	}
+
+	return defaultPostgresSSLMode
+}
+
+func resolveSSLModeFromSecret(secretData map[string][]byte) string {
+	if existingSSLMode, ok := getSecretValue(secretData, "sslmode"); ok {
+		return existingSSLMode
+	}
+
+	return defaultPostgresSSLMode
 }
 
 func getSecretValue(secretData map[string][]byte, keys ...string) (string, bool) {
