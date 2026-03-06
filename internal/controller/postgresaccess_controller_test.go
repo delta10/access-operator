@@ -42,6 +42,8 @@ import (
 	accessv1 "github.com/delta10/access-operator/api/v1"
 )
 
+const localHost = "localhost"
+
 var _ = Describe("PostgresAccess Controller", func() {
 	Context("When testing PostgreSQL connections", func() {
 		const connectionTestResourceName = "postgres-connection-test"
@@ -84,7 +86,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			})
 		})
 
-		host := "localhost"
+		host := localHost
 		port := int32(5432)
 		db := "testdb"
 		username := "demo-user"
@@ -126,7 +128,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			err := k8sClient.Get(ctx, typeNamespacedName, createdResource)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(createdResource.Spec.Connection.Host).NotTo(BeNil())
-			Expect(*createdResource.Spec.Connection.Host).To(Equal("localhost"))
+			Expect(*createdResource.Spec.Connection.Host).To(Equal(localHost))
 
 			By("creating a mock database")
 			mockDB := NewMockDB()
@@ -612,10 +614,10 @@ var _ = Describe("PostgresAccess Controller", func() {
 			revokeSet := grantKeySet(toRevoke)
 
 			Expect(grantSet).To(HaveLen(1))
-			Expect(grantSet).To(HaveKey("appdb:INSERT"))
+			Expect(grantSet).To(HaveKey("appdb:public:INSERT"))
 
 			Expect(revokeSet).To(HaveLen(1))
-			Expect(revokeSet).To(HaveKey("appdb:SELECT"))
+			Expect(revokeSet).To(HaveKey("appdb:public:SELECT"))
 		})
 
 		It("should grant all desired privileges when there are no current privileges", func() {
@@ -628,8 +630,29 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 			Expect(toRevoke).To(BeEmpty())
 			Expect(grantSet).To(HaveLen(2))
-			Expect(grantSet).To(HaveKey("appdb:CONNECT"))
-			Expect(grantSet).To(HaveKey("appdb:SELECT"))
+			Expect(grantSet).To(HaveKey("appdb:public:CONNECT"))
+			Expect(grantSet).To(HaveKey("appdb:public:SELECT"))
+		})
+
+		It("should treat grants in different schemas as distinct", func() {
+			publicSchema := defaultSchemaName
+			accountingSchema := "accounting"
+			current := []accessv1.GrantSpec{
+				{Database: database, Schema: &publicSchema, Privileges: []string{"SELECT"}},
+			}
+			desired := []accessv1.GrantSpec{
+				{Database: database, Schema: &accountingSchema, Privileges: []string{"SELECT"}},
+			}
+
+			toGrant, toRevoke := diffGrants(current, desired)
+
+			grantSet := grantKeySet(toGrant)
+			revokeSet := grantKeySet(toRevoke)
+
+			Expect(grantSet).To(HaveLen(1))
+			Expect(grantSet).To(HaveKey("appdb:accounting:SELECT"))
+			Expect(revokeSet).To(HaveLen(1))
+			Expect(revokeSet).To(HaveKey("appdb:public:SELECT"))
 		})
 
 		It("should list PostgresAccess users and grants only from the target namespace", func() {
@@ -761,10 +784,12 @@ var _ = Describe("PostgresAccess Controller", func() {
 			}
 
 			fakeClient, fakeScheme := newFakeClientWithScheme(pg)
+			eventRecorder := events.NewFakeRecorder(5)
 			reconciler := &PostgresAccessReconciler{
-				Client: fakeClient,
-				Scheme: fakeScheme,
-				DB:     NewMockDB(),
+				Client:   fakeClient,
+				Scheme:   fakeScheme,
+				DB:       NewMockDB(),
+				Recorder: eventRecorder,
 			}
 
 			_, err := reconciler.Reconcile(context.Background(), reconcile.Request{
@@ -780,10 +805,25 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(readyCondition.Reason).To(Equal("DatabaseSyncFailed"))
+
+			successCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessSuccessConditionType)
+			Expect(successCondition).NotTo(BeNil())
+			Expect(successCondition.Status).To(Equal(metav1.ConditionFalse))
+
+			inProgressCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessInProgressConditionType)
+			Expect(inProgressCondition).NotTo(BeNil())
+			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionFalse))
+
+			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateError))
+			Expect(updated.Status.LastLog).To(ContainSubstring("no valid connection details provided"))
+
+			var event string
+			Eventually(eventRecorder.Events).Should(Receive(&event))
+			Expect(event).To(ContainSubstring("DatabaseSyncFailed"))
 		})
 
 		It("should set Ready=True when reconcile succeeds in syncing state", func() {
-			host := "localhost"
+			host := localHost
 			port := int32(5432)
 			database := "appdb"
 			username := "user1"
@@ -820,6 +860,26 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(privilegeDriftRequeueInterval))
 
+			inProgressStatus := &accessv1.PostgresAccess{}
+			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), inProgressStatus)
+			Expect(err).NotTo(HaveOccurred())
+
+			readyCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessReadyConditionType)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCondition.Reason).To(Equal("Reconciling"))
+
+			successCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessSuccessConditionType)
+			Expect(successCondition).NotTo(BeNil())
+			Expect(successCondition.Status).To(Equal(metav1.ConditionFalse))
+
+			inProgressCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessInProgressConditionType)
+			Expect(inProgressCondition).NotTo(BeNil())
+			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionTrue))
+
+			Expect(inProgressStatus.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateInProgress))
+			Expect(inProgressStatus.Status.LastLog).To(Equal("PostgresAccess is not yet in sync"))
+
 			result, err = reconciler.Reconcile(context.Background(), reconcile.Request{
 				NamespacedName: client.ObjectKeyFromObject(pg),
 			})
@@ -830,10 +890,89 @@ var _ = Describe("PostgresAccess Controller", func() {
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
 			Expect(err).NotTo(HaveOccurred())
 
-			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			readyCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(readyCondition.Reason).To(Equal("Ready"))
+
+			successCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessSuccessConditionType)
+			Expect(successCondition).NotTo(BeNil())
+			Expect(successCondition.Status).To(Equal(metav1.ConditionTrue))
+
+			inProgressCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessInProgressConditionType)
+			Expect(inProgressCondition).NotTo(BeNil())
+			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionFalse))
+
+			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateSuccess))
+			Expect(updated.Status.LastLog).To(Equal("PostgresAccess is in sync"))
+		})
+
+		It("should report success after applying missing grants for an existing user", func() {
+			host := localHost
+			port := int32(5432)
+			database := "appdb"
+			username := "user1"
+			password := "secret"
+
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "status-grants",
+					Namespace: "default",
+				},
+				Spec: accessv1.PostgresAccessSpec{
+					GeneratedSecret: "status-grants-secret",
+					Username:        username,
+					Connection: accessv1.ConnectionSpec{
+						Host:     &host,
+						Port:     &port,
+						Database: &database,
+						Username: &accessv1.SecretKeySelector{Value: &username},
+						Password: &accessv1.SecretKeySelector{Value: &password},
+					},
+					Grants: []accessv1.GrantSpec{
+						{Database: database, Privileges: []string{"CONNECT", "SELECT"}},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(
+				pg,
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "status-grants-secret",
+						Namespace: "default",
+					},
+					Data: map[string][]byte{
+						"username": []byte(username),
+						"password": []byte(password),
+					},
+				},
+			)
+			mockDB := NewMockDB()
+			mockDB.Users = []string{username}
+			reconciler := &PostgresAccessReconciler{
+				Client: fakeClient,
+				Scheme: fakeScheme,
+				DB:     mockDB,
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), reconcile.Request{
+				NamespacedName: client.ObjectKeyFromObject(pg),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(syncedRequeueInterval))
+			Expect(mockDB.GrantPrivilegesCalled).To(BeTrue())
+			Expect(grantKeySet(mockDB.LastGrants)).To(HaveKey("appdb:public:CONNECT"))
+			Expect(grantKeySet(mockDB.LastGrants)).To(HaveKey("appdb:public:SELECT"))
+
+			updated := &accessv1.PostgresAccess{}
+			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
+			Expect(err).NotTo(HaveOccurred())
+
+			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateSuccess))
 		})
 	})
 })
@@ -842,7 +981,11 @@ func grantKeySet(grants []accessv1.GrantSpec) map[string]struct{} {
 	out := make(map[string]struct{}, len(grants))
 	for _, grant := range grants {
 		for _, privilege := range grant.Privileges {
-			out[grant.Database+":"+privilege] = struct{}{}
+			schema := defaultSchemaName
+			if grant.Schema != nil && *grant.Schema != "" {
+				schema = *grant.Schema
+			}
+			out[grant.Database+":"+schema+":"+strings.ToUpper(privilege)] = struct{}{}
 		}
 	}
 	return out
