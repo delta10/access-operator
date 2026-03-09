@@ -1,0 +1,77 @@
+package controller
+
+import (
+	"context"
+	"fmt"
+	"net"
+	neturl "net/url"
+	"strings"
+
+	accessv1 "github.com/delta10/access-operator/api/v1"
+	rabbithole "github.com/michaelklishin/rabbit-hole/v3"
+)
+
+const defaultRabbitMQAMQPPort = "5672"
+const defaultRabbitMQManagementPort = "15672"
+
+func (r *RabbitMQAccessReconciler) initializeRabbitMQClientConnection(ctx context.Context, rbq *accessv1.RabbitMQAccess) (*rabbithole.Client, error) {
+	connection, err := r.getConnectionDetails(ctx, rbq)
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := rabbitMQManagementEndpoint(connection.Host, connection.Port)
+	return rabbithole.NewClient(endpoint, connection.Username, connection.Password)
+}
+
+func (r *RabbitMQAccessReconciler) getConnectionDetails(ctx context.Context, rbq *accessv1.RabbitMQAccess) (ConnectionDetails, error) {
+	if rbq.Spec.Connection.ExistingSecret != nil && *rbq.Spec.Connection.ExistingSecret != "" {
+		secretNamespace, err := resolveConnectionSecretNamespace(
+			ctx,
+			r.Client,
+			rbq.Namespace,
+			rbq.Spec.Connection.ExistingSecretNamespace,
+			nil,
+		)
+		if err != nil {
+			return ConnectionDetails{}, err
+		}
+
+		return getExistingSecretConnectionDetails(
+			ctx,
+			r.Client,
+			*rbq.Spec.Connection.ExistingSecret,
+			secretNamespace,
+			&rbq.Spec.Connection,
+		)
+	}
+
+	if hasSharedConnectionDetails(rbq.Spec.Connection) {
+		return getDirectConnectionDetails(ctx, r.Client, rbq.Spec.Connection, rbq.Namespace)
+	}
+
+	return ConnectionDetails{}, fmt.Errorf("no valid connection details provided")
+}
+
+func rabbitMQManagementEndpoint(host, port string) string {
+	managementPort := strings.TrimSpace(port)
+	if managementPort == "" || managementPort == defaultRabbitMQAMQPPort {
+		managementPort = defaultRabbitMQManagementPort
+	}
+
+	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
+		parsed, err := neturl.Parse(host)
+		if err == nil {
+			if parsed.Port() == "" {
+				parsed.Host = net.JoinHostPort(parsed.Hostname(), managementPort)
+			}
+			parsed.Path = ""
+			parsed.RawPath = ""
+			parsed.RawQuery = ""
+			parsed.Fragment = ""
+			return strings.TrimRight(parsed.String(), "/")
+		}
+	}
+
+	return fmt.Sprintf("http://%s:%s", host, managementPort)
+}

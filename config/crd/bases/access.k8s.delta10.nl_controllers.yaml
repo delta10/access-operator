@@ -64,6 +64,20 @@ spec:
                         type: array
                         x-kubernetes-list-type: set
                     type: object
+                  rabbitmq:
+                    description: rabbitmq contains settings specific to RabbitMQAccess
+                      controllers.
+                    properties:
+                      excludedUsers:
+                        description: |-
+                          excludedUsers is a list of RabbitMQ usernames that the controller ignores
+                          when reconciling RabbitMQAccess resources.
+                          This prevents the operator from creating, updating, or deleting the listed users.
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                    type: object
                 type: object
             type: object
           status:

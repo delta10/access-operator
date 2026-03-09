@@ -482,13 +482,7 @@ func (r *PostgresAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func (r *PostgresAccessReconciler) emitEvent(object client.Object, eventType, reason, message string) {
-	if r.Recorder == nil || object == nil {
-		return
-	}
-
-	message = fmt.Sprintf("%s (at %s)", message, time.Now().Format(time.RFC3339))
-
-	r.Recorder.Eventf(object, nil, eventType, reason, "PolicyValidation", "%s", message)
+	emitEvent(r.Recorder, object, eventType, reason, message)
 }
 
 // UserGrants represents a username and their associated grants

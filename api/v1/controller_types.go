@@ -21,6 +21,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type RabbitMQControllerSettings struct {
+	// excludedUsers is a list of RabbitMQ usernames that the controller ignores
+	// when reconciling RabbitMQAccess resources.
+	// This prevents the operator from creating, updating, or deleting the listed users.
+	// +listType=set
+	// +optional
+	ExcludedUsers []string `json:"excludedUsers,omitempty"`
+}
+
 type PostgresControllerSettings struct {
 	// excludedUsers is a list of PostgreSQL usernames that the controller ignores
 	// when reconciling PostgresAccess resources.
@@ -41,6 +50,10 @@ type ControllerSettings struct {
 	// postgres contains settings specific to PostgresAccess controllers.
 	// +optional
 	PostgresSettings PostgresControllerSettings `json:"postgres,omitempty"`
+
+	// rabbitmq contains settings specific to RabbitMQAccess controllers.
+	// +optional
+	RabbitMQSettings RabbitMQControllerSettings `json:"rabbitmq,omitempty"`
 }
 
 // ControllerSpec defines the desired state of Controller.

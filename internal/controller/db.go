@@ -45,10 +45,7 @@ type PostgresDB struct {
 }
 
 type ConnectionDetails struct {
-	Username string
-	Password string
-	Host     string
-	Port     string
+	SharedConnectionDetails
 	Database string
 	SSLMode  string
 }

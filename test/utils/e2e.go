@@ -117,11 +117,14 @@ func GetDatabaseVariables() (string, controller.ConnectionDetails) {
 	}
 
 	return testNamespace, controller.ConnectionDetails{
-		Host:     postgresHost,
-		Port:     postgresPort,
+		SharedConnectionDetails: controller.SharedConnectionDetails{
+			Host:     postgresHost,
+			Port:     postgresPort,
+			Username: postgresUser,
+			Password: postgresPassword,
+		},
 		Database: postgresDB,
-		Username: postgresUser,
-		Password: postgresPassword,
+		SSLMode:  "disable",
 	}
 }
 

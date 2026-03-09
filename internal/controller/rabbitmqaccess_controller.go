@@ -19,7 +19,9 @@ package controller
 import (
 	"context"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -30,12 +32,15 @@ import (
 // RabbitMQAccessReconciler reconciles a RabbitMQAccess object
 type RabbitMQAccessReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder events.EventRecorder
 }
 
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=rabbitmqaccesses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=rabbitmqaccesses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=rabbitmqaccesses/finalizers,verbs=update
+// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=controllers,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -49,9 +54,16 @@ type RabbitMQAccessReconciler struct {
 func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	var rbq accessv1.RabbitMQAccess
+	if err := r.Get(ctx, req.NamespacedName, &rbq); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
 
-	return ctrl.Result{}, nil
+	_, err := r.initializeRabbitMQClientConnection(ctx, &rbq)
+	return ctrl.Result{}, err
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -60,4 +72,8 @@ func (r *RabbitMQAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&accessv1.RabbitMQAccess{}).
 		Named("rabbitmqaccess").
 		Complete(r)
+}
+
+func (r *RabbitMQAccessReconciler) emitEvent(object client.Object, eventType, reason, message string) {
+	emitEvent(r.Recorder, object, eventType, reason, message)
 }
