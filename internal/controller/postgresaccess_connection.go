@@ -144,6 +144,7 @@ func (r *PostgresAccessReconciler) resolveExistingSecretNamespacePolicy(ctx cont
 	return settings.ExistingSecretNamespace, nil
 }
 
+func (r *PostgresAccessReconciler) resolveExcludedUsers(ctx context.Context) (map[string]struct{}, error) {
 	settings, err := r.resolveControllerSettings(ctx)
 	if err != nil {
 		return nil, err
