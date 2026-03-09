@@ -79,7 +79,10 @@ func GetMetricsOutput(namespace, podName string) (string, error) {
 
 // GetDatabaseVariables returns the namespace and connection details for e2e postgres tests.
 func GetDatabaseVariables() (string, controller.ConnectionDetails) {
-	testNamespace := "postgres-access-test"
+	testNamespace := os.Getenv("POSTGRES_TEST_NAMESPACE")
+	if testNamespace == "" {
+		testNamespace = "postgres-access-test"
+	}
 	defaultClusterHost := fmt.Sprintf("postgres.%s.svc", testNamespace)
 
 	postgresHost := os.Getenv("POSTGRES_CLUSTER_HOST")
@@ -559,29 +562,6 @@ spec:
 	cmd := exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(pgAccessYAML)
 	_, err := Run(cmd)
-	return err
-}
-
-// EnsureManagerDeploymentArg ensures the manager deployment contains the provided arg and waits for rollout.
-func EnsureManagerDeploymentArg(namespace, deploymentName, arg string) error {
-	cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[?(@.name=='manager')].args}")
-	output, err := Run(cmd)
-	if err != nil {
-		return err
-	}
-
-	if strings.Contains(output, arg) {
-		return nil
-	}
-
-	patch := fmt.Sprintf(`[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"%s"}]`, arg)
-	cmd = exec.Command("kubectl", "patch", "deployment", deploymentName, "-n", namespace, "--type=json", "-p", patch)
-	if _, err = Run(cmd); err != nil {
-		return err
-	}
-
-	cmd = exec.Command("kubectl", "rollout", "status", fmt.Sprintf("deployment/%s", deploymentName), "-n", namespace, "--timeout=3m")
-	_, err = Run(cmd)
 	return err
 }
 

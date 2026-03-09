@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -51,6 +52,8 @@ type ConnectionDetails struct {
 	Database string
 	SSLMode  string
 }
+
+const defaultSchemaName = "public"
 
 func NewPostgresDB() *PostgresDB {
 	return &PostgresDB{}
@@ -251,7 +254,7 @@ func (p *PostgresDB) GrantPrivileges(ctx context.Context, grants []accessv1.Gran
 
 	quotedUsername := pgx.Identifier{username}.Sanitize()
 	for _, grant := range grants {
-		schema := "public"
+		schema := defaultSchemaName
 		if grant.Schema != nil && *grant.Schema != "" {
 			schema = *grant.Schema
 		}
@@ -354,7 +357,7 @@ func (p *PostgresDB) RevokePrivileges(ctx context.Context, grants []accessv1.Gra
 
 	quotedUsername := pgx.Identifier{username}.Sanitize()
 	for _, grant := range grants {
-		schema := "public"
+		schema := defaultSchemaName
 		if grant.Schema != nil && *grant.Schema != "" {
 			schema = *grant.Schema
 		}
@@ -454,32 +457,138 @@ func (p *PostgresDB) GetGrants(ctx context.Context) (map[string][]accessv1.Grant
 		return nil, fmt.Errorf("database connection is not initialized")
 	}
 
-	rows, err := p.conn.Query(ctx, `SELECT e.usename AS grantee, nspname, privilege_type
-		FROM pg_namespace, aclexplode(nspacl) AS a
-		JOIN pg_user e ON a.grantee = e.usesysid;`)
+	rows, err := p.conn.Query(ctx, `
+		WITH database_grants AS (
+			SELECT
+				r.rolname AS grantee,
+				d.datname AS database_name,
+				NULL::text AS schema_name,
+				a.privilege_type
+			FROM pg_database d
+			JOIN LATERAL aclexplode(d.datacl) AS a ON true
+			JOIN pg_roles r ON r.oid = a.grantee
+			WHERE d.datname = current_database()
+		),
+		schema_grants AS (
+			SELECT
+				r.rolname AS grantee,
+				current_database() AS database_name,
+				n.nspname AS schema_name,
+				a.privilege_type
+			FROM pg_namespace n
+			JOIN LATERAL aclexplode(n.nspacl) AS a ON true
+			JOIN pg_roles r ON r.oid = a.grantee
+			WHERE n.nspname NOT LIKE 'pg\_%' ESCAPE '\'
+			  AND n.nspname <> 'information_schema'
+		),
+		table_totals AS (
+			SELECT
+				n.nspname AS schema_name,
+				count(*) AS total_tables
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+			  AND n.nspname NOT LIKE 'pg\_%' ESCAPE '\'
+			  AND n.nspname <> 'information_schema'
+			GROUP BY n.nspname
+		),
+		table_grants AS (
+			SELECT
+				r.rolname AS grantee,
+				current_database() AS database_name,
+				n.nspname AS schema_name,
+				a.privilege_type,
+				count(DISTINCT c.oid) AS granted_tables
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			JOIN LATERAL aclexplode(c.relacl) AS a ON true
+			JOIN pg_roles r ON r.oid = a.grantee
+			WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+			  AND n.nspname NOT LIKE 'pg\_%' ESCAPE '\'
+			  AND n.nspname <> 'information_schema'
+			GROUP BY r.rolname, n.nspname, a.privilege_type
+		),
+		function_totals AS (
+			SELECT
+				n.nspname AS schema_name,
+				count(*) AS total_functions
+			FROM pg_proc p
+			JOIN pg_namespace n ON n.oid = p.pronamespace
+			WHERE n.nspname NOT LIKE 'pg\_%' ESCAPE '\'
+			  AND n.nspname <> 'information_schema'
+			GROUP BY n.nspname
+		),
+		function_grants AS (
+			SELECT
+				r.rolname AS grantee,
+				current_database() AS database_name,
+				n.nspname AS schema_name,
+				a.privilege_type,
+				count(DISTINCT p.oid) AS granted_functions
+			FROM pg_proc p
+			JOIN pg_namespace n ON n.oid = p.pronamespace
+			JOIN LATERAL aclexplode(p.proacl) AS a ON true
+			JOIN pg_roles r ON r.oid = a.grantee
+			WHERE n.nspname NOT LIKE 'pg\_%' ESCAPE '\'
+			  AND n.nspname <> 'information_schema'
+			GROUP BY r.rolname, n.nspname, a.privilege_type
+		)
+		SELECT grantee, database_name, schema_name, privilege_type
+		FROM database_grants
+		UNION ALL
+		SELECT grantee, database_name, schema_name, privilege_type
+		FROM schema_grants
+		UNION ALL
+		SELECT tg.grantee, tg.database_name, tg.schema_name, tg.privilege_type
+		FROM table_grants tg
+		JOIN table_totals tt ON tt.schema_name = tg.schema_name
+		WHERE tg.granted_tables = tt.total_tables
+		UNION ALL
+		SELECT fg.grantee, fg.database_name, fg.schema_name, fg.privilege_type
+		FROM function_grants fg
+		JOIN function_totals ft ON ft.schema_name = fg.schema_name
+		WHERE fg.granted_functions = ft.total_functions
+	`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	returnValue := make(map[string][]accessv1.GrantSpec)
+	grantIndex := make(map[string]int)
 
-	// key is grantee, value is list of grants aggregated as GrantSpec entries
 	for rows.Next() {
 		var grantee string
-		var schema string
+		var database string
+		var schema sql.NullString
 		var privilegeType string
-		if err := rows.Scan(&grantee, &schema, &privilegeType); err != nil {
+		if err := rows.Scan(&grantee, &database, &schema, &privilegeType); err != nil {
 			return nil, err
 		}
 
-		s := schema
-		grant := accessv1.GrantSpec{
-			Database:   "", // database-level information is not available from this query
-			Schema:     &s,
-			Privileges: []string{privilegeType},
+		schemaName := ""
+		if schema.Valid {
+			schemaName = schema.String
 		}
-		returnValue[grantee] = append(returnValue[grantee], grant)
+
+		key := fmt.Sprintf("%s:%s:%s", grantee, database, schemaName)
+		if idx, ok := grantIndex[key]; ok {
+			returnValue[grantee][idx].Privileges = append(returnValue[grantee][idx].Privileges, strings.ToUpper(privilegeType))
+			continue
+		}
+
+		var schemaRef *string
+		if schema.Valid && schema.String != "" {
+			s := schema.String
+			schemaRef = &s
+		}
+
+		returnValue[grantee] = append(returnValue[grantee], accessv1.GrantSpec{
+			Database:   database,
+			Schema:     schemaRef,
+			Privileges: []string{strings.ToUpper(privilegeType)},
+		})
+		grantIndex[key] = len(returnValue[grantee]) - 1
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -505,6 +614,8 @@ type MockDB struct {
 	ConnectError          error
 	CreateUserError       error
 	GrantPrivilegesError  error
+	Users                 []string
+	Grants                map[string][]accessv1.GrantSpec
 }
 
 func NewMockDB() *MockDB {
@@ -544,6 +655,9 @@ func (m *MockDB) DropUser(ctx context.Context, username string, cleanupPolicy ac
 }
 
 func (m *MockDB) GetUsers(ctx context.Context) ([]string, error) {
+	if m.Users != nil {
+		return m.Users, nil
+	}
 	return []string{"user1", "user2"}, nil
 }
 
@@ -558,5 +672,8 @@ func (m *MockDB) RevokePrivileges(ctx context.Context, grants []accessv1.GrantSp
 }
 
 func (m *MockDB) GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error) {
+	if m.Grants != nil {
+		return m.Grants, nil
+	}
 	return nil, nil
 }

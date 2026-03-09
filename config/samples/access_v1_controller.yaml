@@ -1,0 +1,17 @@
+apiVersion: access.k8s.delta10.nl/v1
+kind: Controller
+metadata:
+  labels:
+    app.kubernetes.io/name: access-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: controller-sample
+spec:
+  settings:
+    # Default is false.
+    # Set to true to allow PostgresAccess connection.existingSecretNamespace
+    # to reference a Secret in a different namespace.
+    existingSecretNamespace: false
+    # Configure PostgreSQL-specific controller behavior.
+    # postgres:
+    #   excludedUsers:
+    #     - postgres

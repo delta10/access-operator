@@ -23,6 +23,7 @@ import (
 	"context"
 	b64 "encoding/base64"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -75,9 +76,6 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
-		By("enabling cross-namespace existingSecret references for e2e coverage")
-		err = utils.EnsureManagerDeploymentArg(namespace, managerDeploymentName, "--allow-cross-namespace-secret-ref=true")
-		Expect(err).NotTo(HaveOccurred(), "Failed to enable cross-namespace existingSecret references")
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
@@ -403,16 +401,19 @@ spec:
 
 		Context("Postgres", func() {
 			BeforeEach(func() {
-				By("ensuring no stale test namespace exists")
-				testNamespace, conn := utils.GetDatabaseVariables()
-				cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--timeout=1m")
-				_, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to clean up existing test namespace")
+				testNamespace := fmt.Sprintf("postgres-access-test-%d", time.Now().UnixNano()%1_000_000)
+				Expect(os.Setenv("POSTGRES_TEST_NAMESPACE", testNamespace)).To(Succeed())
 
 				By("creating a fresh test namespace")
-				cmd = exec.Command("kubectl", "create", "ns", testNamespace)
-				_, err = utils.Run(cmd)
+				cmd := exec.Command("kubectl", "create", "ns", testNamespace)
+				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
+
+				_, conn := utils.GetDatabaseVariables()
+
+				By("ensuring singleton Controller resources are cleaned up before each postgres test")
+				cmd = exec.Command("kubectl", "delete", "controller", "--all", "-n", namespace, "--ignore-not-found", "--wait=false")
+				_, _ = utils.Run(cmd)
 
 				By("deploying PostgreSQL in the test namespace")
 				err = utils.DeployPostgresInstance(testNamespace, conn)
@@ -464,6 +465,8 @@ spec:
 				By("cleaning up the test namespace")
 				cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found", "--wait=false")
 				_, _ = utils.Run(cmd)
+
+				Expect(os.Unsetenv("POSTGRES_TEST_NAMESPACE")).To(Succeed())
 			})
 
 			It("should create a PostgresAccess resource and create a database user with the specified privileges via direct connection details", func() {
@@ -511,13 +514,170 @@ spec:
 				utils.WaitForDatabaseUserState(testNamespace, conn, "test-username", true)
 			})
 
+			It("should deny cross-namespace existingSecret when no Controller resource exists", func() {
+				testNamespace, conn := utils.GetDatabaseVariables()
+				connectionSecretNamespace := "postgres-access-shared-no-controller"
+				resourceName := "test-cross-namespace-no-controller"
+				generatedSecretName := "test-cross-namespace-no-controller-secret"
+
+				By("creating a shared namespace for the connection secret")
+				cmd := exec.Command("kubectl", "delete", "ns", connectionSecretNamespace, "--ignore-not-found", "--timeout=1m")
+				_, _ = utils.Run(cmd)
+				cmd = exec.Command("kubectl", "create", "ns", connectionSecretNamespace)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create shared secret namespace")
+				DeferCleanup(func() {
+					cleanupCmd := exec.Command("kubectl", "delete", "ns", connectionSecretNamespace, "--ignore-not-found", "--wait=false")
+					_, _ = utils.Run(cleanupCmd)
+				})
+
+				By("creating the connection secret in another namespace")
+				secretName, err := utils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
+
+				By("creating a PostgresAccess that references the shared secret namespace")
+				err = utils.CreateResourceFromSecretReferenceWithNamespace(
+					resourceName,
+					testNamespace,
+					generatedSecretName,
+					secretName,
+					connectionSecretNamespace,
+					nil,
+					accessv1.GrantSpec{
+						Database:   conn.Database,
+						Privileges: []string{"CONNECT", "SELECT"},
+					},
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace PostgresAccess")
+
+				By("verifying reconcile is denied with cross-namespace policy disabled")
+				Eventually(func(g Gomega) {
+					statusCmd := exec.Command(
+						"kubectl", "get", "postgresaccess", resourceName, "-n", testNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+					)
+					statusOutput, statusErr := utils.Run(statusCmd)
+					g.Expect(statusErr).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(statusOutput)).To(Equal("False"))
+
+					reasonCmd := exec.Command(
+						"kubectl", "get", "postgresaccess", resourceName, "-n", testNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}",
+					)
+					reasonOutput, reasonErr := utils.Run(reasonCmd)
+					g.Expect(reasonErr).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(reasonOutput)).To(Equal("DatabaseSyncFailed"))
+
+					messageCmd := exec.Command(
+						"kubectl", "get", "postgresaccess", resourceName, "-n", testNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].message}",
+					)
+					messageOutput, messageErr := utils.Run(messageCmd)
+					g.Expect(messageErr).NotTo(HaveOccurred())
+					g.Expect(messageOutput).To(ContainSubstring("cross-namespace connection secret references are disabled"))
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("verifying the requested database user was not created")
+				utils.WaitForDatabaseUserState(testNamespace, conn, resourceName, false)
+			})
+
+			It("should deny cross-namespace existingSecret when singleton Controller setting is false", func() {
+				testNamespace, conn := utils.GetDatabaseVariables()
+				connectionSecretNamespace := "postgres-access-shared-controller-false"
+				controllerName := "cluster-settings-false"
+				resourceName := "test-cross-namespace-controller-false"
+				generatedSecretName := "test-cross-namespace-controller-false-secret"
+
+				By("creating a singleton Controller with existingSecretNamespace=false")
+				controllerYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: Controller
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  settings:
+    existingSecretNamespace: false
+`, controllerName, namespace)
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(controllerYAML)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with false policy")
+				DeferCleanup(func() {
+					cleanupCmd := exec.Command("kubectl", "delete", "controller", controllerName, "-n", namespace, "--ignore-not-found", "--wait=false")
+					_, _ = utils.Run(cleanupCmd)
+				})
+
+				By("creating a shared namespace for the connection secret")
+				cmd = exec.Command("kubectl", "delete", "ns", connectionSecretNamespace, "--ignore-not-found", "--timeout=1m")
+				_, _ = utils.Run(cmd)
+				cmd = exec.Command("kubectl", "create", "ns", connectionSecretNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create shared secret namespace")
+				DeferCleanup(func() {
+					cleanupCmd := exec.Command("kubectl", "delete", "ns", connectionSecretNamespace, "--ignore-not-found", "--wait=false")
+					_, _ = utils.Run(cleanupCmd)
+				})
+
+				By("creating the connection secret in another namespace")
+				secretName, err := utils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
+
+				By("creating a PostgresAccess that references the shared secret namespace")
+				err = utils.CreateResourceFromSecretReferenceWithNamespace(
+					resourceName,
+					testNamespace,
+					generatedSecretName,
+					secretName,
+					connectionSecretNamespace,
+					nil,
+					accessv1.GrantSpec{
+						Database:   conn.Database,
+						Privileges: []string{"CONNECT", "SELECT"},
+					},
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace PostgresAccess")
+
+				By("verifying reconcile is denied because singleton Controller policy is false")
+				Eventually(func(g Gomega) {
+					messageCmd := exec.Command(
+						"kubectl", "get", "postgresaccess", resourceName, "-n", testNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].message}",
+					)
+					messageOutput, messageErr := utils.Run(messageCmd)
+					g.Expect(messageErr).NotTo(HaveOccurred())
+					g.Expect(messageOutput).To(ContainSubstring("cross-namespace connection secret references are disabled"))
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			})
+
 			It("should create a PostgresAccess resource using an existing connection secret from another namespace", func() {
 				testNamespace, conn := utils.GetDatabaseVariables()
 				connectionSecretNamespace := fmt.Sprintf("%s-shared", testNamespace)
+				controllerName := "cluster-settings"
+				var secretName string
+
+				By("enabling cross-namespace references through the singleton Controller resource")
+				controllerYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: Controller
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  settings:
+    existingSecretNamespace: true
+`, controllerName, namespace)
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(controllerYAML)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to enable cross-namespace references via Controller CR")
+
+				DeferCleanup(func() {
+					cleanupCmd := exec.Command("kubectl", "delete", "controller", controllerName, "-n", namespace, "--ignore-not-found", "--wait=false")
+					_, _ = utils.Run(cleanupCmd)
+				})
 
 				By("resetting the shared secret namespace used for cross-namespace secret references")
-				cmd := exec.Command("kubectl", "delete", "ns", connectionSecretNamespace, "--ignore-not-found", "--timeout=1m")
-				_, err := utils.Run(cmd)
+				cmd = exec.Command("kubectl", "delete", "ns", connectionSecretNamespace, "--ignore-not-found", "--timeout=1m")
+				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to clean up existing shared secret namespace")
 
 				cmd = exec.Command("kubectl", "create", "ns", connectionSecretNamespace)
@@ -530,7 +690,7 @@ spec:
 				})
 
 				By("creating the connection secret in the shared namespace")
-				secretName, err := utils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, conn)
+				secretName, err = utils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, conn)
 				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 				By("creating a PostgresAccess resource in the workload namespace that references the shared secret")
@@ -553,6 +713,159 @@ spec:
 
 				By("verifying the database user was created")
 				utils.WaitForDatabaseUserState(testNamespace, conn, "test-username-cross-namespace", true)
+			})
+
+			It("should fail when multiple Controller resources exist and emit warning events", func() {
+				testNamespace, conn := utils.GetDatabaseVariables()
+				connectionSecretNamespace := "postgres-access-shared-multiple-controller"
+				controllerAName := "cluster-settings-a"
+				controllerBName := "cluster-settings-b"
+				resourceName := "test-cross-namespace-multiple-controllers"
+				generatedSecretName := "test-cross-namespace-multiple-controllers-secret"
+
+				By("creating two Controller resources to violate singleton policy")
+				controllerAYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: Controller
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  settings:
+    existingSecretNamespace: true
+`, controllerAName, namespace)
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(controllerAYAML)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create first Controller")
+
+				controllerBYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: Controller
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  settings:
+    existingSecretNamespace: true
+`, controllerBName, testNamespace)
+				cmd = exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(controllerBYAML)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create second Controller")
+
+				DeferCleanup(func() {
+					cleanupCmd := exec.Command("kubectl", "delete", "controller", controllerAName, "-n", namespace, "--ignore-not-found", "--wait=false")
+					_, _ = utils.Run(cleanupCmd)
+				})
+
+				By("creating a shared namespace for the connection secret")
+				cmd = exec.Command("kubectl", "delete", "ns", connectionSecretNamespace, "--ignore-not-found", "--timeout=1m")
+				_, _ = utils.Run(cmd)
+				cmd = exec.Command("kubectl", "create", "ns", connectionSecretNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create shared secret namespace")
+				DeferCleanup(func() {
+					cleanupCmd := exec.Command("kubectl", "delete", "ns", connectionSecretNamespace, "--ignore-not-found", "--wait=false")
+					_, _ = utils.Run(cleanupCmd)
+				})
+
+				By("creating the connection secret in another namespace")
+				secretName, err := utils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
+
+				By("creating a PostgresAccess that references the shared secret namespace")
+				err = utils.CreateResourceFromSecretReferenceWithNamespace(
+					resourceName,
+					testNamespace,
+					generatedSecretName,
+					secretName,
+					connectionSecretNamespace,
+					nil,
+					accessv1.GrantSpec{
+						Database:   conn.Database,
+						Privileges: []string{"CONNECT", "SELECT"},
+					},
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace PostgresAccess")
+
+				By("verifying PostgresAccess fails with multiple-controller error")
+				Eventually(func(g Gomega) {
+					reasonCmd := exec.Command(
+						"kubectl", "get", "postgresaccess", resourceName, "-n", testNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}",
+					)
+					reasonOutput, reasonErr := utils.Run(reasonCmd)
+					g.Expect(reasonErr).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(reasonOutput)).To(Equal("DatabaseSyncFailed"))
+
+					messageCmd := exec.Command(
+						"kubectl", "get", "postgresaccess", resourceName, "-n", testNamespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].message}",
+					)
+					messageOutput, messageErr := utils.Run(messageCmd)
+					g.Expect(messageErr).NotTo(HaveOccurred())
+					g.Expect(messageOutput).To(ContainSubstring("multiple Controller resources found"))
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("verifying both Controller resources are marked Ready=False with MultipleControllersFound")
+				Eventually(func(g Gomega) {
+					for _, key := range []struct {
+						name      string
+						namespace string
+					}{
+						{name: controllerAName, namespace: namespace},
+						{name: controllerBName, namespace: testNamespace},
+					} {
+						statusCmd := exec.Command(
+							"kubectl", "get", "controller", key.name, "-n", key.namespace,
+							"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						)
+						statusOutput, statusErr := utils.Run(statusCmd)
+						g.Expect(statusErr).NotTo(HaveOccurred())
+						g.Expect(strings.TrimSpace(statusOutput)).To(Equal("False"))
+
+						reasonCmd := exec.Command(
+							"kubectl", "get", "controller", key.name, "-n", key.namespace,
+							"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}",
+						)
+						reasonOutput, reasonErr := utils.Run(reasonCmd)
+						g.Expect(reasonErr).NotTo(HaveOccurred())
+						g.Expect(strings.TrimSpace(reasonOutput)).To(Equal("MultipleControllersFound"))
+					}
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("verifying warning events are emitted for both Controller resources")
+				Eventually(func(g Gomega) {
+					for _, key := range []struct {
+						name      string
+						namespace string
+					}{
+						{name: controllerAName, namespace: namespace},
+						{name: controllerBName, namespace: testNamespace},
+					} {
+						eventsCmd := exec.Command(
+							"kubectl", "get", "events", "-n", key.namespace,
+							"--field-selector",
+							fmt.Sprintf("involvedObject.kind=Controller,involvedObject.name=%s,reason=MultipleControllersFound", key.name),
+							"--no-headers",
+						)
+						eventsOutput, eventsErr := utils.Run(eventsCmd)
+						g.Expect(eventsErr).NotTo(HaveOccurred())
+						g.Expect(strings.TrimSpace(eventsOutput)).NotTo(BeEmpty())
+					}
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("verifying warning event is emitted on controller-manager Deployment")
+				Eventually(func(g Gomega) {
+					eventsCmd := exec.Command(
+						"kubectl", "get", "events", "-n", namespace,
+						"--field-selector",
+						fmt.Sprintf("involvedObject.kind=Deployment,involvedObject.name=%s,reason=MultipleControllersFound", managerDeploymentName),
+						"--no-headers",
+					)
+					eventsOutput, eventsErr := utils.Run(eventsCmd)
+					g.Expect(eventsErr).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(eventsOutput)).NotTo(BeEmpty())
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
 			})
 
 			It("should create a database user when connection is provided via direct connection details but user and pass via secret reference", func() {
@@ -797,6 +1110,65 @@ data:
 				By("verifying that the database user's password is updated and the user can authenticate with the new password")
 				newPassword := utils.WaitForDecodedSecretField(testNamespace, genSecName, "password")
 				utils.WaitForAuthenticationSuccess(testNamespace, conn, CRUsername, newPassword)
+			})
+
+			It("should preserve excluded PostgreSQL users from singleton Controller settings", func() {
+				testNamespace, conn := utils.GetDatabaseVariables()
+				excludedUsername := "excluded-keeper"
+				managedUsername := "test-managed-user"
+				controllerName := "cluster-settings-excluded-users"
+
+				By("creating a singleton Controller with excluded PostgreSQL users")
+				controllerYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: Controller
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  settings:
+    postgres:
+      excludedUsers:
+        - %s
+`, controllerName, namespace, excludedUsername)
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(controllerYAML)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with excluded users")
+				DeferCleanup(func() {
+					cleanupCmd := exec.Command("kubectl", "delete", "controller", controllerName, "-n", namespace, "--ignore-not-found", "--wait=false")
+					_, _ = utils.Run(cleanupCmd)
+				})
+
+				By("creating an unmanaged PostgreSQL role that should be preserved")
+				_, err = utils.RunPostgresQuery(
+					testNamespace,
+					conn,
+					fmt.Sprintf(`CREATE ROLE "%s" WITH LOGIN PASSWORD 'keep-me';`, excludedUsername),
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create excluded PostgreSQL role")
+
+				By("creating a PostgresAccess resource to trigger reconciliation")
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = utils.CreateResourceFromSecretReference(
+					managedUsername,
+					testNamespace,
+					"test-excluded-user-secret",
+					secretName,
+					nil,
+					accessv1.GrantSpec{
+						Database:   conn.Database,
+						Privileges: []string{"CONNECT", "SELECT"},
+					},
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
+
+				By("verifying the managed role is created")
+				utils.WaitForDatabaseUserState(testNamespace, conn, managedUsername, true)
+
+				By("verifying the excluded unmanaged role is not removed")
+				utils.WaitForDatabaseUserState(testNamespace, conn, excludedUsername, true)
 			})
 		})
 	})
