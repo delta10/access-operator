@@ -11,3 +11,7 @@ spec:
     # Set to true to allow PostgresAccess connection.existingSecretNamespace
     # to reference a Secret in a different namespace.
     existingSecretNamespace: false
+    # Configure PostgreSQL-specific controller behavior.
+    # postgres:
+    #   excludedUsers:
+    #     - postgres

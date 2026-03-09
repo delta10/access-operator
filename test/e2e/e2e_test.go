@@ -1111,6 +1111,65 @@ data:
 				newPassword := utils.WaitForDecodedSecretField(testNamespace, genSecName, "password")
 				utils.WaitForAuthenticationSuccess(testNamespace, conn, CRUsername, newPassword)
 			})
+
+			It("should preserve excluded PostgreSQL users from singleton Controller settings", func() {
+				testNamespace, conn := utils.GetDatabaseVariables()
+				excludedUsername := "excluded-keeper"
+				managedUsername := "test-managed-user"
+				controllerName := "cluster-settings-excluded-users"
+
+				By("creating a singleton Controller with excluded PostgreSQL users")
+				controllerYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: Controller
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  settings:
+    postgres:
+      excludedUsers:
+        - %s
+`, controllerName, namespace, excludedUsername)
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(controllerYAML)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with excluded users")
+				DeferCleanup(func() {
+					cleanupCmd := exec.Command("kubectl", "delete", "controller", controllerName, "-n", namespace, "--ignore-not-found", "--wait=false")
+					_, _ = utils.Run(cleanupCmd)
+				})
+
+				By("creating an unmanaged PostgreSQL role that should be preserved")
+				_, err = utils.RunPostgresQuery(
+					testNamespace,
+					conn,
+					fmt.Sprintf(`CREATE ROLE "%s" WITH LOGIN PASSWORD 'keep-me';`, excludedUsername),
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create excluded PostgreSQL role")
+
+				By("creating a PostgresAccess resource to trigger reconciliation")
+				secretName, err := utils.CreateConnectionDetailsViaSecret(testNamespace, conn)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+				err = utils.CreateResourceFromSecretReference(
+					managedUsername,
+					testNamespace,
+					"test-excluded-user-secret",
+					secretName,
+					nil,
+					accessv1.GrantSpec{
+						Database:   conn.Database,
+						Privileges: []string{"CONNECT", "SELECT"},
+					},
+				)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
+
+				By("verifying the managed role is created")
+				utils.WaitForDatabaseUserState(testNamespace, conn, managedUsername, true)
+
+				By("verifying the excluded unmanaged role is not removed")
+				utils.WaitForDatabaseUserState(testNamespace, conn, excludedUsername, true)
+			})
 		})
 	})
 })

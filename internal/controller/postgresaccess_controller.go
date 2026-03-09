@@ -307,10 +307,23 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 		return false, err
 	}
 
+	excludedUsers, err := r.resolveExcludedUsers(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	usersHandled := make(map[string]bool)
+	for username := range excludedUsers {
+		usersHandled[username] = true
+	}
 	inSync := true
 
 	for _, config := range configs {
+		if _, excluded := excludedUsers[config.Username]; excluded {
+			log.Info("Skipping excluded PostgreSQL user", "username", config.Username)
+			continue
+		}
+
 		// Mark CR-managed users up front so cleanup never drops them due a transient reconciliation error.
 		usersHandled[config.Username] = true
 
@@ -392,6 +405,19 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 	}
 
 	if !controllerutil.ContainsFinalizer(pg, postgresAccessFinalizer) {
+		return true, nil
+	}
+
+	excludedUsers, err := r.resolveExcludedUsers(ctx)
+	if err != nil {
+		return true, err
+	}
+	if _, excluded := excludedUsers[pg.Spec.Username]; excluded {
+		log.Info("Skipping finalizer database cleanup for excluded PostgreSQL user", "username", pg.Spec.Username)
+		controllerutil.RemoveFinalizer(pg, postgresAccessFinalizer)
+		if err := r.Update(ctx, pg); err != nil {
+			return true, err
+		}
 		return true, nil
 	}
 

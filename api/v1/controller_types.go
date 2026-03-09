@@ -21,6 +21,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type PostgresControllerSettings struct {
+	// excludedUsers is a list of PostgreSQL usernames that the controller ignores
+	// when reconciling PostgresAccess resources.
+	// This prevents the operator from creating, updating, or deleting the listed roles.
+	// +listType=set
+	// +optional
+	ExcludedUsers []string `json:"excludedUsers,omitempty"`
+}
+
 // ControllerSettings defines operator-wide behavior toggles.
 type ControllerSettings struct {
 	// existingSecretNamespace enables cross-namespace references for
@@ -28,6 +37,10 @@ type ControllerSettings struct {
 	// +optional
 	// +kubebuilder:default=false
 	ExistingSecretNamespace bool `json:"existingSecretNamespace,omitempty"`
+
+	// postgres contains settings specific to PostgresAccess controllers.
+	// +optional
+	PostgresSettings PostgresControllerSettings `json:"postgres,omitempty"`
 }
 
 // ControllerSpec defines the desired state of Controller.

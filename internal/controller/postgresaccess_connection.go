@@ -136,16 +136,33 @@ func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(ctx context.Co
 }
 
 func (r *PostgresAccessReconciler) resolveExistingSecretNamespacePolicy(ctx context.Context) (bool, error) {
+	settings, err := r.resolveControllerSettings(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	return settings.ExistingSecretNamespace, nil
+}
+
+	settings, err := r.resolveControllerSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return normalizeExcludedUsers(settings.PostgresSettings.ExcludedUsers), nil
+}
+
+func (r *PostgresAccessReconciler) resolveControllerSettings(ctx context.Context) (accessv1.ControllerSettings, error) {
 	var controllers accessv1.ControllerList
 	if err := r.List(ctx, &controllers); err != nil {
-		return false, err
+		return accessv1.ControllerSettings{}, err
 	}
 
 	switch len(controllers.Items) {
 	case 0:
-		return false, nil
+		return accessv1.ControllerSettings{}, nil
 	case 1:
-		return controllers.Items[0].Spec.Settings.ExistingSecretNamespace, nil
+		return controllers.Items[0].Spec.Settings, nil
 	default:
 		message := fmt.Sprintf(
 			"multiple Controller resources found (%d); exactly one is allowed cluster-wide",
@@ -154,8 +171,21 @@ func (r *PostgresAccessReconciler) resolveExistingSecretNamespacePolicy(ctx cont
 		for _, controllerObj := range controllers.Items {
 			r.emitEvent(&controllerObj, corev1.EventTypeWarning, multipleControllersFoundReason, message)
 		}
-		return false, errors.New(message)
+		return accessv1.ControllerSettings{}, errors.New(message)
 	}
+}
+
+func normalizeExcludedUsers(users []string) map[string]struct{} {
+	normalized := make(map[string]struct{}, len(users))
+	for _, user := range users {
+		trimmed := strings.TrimSpace(user)
+		if trimmed == "" {
+			continue
+		}
+		normalized[trimmed] = struct{}{}
+	}
+
+	return normalized
 }
 
 func getExistingSecretConnectionDetails(ctx context.Context, c client.Client, secretName, namespace string, pg *accessv1.PostgresAccess) (ConnectionDetails, error) {
