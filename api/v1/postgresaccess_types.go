@@ -166,6 +166,19 @@ type PostgresAccessSpec struct {
 	CleanupPolicy *CleanupPolicy `json:"cleanupPolicy,omitempty"`
 }
 
+// ReconcileState defines the most recent reconcile outcome.
+// +kubebuilder:validation:Enum=Success;InProgress;Error
+type ReconcileState string
+
+const (
+	// ReconcileStateSuccess indicates the latest reconcile completed successfully.
+	ReconcileStateSuccess ReconcileState = "Success"
+	// ReconcileStateInProgress indicates the resource is still converging.
+	ReconcileStateInProgress ReconcileState = "InProgress"
+	// ReconcileStateError indicates the latest reconcile finished with an error.
+	ReconcileStateError ReconcileState = "Error"
+)
+
 // PostgresAccessStatus defines the observed state of PostgresAccess.
 type PostgresAccessStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
@@ -187,10 +200,21 @@ type PostgresAccessStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// lastLog is the latest reconcile log message or error.
+	// +optional
+	LastLog string `json:"lastLog,omitempty"`
+
+	// lastReconcileState is the latest reconcile outcome.
+	// +kubebuilder:default="InProgress"
+	// +optional
+	LastReconcileState ReconcileState `json:"lastReconcileState,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=".status.lastReconcileState"
+// +kubebuilder:printcolumn:name="LastLog",type=string,JSONPath=".status.lastLog"
 
 // PostgresAccess is the Schema for the postgresaccesses API
 type PostgresAccess struct {

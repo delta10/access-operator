@@ -83,6 +83,7 @@ func (in *ControllerList) DeepCopyObject() runtime.Object {
 // DeepCopyInto copies all properties of this object into another object of the same type.
 func (in *ControllerSettings) DeepCopyInto(out *ControllerSettings) {
 	*out = *in
+	in.PostgresSettings.DeepCopyInto(&out.PostgresSettings)
 }
 
 // DeepCopy returns a deep copy of this object.
@@ -99,6 +100,26 @@ func (in *ControllerSettings) DeepCopy() *ControllerSettings {
 func (in *ControllerSpec) DeepCopyInto(out *ControllerSpec) {
 	*out = *in
 	in.Settings.DeepCopyInto(&out.Settings)
+}
+
+// DeepCopyInto copies all properties of this object into another object of the same type.
+func (in *PostgresControllerSettings) DeepCopyInto(out *PostgresControllerSettings) {
+	*out = *in
+	if in.ExcludedUsers != nil {
+		in, out := &in.ExcludedUsers, &out.ExcludedUsers
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+}
+
+// DeepCopy returns a deep copy of this object.
+func (in *PostgresControllerSettings) DeepCopy() *PostgresControllerSettings {
+	if in == nil {
+		return nil
+	}
+	out := new(PostgresControllerSettings)
+	in.DeepCopyInto(out)
+	return out
 }
 
 // DeepCopy returns a deep copy of this object.

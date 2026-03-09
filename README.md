@@ -37,6 +37,11 @@ To allow cross-namespace references, create exactly one `Controller` resource an
 If there are zero `Controller` resources, the safe default is `false`.
 If there are multiple `Controller` resources, cross-namespace lookups fail with `MultipleControllersFound`.
 
+The same singleton `Controller` resource can exclude PostgreSQL roles from reconciliation:
+- `spec.settings.postgres.excludedUsers`
+
+Excluded usernames are skipped during normal reconciliation and orphan cleanup, so the operator will not create, update, or delete those roles.
+
 When using the docker compose you can use a simple sample config with:
 ```bash
 kubectl apply -f config/samples/access_v1_postgresaccess.yaml
@@ -55,7 +60,8 @@ Make sure you have [kind](https://kind.sigs.k8s.io/) installed and running, then
 ```bash
 make test-e2e
 ```
-Though beware it'll consume quite a bit of memory, within WSL2 it consumed 9gb during the test run.
+Though beware it'll consume quite a bit of memory, within WSL2 it consumed 9gb during the test run, MacOS did roughly 7gb.  
+A machine with 24gb of memory is highly recommended for running the e2e tests while developing other things.
 
 if you don't have a database running locally you can use docker compose to start a postgres database:
 
