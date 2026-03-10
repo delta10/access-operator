@@ -23,7 +23,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -92,40 +91,81 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 		})
 	})
 
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
-
-		ctx := context.Background()
-
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
-		}
-		rabbitmqaccess := &accessv1.RabbitMQAccess{}
-
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind RabbitMQAccess")
-			err := k8sClient.Get(ctx, typeNamespacedName, rabbitmqaccess)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &accessv1.RabbitMQAccess{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
+	Context("When reconciling generated credentials secrets", func() {
+		It("should create a generated secret for RabbitMQAccess", func() {
+			rbq := &accessv1.RabbitMQAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "rabbitmq-access",
+					Namespace: "default",
+				},
+				Spec: accessv1.RabbitMQAccessSpec{
+					Username:        "app-user",
+					GeneratedSecret: "app-user-rabbitmq",
+					Permissions: []accessv1.RabbitMQPermissionSpec{
+						{VHost: "/app", Configure: ".*", Write: ".*", Read: ".*"},
 					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				},
 			}
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(rbq)
+			reconciler := &RabbitMQAccessReconciler{Client: fakeClient, Scheme: fakeScheme}
+
+			configs, err := reconciler.getAllRabbitMQUserConfigs(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(configs).To(HaveKey("app-user"))
+			Expect(configs["app-user"].Password).NotTo(BeEmpty())
+
+			secret := &corev1.Secret{}
+			err = fakeClient.Get(context.Background(), types.NamespacedName{
+				Name:      "app-user-rabbitmq",
+				Namespace: "default",
+			}, secret)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(secret.Data["username"])).To(Equal("app-user"))
+			Expect(string(secret.Data["password"])).To(Equal(configs["app-user"].Password))
 		})
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &accessv1.RabbitMQAccess{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+		It("should reuse the existing password when updating a generated secret", func() {
+			rbq := &accessv1.RabbitMQAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "rabbitmq-access",
+					Namespace: "default",
+				},
+				Spec: accessv1.RabbitMQAccessSpec{
+					Username:        "app-user",
+					GeneratedSecret: "app-user-rabbitmq",
+					Permissions: []accessv1.RabbitMQPermissionSpec{
+						{VHost: "/app", Configure: ".*", Write: ".*", Read: ".*"},
+					},
+				},
+			}
 
-			By("Cleanup the specific resource instance RabbitMQAccess")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			existingSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "app-user-rabbitmq",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					"username": []byte("stale-user"),
+					"password": []byte("kept-password"),
+				},
+			}
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(rbq, existingSecret)
+			reconciler := &RabbitMQAccessReconciler{Client: fakeClient, Scheme: fakeScheme}
+
+			configs, err := reconciler.getAllRabbitMQUserConfigs(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(configs["app-user"].Password).To(Equal("kept-password"))
+
+			updatedSecret := &corev1.Secret{}
+			err = fakeClient.Get(context.Background(), types.NamespacedName{
+				Name:      "app-user-rabbitmq",
+				Namespace: "default",
+			}, updatedSecret)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(updatedSecret.Data["username"])).To(Equal("app-user"))
+			Expect(string(updatedSecret.Data["password"])).To(Equal("kept-password"))
 		})
 	})
 })

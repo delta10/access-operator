@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
@@ -10,12 +11,16 @@ import (
 	"strings"
 	"time"
 
+	accessv1 "github.com/delta10/access-operator/api/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	accessv1 "github.com/delta10/access-operator/api/v1"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 type controllerMultipleHandler func(*accessv1.Controller, string)
@@ -25,6 +30,133 @@ type SharedConnectionDetails struct {
 	Password string
 	Host     string
 	Port     string
+}
+
+type reconcileConditionTypes struct {
+	Ready      string
+	Success    string
+	InProgress string
+}
+
+type reconcileStatusConfig[T client.Object] struct {
+	newObject             func() T
+	conditions            func(T) *[]metav1.Condition
+	setLastLog            func(T, string)
+	setLastReconcileState func(T, accessv1.ReconcileState)
+	conditionTypes        reconcileConditionTypes
+}
+
+func reconcileGeneratedCredentialsSecret(
+	ctx context.Context,
+	c client.Client,
+	scheme *runtime.Scheme,
+	owner client.Object,
+	secretName,
+	secretNamespace,
+	username string,
+) (string, bool, error) {
+	if secretName == "" {
+		return "", false, fmt.Errorf("generated secret name is empty")
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: secretNamespace,
+		},
+	}
+
+	passwordReused := true
+	var password string
+
+	_, err := controllerutil.CreateOrUpdate(ctx, c, secret, func() error {
+		secret.Type = corev1.SecretTypeOpaque
+
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+
+		existingPassword, ok := secret.Data["password"]
+		if ok && len(existingPassword) > 0 {
+			password = string(existingPassword)
+		} else {
+			password = rand.Text()
+			passwordReused = false
+		}
+
+		secret.Data["username"] = []byte(username)
+		secret.Data["password"] = []byte(password)
+
+		return controllerutil.SetControllerReference(owner, secret, scheme)
+	})
+	if err != nil {
+		return "", false, err
+	}
+
+	return password, passwordReused, nil
+}
+
+func setReconcileStatus[T client.Object](
+	ctx context.Context,
+	c client.Client,
+	key types.NamespacedName,
+	config reconcileStatusConfig[T],
+	reconcileState accessv1.ReconcileState,
+	reason, message string,
+) error {
+	if key.Name == "" || key.Namespace == "" {
+		return nil
+	}
+
+	latest := config.newObject()
+	if err := c.Get(ctx, key, latest); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	readyStatus := metav1.ConditionFalse
+	successStatus := metav1.ConditionFalse
+	inProgressStatus := metav1.ConditionFalse
+
+	switch reconcileState {
+	case accessv1.ReconcileStateSuccess:
+		readyStatus = metav1.ConditionTrue
+		successStatus = metav1.ConditionTrue
+	case accessv1.ReconcileStateInProgress:
+		inProgressStatus = metav1.ConditionTrue
+	case accessv1.ReconcileStateError:
+	default:
+		return fmt.Errorf("invalid reconcile state %q", reconcileState)
+	}
+
+	conditions := config.conditions(latest)
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               config.conditionTypes.Ready,
+		Status:             readyStatus,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: latest.GetGeneration(),
+	})
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               config.conditionTypes.Success,
+		Status:             successStatus,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: latest.GetGeneration(),
+	})
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               config.conditionTypes.InProgress,
+		Status:             inProgressStatus,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: latest.GetGeneration(),
+	})
+	config.setLastLog(latest, message)
+	config.setLastReconcileState(latest, reconcileState)
+
+	return c.Status().Update(ctx, latest)
 }
 
 func hasSharedConnectionDetails(connection accessv1.ConnectionSpec) bool {
@@ -166,10 +298,6 @@ func resolvePostgresControllerSettings(ctx context.Context, r *PostgresAccessRec
 	return resolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
 		r.emitEvent(controllerObj, "Warning", multipleControllersFoundReason, message)
 	})
-}
-
-func resolveRabbitMQControllerSettings(ctx context.Context, r *RabbitMQAccessReconciler) (accessv1.ControllerSettings, error) {
-	return resolveControllerSettings(ctx, r.Client, nil)
 }
 
 func emitEvent(recorder events.EventRecorder, object client.Object, eventType, reason, message string) {

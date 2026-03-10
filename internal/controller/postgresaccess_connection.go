@@ -64,15 +64,6 @@ func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(ctx context.Co
 	return secretNamespace, nil
 }
 
-func (r *PostgresAccessReconciler) resolveExistingSecretNamespacePolicy(ctx context.Context) (bool, error) {
-	settings, err := resolvePostgresControllerSettings(ctx, r)
-	if err != nil {
-		return false, err
-	}
-
-	return settings.ExistingSecretNamespace, nil
-}
-
 func (r *PostgresAccessReconciler) resolveExcludedUsers(ctx context.Context) (map[string]struct{}, error) {
 	settings, err := resolvePostgresControllerSettings(ctx, r)
 	if err != nil {
@@ -80,10 +71,6 @@ func (r *PostgresAccessReconciler) resolveExcludedUsers(ctx context.Context) (ma
 	}
 
 	return normalizeExcludedUsers(settings.PostgresSettings.ExcludedUsers), nil
-}
-
-func (r *PostgresAccessReconciler) resolveControllerSettings(ctx context.Context) (accessv1.ControllerSettings, error) {
-	return resolvePostgresControllerSettings(ctx, r)
 }
 
 func normalizeExcludedUsers(users []string) map[string]struct{} {

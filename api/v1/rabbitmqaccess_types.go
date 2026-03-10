@@ -95,6 +95,15 @@ type RabbitMQAccessStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// lastLog is the latest reconcile log message or error.
+	// +optional
+	LastLog string `json:"lastLog,omitempty"`
+
+	// lastReconcileState is the latest reconcile outcome.
+	// +kubebuilder:default="InProgress"
+	// +optional
+	LastReconcileState ReconcileState `json:"lastReconcileState,omitempty"`
 }
 
 // +kubebuilder:object:root=true
