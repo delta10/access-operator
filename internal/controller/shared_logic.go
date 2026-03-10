@@ -294,12 +294,6 @@ func resolveControllerSettings(
 	}
 }
 
-func resolvePostgresControllerSettings(ctx context.Context, r *PostgresAccessReconciler) (accessv1.ControllerSettings, error) {
-	return resolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
-		r.emitEvent(controllerObj, "Warning", multipleControllersFoundReason, message)
-	})
-}
-
 func emitEvent(recorder events.EventRecorder, object client.Object, eventType, reason, message string) {
 	if recorder == nil || object == nil {
 		return

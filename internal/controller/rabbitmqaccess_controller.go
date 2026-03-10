@@ -171,8 +171,37 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		)
 		return ctrl.Result{}, err
 	}
+	connectionUsers, err := r.getAllRabbitMQConnectionUsernames(ctx)
+	if err != nil {
+		r.emitWarningEvent(&rbq, "ListCRsError", "Failed to resolve RabbitMQ connection usernames: "+err.Error())
+		_ = setReconcileStatus(
+			ctx,
+			r.Client,
+			req.NamespacedName,
+			rabbitMQReconcileStatusConfig(),
+			accessv1.ReconcileStateError,
+			"ListCRsError",
+			err.Error(),
+		)
+		return ctrl.Result{}, err
+	}
 
-	err = r.reconcileUsersAndVhosts(rmqc, desiredUsers, usersPermissions)
+	excludedUsers, err := r.resolveExcludedUsers(ctx)
+	if err != nil {
+		r.emitWarningEvent(&rbq, multipleControllersFoundReason, err.Error())
+		_ = setReconcileStatus(
+			ctx,
+			r.Client,
+			req.NamespacedName,
+			rabbitMQReconcileStatusConfig(),
+			accessv1.ReconcileStateError,
+			multipleControllersFoundReason,
+			err.Error(),
+		)
+		return ctrl.Result{}, err
+	}
+
+	err = r.reconcileUsersAndVhosts(rmqc, desiredUsers, usersPermissions, excludedUsers)
 	if err != nil {
 		r.emitWarningEvent(&rbq, "CreateError", "Failed to create missing users or vhosts: "+err.Error())
 		_ = setReconcileStatus(
@@ -189,10 +218,21 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	unhandledUsers := make(map[string][]accessv1.RabbitMQPermissionSpec, len(usersPermissions))
 	maps.Copy(unhandledUsers, usersPermissions)
+	for username := range excludedUsers {
+		delete(unhandledUsers, username)
+	}
+	for username := range connectionUsers {
+		delete(unhandledUsers, username)
+	}
 	// Grant permissions for all CRs
 	// api is idempotent, so we can call it for all users without checking if permissions already match
 	for username, desiredUser := range desiredUsers {
-		if err := r.SetPermissions(rmqc, username, desiredUser.Permissions); err != nil {
+		if _, excluded := excludedUsers[username]; excluded {
+			log.Info("Skipping excluded RabbitMQ user", "username", username)
+			delete(unhandledUsers, username)
+			continue
+		}
+		if err := r.SetPermissionsExact(rmqc, username, desiredUser.Permissions, usersPermissions[username]); err != nil {
 			r.emitWarningEvent(&rbq, "GrantError", fmt.Sprintf("Failed to grant permissions for user %s: %s", username, err.Error()))
 			_ = setReconcileStatus(
 				ctx,
@@ -307,12 +347,43 @@ func (r *RabbitMQAccessReconciler) getAllRabbitMQUserConfigs(ctx context.Context
 	return configs, nil
 }
 
+func (r *RabbitMQAccessReconciler) getAllRabbitMQConnectionUsernames(ctx context.Context) (map[string]struct{}, error) {
+	var rbqs accessv1.RabbitMQAccessList
+	if err := r.List(ctx, &rbqs); err != nil {
+		return nil, err
+	}
+
+	usernames := make(map[string]struct{}, len(rbqs.Items))
+	for i := range rbqs.Items {
+		rbq := &rbqs.Items[i]
+		connection, err := r.getConnectionDetails(ctx, rbq)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to resolve connection details for RabbitMQAccess %s/%s: %w",
+				rbq.Namespace,
+				rbq.Name,
+				err,
+			)
+		}
+		if connection.Username == "" {
+			continue
+		}
+		usernames[connection.Username] = struct{}{}
+	}
+
+	return usernames, nil
+}
+
 func (r *RabbitMQAccessReconciler) reconcileUsersAndVhosts(
 	rmqc *rabbithole.Client,
 	desiredUsers map[string]RabbitMQUserConfig,
 	currentPermissions map[string][]accessv1.RabbitMQPermissionSpec,
+	excludedUsers map[string]struct{},
 ) error {
 	for username, desiredUser := range desiredUsers {
+		if _, excluded := excludedUsers[username]; excluded {
+			continue
+		}
 		if err := r.CreateUser(rmqc, username, desiredUser.Password); err != nil {
 			if _, exists := currentPermissions[username]; exists {
 				return fmt.Errorf("failed to update user %s: %w", username, err)
@@ -332,4 +403,10 @@ func (r *RabbitMQAccessReconciler) reconcileUsersAndVhosts(
 	}
 
 	return nil
+}
+
+func resolveRabbitMQControllerSettings(ctx context.Context, r *RabbitMQAccessReconciler) (accessv1.ControllerSettings, error) {
+	return resolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
+		r.emitWarningEvent(controllerObj, multipleControllersFoundReason, message)
+	})
 }

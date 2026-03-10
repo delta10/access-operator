@@ -13,7 +13,9 @@ type RabbitMQInterface interface {
 	DeleteVhost(vhost string) error
 }
 
-func (r *RabbitMQAccessReconciler) ListUsersAndPermissions(rmqc *rabbithole.Client) (map[string][]accessv1.RabbitMQPermissionSpec, error) {
+func (r *RabbitMQAccessReconciler) ListUsersAndPermissions(
+	rmqc *rabbithole.Client,
+) (map[string][]accessv1.RabbitMQPermissionSpec, error) {
 	usersPermissionsReturn := make(map[string][]accessv1.RabbitMQPermissionSpec)
 	usersResp, err := rmqc.ListUsers()
 	if err != nil {
@@ -84,7 +86,22 @@ func (r *RabbitMQAccessReconciler) DeleteVhost(rmqc *rabbithole.Client, vhost st
 }
 
 func (r *RabbitMQAccessReconciler) SetPermissions(rmqc *rabbithole.Client, username string, permissions []accessv1.RabbitMQPermissionSpec) error {
-	for _, perm := range permissions {
+	return r.SetPermissionsExact(rmqc, username, permissions, nil)
+}
+
+func (r *RabbitMQAccessReconciler) SetPermissionsExact(
+	rmqc *rabbithole.Client,
+	username string,
+	desiredPermissions []accessv1.RabbitMQPermissionSpec,
+	currentPermissions []accessv1.RabbitMQPermissionSpec,
+) error {
+	for _, vhost := range stalePermissionVHosts(currentPermissions, desiredPermissions) {
+		if _, err := rmqc.ClearPermissionsIn(vhost, username); err != nil {
+			return err
+		}
+	}
+
+	for _, perm := range desiredPermissions {
 		_, err := rmqc.UpdatePermissionsIn(perm.VHost, username, rabbithole.Permissions{
 			Configure: perm.Configure,
 			Write:     perm.Write,
@@ -96,4 +113,29 @@ func (r *RabbitMQAccessReconciler) SetPermissions(rmqc *rabbithole.Client, usern
 	}
 
 	return nil
+}
+
+func stalePermissionVHosts(
+	currentPermissions []accessv1.RabbitMQPermissionSpec,
+	desiredPermissions []accessv1.RabbitMQPermissionSpec,
+) []string {
+	desiredVHosts := make(map[string]struct{}, len(desiredPermissions))
+	for _, perm := range desiredPermissions {
+		desiredVHosts[perm.VHost] = struct{}{}
+	}
+
+	stale := make([]string, 0, len(currentPermissions))
+	seen := make(map[string]struct{}, len(currentPermissions))
+	for _, perm := range currentPermissions {
+		if _, keep := desiredVHosts[perm.VHost]; keep {
+			continue
+		}
+		if _, alreadyAdded := seen[perm.VHost]; alreadyAdded {
+			continue
+		}
+		seen[perm.VHost] = struct{}{}
+		stale = append(stale, perm.VHost)
+	}
+
+	return stale
 }

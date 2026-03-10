@@ -30,6 +30,58 @@ import (
 )
 
 var _ = Describe("RabbitMQAccess Controller", func() {
+	Context("When calculating stale RabbitMQ permissions", func() {
+		It("should return vhosts that are no longer desired", func() {
+			current := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/app", Configure: ".*", Write: ".*", Read: ".*"},
+				{VHost: "/old", Configure: ".*", Write: ".*", Read: ".*"},
+			}
+			desired := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/app", Configure: "^$", Write: "^$", Read: "^$"},
+			}
+
+			Expect(stalePermissionVHosts(current, desired)).To(Equal([]string{"/old"}))
+		})
+
+		It("should not mark a vhost as stale when only the regexes change", func() {
+			current := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/app", Configure: "^$", Write: "^$", Read: "^$"},
+			}
+			desired := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/app", Configure: ".*", Write: ".*", Read: ".*"},
+			}
+
+			Expect(stalePermissionVHosts(current, desired)).To(BeEmpty())
+		})
+	})
+
+	Context("When resolving excluded RabbitMQ users", func() {
+		It("should normalize excluded usernames from singleton Controller settings", func() {
+			fakeClient, _ := newFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "cluster-settings",
+						Namespace: "access-operator-system",
+					},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{
+							RabbitMQSettings: accessv1.RabbitMQControllerSettings{
+								ExcludedUsers: []string{" admin ", "", "ops-user", "admin"},
+							},
+						},
+					},
+				},
+			)
+
+			reconciler := &RabbitMQAccessReconciler{Client: fakeClient}
+			excludedUsers, err := reconciler.resolveExcludedUsers(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(excludedUsers).To(HaveLen(2))
+			Expect(excludedUsers).To(HaveKey("admin"))
+			Expect(excludedUsers).To(HaveKey("ops-user"))
+		})
+	})
+
 	Context("When resolving connection details", func() {
 		It("should build a management client from direct connection details", func() {
 			host := "rabbitmq.default.svc.cluster.local"
@@ -88,6 +140,43 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			Expect(client.Endpoint).To(Equal("http://rabbitmq.default.svc:15672"))
 			Expect(client.Username).To(Equal("admin"))
 			Expect(client.Password).To(Equal("secret"))
+		})
+	})
+
+	Context("When resolving RabbitMQ connection usernames", func() {
+		It("should preserve usernames declared in connection details", func() {
+			host := "rabbitmq.default.svc.cluster.local"
+			port := int32(5672)
+			username := "admin"
+			password := "secret"
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(
+				&accessv1.RabbitMQAccess{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rabbitmq-access",
+						Namespace: "default",
+					},
+					Spec: accessv1.RabbitMQAccessSpec{
+						Username:        "app-user",
+						GeneratedSecret: "app-user-rabbitmq",
+						Connection: accessv1.ConnectionSpec{
+							Host:     &host,
+							Port:     &port,
+							Username: &accessv1.SecretKeySelector{Value: &username},
+							Password: &accessv1.SecretKeySelector{Value: &password},
+						},
+						Permissions: []accessv1.RabbitMQPermissionSpec{
+							{VHost: "/app", Configure: ".*", Write: ".*", Read: ".*"},
+						},
+					},
+				},
+			)
+
+			reconciler := &RabbitMQAccessReconciler{Client: fakeClient, Scheme: fakeScheme}
+			connectionUsers, err := reconciler.getAllRabbitMQConnectionUsernames(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(connectionUsers).To(HaveKey("admin"))
+			Expect(connectionUsers).NotTo(HaveKey("app-user"))
 		})
 	})
 

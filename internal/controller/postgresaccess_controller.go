@@ -484,3 +484,9 @@ func getUserPassword(ctx context.Context, c client.Client, namespace, secretName
 
 	return string(existingPassword), nil
 }
+
+func resolvePostgresControllerSettings(ctx context.Context, r *PostgresAccessReconciler) (accessv1.ControllerSettings, error) {
+	return resolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
+		r.emitEvent(controllerObj, "Warning", multipleControllersFoundReason, message)
+	})
+}

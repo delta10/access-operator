@@ -75,3 +75,12 @@ func rabbitMQManagementEndpoint(host, port string) string {
 
 	return fmt.Sprintf("http://%s:%s", host, managementPort)
 }
+
+func (r *RabbitMQAccessReconciler) resolveExcludedUsers(ctx context.Context) (map[string]struct{}, error) {
+	settings, err := resolveRabbitMQControllerSettings(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+
+	return normalizeExcludedUsers(settings.RabbitMQSettings.ExcludedUsers), nil
+}

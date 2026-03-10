@@ -20,10 +20,12 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -49,6 +51,9 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
+	SetDefaultEventuallyTimeout(2 * time.Minute)
+	SetDefaultEventuallyPollingInterval(time.Second)
+
 	By("building the manager image")
 	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
 	_, err := utils.Run(cmd)
@@ -61,9 +66,58 @@ var _ = BeforeSuite(func() {
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
 
 	setupCertManager()
+
+	By("creating manager namespace")
+	cmd = exec.Command("kubectl", "create", "ns", namespace)
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create namespace")
+
+	By("labeling the namespace to enforce the restricted security policy")
+	cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
+		"pod-security.kubernetes.io/enforce=restricted")
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
+
+	By("installing CRDs")
+	cmd = exec.Command("make", "install")
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
+
+	By("deploying the controller-manager")
+	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 })
 
 var _ = AfterSuite(func() {
+	runCleanup := func(timeout time.Duration, name string, args ...string) {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, name, args...)
+		_, _ = utils.Run(cmd)
+	}
+
+	By("cleaning up the curl pod for metrics")
+	runCleanup(30*time.Second,
+		"kubectl", "delete", "pod", "curl-metrics", "-n", namespace,
+		"--ignore-not-found=true", "--wait=false")
+
+	By("cleaning up the metrics role binding")
+	runCleanup(30*time.Second,
+		"kubectl", "delete", "clusterrolebinding", metricsRoleBindingName,
+		"--ignore-not-found=true")
+
+	By("undeploying the controller-manager")
+	runCleanup(90*time.Second, "make", "undeploy", "ignore-not-found=true")
+
+	By("uninstalling CRDs")
+	runCleanup(90*time.Second, "make", "uninstall", "ignore-not-found=true")
+
+	By("removing manager namespace")
+	runCleanup(30*time.Second,
+		"kubectl", "delete", "ns", namespace,
+		"--ignore-not-found=true", "--wait=false")
+
 	teardownCertManager()
 })
 
