@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -44,8 +43,6 @@ type PostgresAccessReconciler struct {
 	Recorder events.EventRecorder
 }
 
-const privilegeDriftRequeueInterval = 30 * time.Second
-const syncedRequeueInterval = 5 * time.Minute
 const postgresAccessFinalizer = "access.k8s.delta10.nl/finalizer"
 const (
 	postgresAccessReadyConditionType      = "Ready"

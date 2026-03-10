@@ -289,10 +289,10 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"Ready",
 		"RabbitMQAccess is in sync",
 	); err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

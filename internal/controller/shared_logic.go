@@ -23,6 +23,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+// Define constants for requeue intervals because when postgres changes something a reconcile loop won't be triggered so we need to check periodically.
+const privilegeDriftRequeueInterval = 30 * time.Second
+const syncedRequeueInterval = 5 * time.Minute
+
 type controllerMultipleHandler func(*accessv1.Controller, string)
 
 type SharedConnectionDetails struct {

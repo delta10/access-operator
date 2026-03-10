@@ -115,6 +115,8 @@ func (r *RabbitMQAccessReconciler) SetPermissionsExact(
 	return nil
 }
 
+// stalePermissionVHosts returns a list of vhosts that are present in currentPermissions but not in desiredPermissions.
+// This is used to determine which permissions should be removed.
 func stalePermissionVHosts(
 	currentPermissions []accessv1.RabbitMQPermissionSpec,
 	desiredPermissions []accessv1.RabbitMQPermissionSpec,
