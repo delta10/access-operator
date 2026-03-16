@@ -65,7 +65,9 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
+GINKGO ?= go run github.com/onsi/ginkgo/v2/ginkgo
 KIND_CLUSTER ?= access-operator-test-e2e
+E2E_GINKGO_PROCS ?= 2
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -84,7 +86,7 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	@status=0; \
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v || status=$$?; \
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) $(GINKGO) run --procs=$(E2E_GINKGO_PROCS) --tags=e2e -v ./test/e2e || status=$$?; \
 	$(MAKE) cleanup-test-e2e || status=$$?; \
 	exit $$status
 

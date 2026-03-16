@@ -33,12 +33,8 @@ import (
 	"github.com/delta10/access-operator/internal/controller"
 )
 
-// GetDatabaseVariables returns the namespace and connection details for e2e postgres tests.
-func GetDatabaseVariables() (string, controller.ConnectionDetails) {
-	testNamespace := os.Getenv("POSTGRES_TEST_NAMESPACE")
-	if testNamespace == "" {
-		testNamespace = "postgres-access-test"
-	}
+// DatabaseConnectionDetailsForNamespace returns connection details for the provided postgres namespace.
+func DatabaseConnectionDetailsForNamespace(testNamespace string) controller.ConnectionDetails {
 	defaultClusterHost := fmt.Sprintf("postgres.%s.svc", testNamespace)
 
 	postgresHost := os.Getenv("POSTGRES_CLUSTER_HOST")
@@ -72,7 +68,7 @@ func GetDatabaseVariables() (string, controller.ConnectionDetails) {
 		postgresDB = "testdb"
 	}
 
-	return testNamespace, controller.ConnectionDetails{
+	return controller.ConnectionDetails{
 		SharedConnectionDetails: controller.SharedConnectionDetails{
 			Host:     postgresHost,
 			Port:     postgresPort,
@@ -82,6 +78,16 @@ func GetDatabaseVariables() (string, controller.ConnectionDetails) {
 		Database: postgresDB,
 		SSLMode:  "disable",
 	}
+}
+
+// GetDatabaseVariables returns the namespace and connection details for e2e postgres tests.
+func GetDatabaseVariables() (string, controller.ConnectionDetails) {
+	testNamespace := os.Getenv("POSTGRES_TEST_NAMESPACE")
+	if testNamespace == "" {
+		testNamespace = "postgres-access-test"
+	}
+
+	return testNamespace, DatabaseConnectionDetailsForNamespace(testNamespace)
 }
 
 func GetCNPGConnectionDetailsFromSecret(namespace, secretName string) controller.ConnectionDetails {

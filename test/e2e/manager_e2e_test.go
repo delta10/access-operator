@@ -83,7 +83,7 @@ var _ = AfterEach(func() {
 	}
 })
 
-var _ = Describe("Manager", Ordered, func() {
+var _ = Describe("Manager", Serial, Ordered, func() {
 	It("should run successfully", func() {
 		Expect(ensureControllerPodName()).To(ContainSubstring("controller-manager"))
 	})
