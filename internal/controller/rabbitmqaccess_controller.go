@@ -205,9 +205,12 @@ func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *ac
 		return false, multipleControllersFoundReason, fmt.Errorf("failed to resolve excluded users: %w", err)
 	}
 
-	err = r.reconcileUsersAndVhosts(rmqc, desiredUsers, usersPermissions, excludedUsers)
+	usersAndVhostsInSync, reason, err := r.reconcileUsersAndVhosts(rmqc, desiredUsers, usersPermissions, excludedUsers, log)
 	if err != nil {
-		return false, "CreateError", fmt.Errorf("failed to create missing users or vhosts: %w", err)
+		return false, reason, err
+	}
+	if !usersAndVhostsInSync {
+		insync = false
 	}
 
 	unhandledUsers := make(map[string][]accessv1.RabbitMQPermissionSpec, len(usersPermissions))
@@ -218,23 +221,8 @@ func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *ac
 	for username := range connectionUsers {
 		delete(unhandledUsers, username)
 	}
-	// Grant permissions for all CRs
-	// api is idempotent, so we can call it for all users without checking if permissions already match
-	for username, desiredUser := range desiredUsers {
-		if _, excluded := excludedUsers[username]; excluded {
-			log.Info("Skipping excluded RabbitMQ user", "username", username)
-			delete(unhandledUsers, username)
-			continue
-		}
-		if err := r.SetPermissionsExact(rmqc, username, desiredUser.Permissions, usersPermissions[username]); err != nil {
-			return false, "GrantError", fmt.Errorf("failed to grant permissions for user %s: %w", username, err)
-		}
+	for username := range desiredUsers {
 		delete(unhandledUsers, username)
-
-		permissionsMatch := permissionsEqual(desiredUser.Permissions, usersPermissions[username])
-		if !permissionsMatch {
-			insync = false
-		}
 	}
 
 	// delete users that are not referenced by any CR
@@ -332,30 +320,49 @@ func (r *RabbitMQAccessReconciler) reconcileUsersAndVhosts(
 	desiredUsers map[string]RabbitMQUserConfig,
 	currentPermissions map[string][]accessv1.RabbitMQPermissionSpec,
 	excludedUsers map[string]struct{},
-) error {
+	log logr.Logger,
+) (bool, string, error) {
+	const createErrorReason = "CreateError"
+
+	inSync := true
+
 	for username, desiredUser := range desiredUsers {
 		if _, excluded := excludedUsers[username]; excluded {
+			log.Info("Skipping excluded RabbitMQ user", "username", username)
 			continue
 		}
+
+		if _, exists := currentPermissions[username]; !exists {
+			inSync = false
+		}
+
 		if err := r.CreateUser(rmqc, username, desiredUser.Password); err != nil {
 			if _, exists := currentPermissions[username]; exists {
-				return fmt.Errorf("failed to update user %s: %w", username, err)
+				return false, createErrorReason, fmt.Errorf("failed to update user %s: %w", username, err)
 			}
-			return fmt.Errorf("failed to create user %s: %w", username, err)
+			return false, createErrorReason, fmt.Errorf("failed to create user %s: %w", username, err)
 		}
 
 		for _, perm := range desiredUser.Permissions {
 			if exists, err := r.vhostExists(rmqc, perm.VHost); err != nil {
-				return fmt.Errorf("failed to check if vhost %s exists: %w", perm.VHost, err)
+				return false, createErrorReason, fmt.Errorf("failed to check if vhost %s exists: %w", perm.VHost, err)
 			} else if !exists {
+				inSync = false
 				if err = r.CreateVhost(rmqc, perm.VHost); err != nil {
-					return fmt.Errorf("failed to create vhost %s: %w", perm.VHost, err)
+					return false, createErrorReason, fmt.Errorf("failed to create vhost %s: %w", perm.VHost, err)
 				}
 			}
 		}
+
+		if !permissionsEqual(desiredUser.Permissions, currentPermissions[username]) {
+			inSync = false
+		}
+		if err := r.SetPermissionsExact(rmqc, username, desiredUser.Permissions, currentPermissions[username]); err != nil {
+			return false, "GrantError", fmt.Errorf("failed to grant permissions for user %s: %w", username, err)
+		}
 	}
 
-	return nil
+	return inSync, "", nil
 }
 
 func resolveRabbitMQControllerSettings(ctx context.Context, r *RabbitMQAccessReconciler) (accessv1.ControllerSettings, error) {
