@@ -11,10 +11,61 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log into registry ${{ env.REGISTRY }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push release image by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      - name: Export image digest
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
+
+      - name: Upload image digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
   release:
+    needs: build
     runs-on: ubuntu-latest
 
     steps:
@@ -36,20 +87,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push release image
-        id: build-and-push
-        uses: docker/build-push-action@v6
+      - name: Download image digests
+        uses: actions/download-artifact@v4
         with:
-          context: .
-          platforms: ${{ env.PLATFORMS }}
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Create multi-arch release image
+        id: merge
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          tag="${{ github.ref_name }}"
+          docker buildx imagetools create \
+            -t "${image}:${tag}" \
+            $(printf '%s@sha256:%s ' "${image}" *)
+          digest="$(docker buildx imagetools inspect "${image}:${tag}" --format '{{json .Manifest}}' | jq -r '.digest')"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Build installer manifest pinned to release image digest
         run: |
-          make build-installer IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
+          make build-installer IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.merge.outputs.digest }}
 
       - name: Publish GitHub release with install.yaml
         uses: softprops/action-gh-release@v2
