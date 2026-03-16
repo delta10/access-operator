@@ -204,6 +204,34 @@ spec:
 			utils.WaitForRabbitMQPermissions(testNamespace, resourceName, permissions)
 		})
 
+		It("should delete the RabbitMQ user and generated secret when the RabbitMQAccess resource is deleted", func() {
+			testNamespace, conn := utils.GetRabbitMQVariables()
+			resourceName := "test-rabbitmq-deletion"
+			generatedSecret := "test-rabbitmq-deletion-secret"
+			permissions := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/app-delete", Configure: ".*", Write: ".*", Read: ".*"},
+			}
+
+			By("creating a RabbitMQAccess resource")
+			err := utils.CreateRabbitMQAccessWithDirectConnection(resourceName, testNamespace, generatedSecret, conn, permissions)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource")
+
+			By("waiting for the generated secret, user, and permissions to exist")
+			utils.WaitForSecretField(testNamespace, generatedSecret, "username")
+			utils.WaitForRabbitMQUserState(testNamespace, resourceName, true)
+			utils.WaitForRabbitMQPermissions(testNamespace, resourceName, permissions)
+
+			By("deleting the RabbitMQAccess resource")
+			err = utils.DeleteRabbitMQAccess(resourceName, testNamespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete RabbitMQAccess resource")
+
+			By("verifying finalization removed the RabbitMQAccess, user, vhost access, and generated secret")
+			utils.WaitForResourceDeleted("rabbitmqaccess", resourceName, testNamespace)
+			utils.WaitForRabbitMQUserState(testNamespace, resourceName, false)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/app-delete", false)
+			utils.WaitForSecretDeleted(testNamespace, generatedSecret)
+		})
+
 		It("should delete stale RabbitMQ vhosts when singleton Controller policy enables deletion", func() {
 			testNamespace, conn := utils.GetRabbitMQVariables()
 			controllerName := "rabbitmq-vhost-cleanup-delete"
@@ -243,11 +271,8 @@ spec:
 			err = utils.DeleteRabbitMQAccess(staleName, testNamespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
 
-			By("triggering reconciliation on the remaining RabbitMQAccess resource")
-			err = utils.TriggerReconciliation("rabbitmqaccess", keeperName, testNamespace)
-			Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation on keeper RabbitMQAccess")
-
-			By("verifying the stale user and its vhost are deleted while the keeper remains")
+			By("verifying finalization deletes the stale user and its vhost while the keeper remains")
+			utils.WaitForResourceDeleted("rabbitmqaccess", staleName, testNamespace)
 			utils.WaitForRabbitMQUserState(testNamespace, staleName, false)
 			utils.WaitForRabbitMQVhostState(testNamespace, "/orphan", false)
 			utils.WaitForRabbitMQUserState(testNamespace, keeperName, true)
@@ -295,11 +320,8 @@ spec:
 			err = utils.DeleteRabbitMQAccess(staleName, testNamespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
 
-			By("triggering reconciliation on the remaining RabbitMQAccess resource")
-			err = utils.TriggerReconciliation("rabbitmqaccess", keeperName, testNamespace)
-			Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation on keeper RabbitMQAccess")
-
-			By("verifying the stale user is deleted but its vhost is retained by policy")
+			By("verifying finalization deletes the stale user but retains its vhost by policy")
+			utils.WaitForResourceDeleted("rabbitmqaccess", staleName, testNamespace)
 			utils.WaitForRabbitMQUserState(testNamespace, staleName, false)
 			utils.WaitForRabbitMQVhostState(testNamespace, "/retained", true)
 			utils.WaitForRabbitMQUserState(testNamespace, keeperName, true)
@@ -357,11 +379,8 @@ spec:
 			err = utils.DeleteRabbitMQAccess(staleName, testNamespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
 
-			By("triggering reconciliation on the remaining RabbitMQAccess resource")
-			err = utils.TriggerReconciliation("rabbitmqaccess", keeperName, testNamespace)
-			Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation on keeper RabbitMQAccess")
-
-			By("verifying the stale user is deleted but the excluded vhost is retained")
+			By("verifying finalization deletes the stale user but retains the excluded vhost")
+			utils.WaitForResourceDeleted("rabbitmqaccess", staleName, testNamespace)
 			utils.WaitForRabbitMQUserState(testNamespace, staleName, false)
 			utils.WaitForRabbitMQVhostState(testNamespace, "/protected", true)
 			utils.WaitForRabbitMQUserState(testNamespace, keeperName, true)

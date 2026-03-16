@@ -19,14 +19,18 @@ package controller
 import (
 	"context"
 	"strconv"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
@@ -266,6 +270,90 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 	})
 
 	Context("When reconciling generated credentials secrets", func() {
+		It("should add finalizer for active resources", func() {
+			rbq := &accessv1.RabbitMQAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "finalizer-test",
+					Namespace: "default",
+				},
+			}
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(rbq)
+			reconciler := &RabbitMQAccessReconciler{
+				Client: fakeClient,
+				Scheme: fakeScheme,
+			}
+
+			finalized, err := reconciler.finalizeRabbitMQAccess(context.Background(), rbq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalized).To(BeFalse())
+
+			updated := &accessv1.RabbitMQAccess{}
+			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(rbq), updated)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(controllerutil.ContainsFinalizer(updated, rabbitMQAccessFinalizer)).To(BeTrue())
+		})
+
+		It("should return finalized for deleting resources without finalizer", func() {
+			now := metav1.NewTime(time.Now())
+			rbq := &accessv1.RabbitMQAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "finalizer-test",
+					Namespace:         "default",
+					DeletionTimestamp: &now,
+				},
+			}
+
+			reconciler := &RabbitMQAccessReconciler{}
+			finalized, err := reconciler.finalizeRabbitMQAccess(context.Background(), rbq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalized).To(BeTrue())
+		})
+
+		It("should skip excluded users during finalization", func() {
+			now := metav1.NewTime(time.Now())
+			rbq := &accessv1.RabbitMQAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "excluded-user",
+					Namespace:         "default",
+					Finalizers:        []string{rabbitMQAccessFinalizer},
+					DeletionTimestamp: &now,
+				},
+				Spec: accessv1.RabbitMQAccessSpec{
+					Username:        "excluded-user",
+					GeneratedSecret: "excluded-user-secret",
+				},
+			}
+
+			controllerSettings := &accessv1.Controller{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cluster-settings",
+					Namespace: "system",
+				},
+				Spec: accessv1.ControllerSpec{
+					Settings: accessv1.ControllerSettings{
+						RabbitMQSettings: accessv1.RabbitMQControllerSettings{
+							ExcludedUsers: []string{"excluded-user"},
+						},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(rbq, controllerSettings)
+			reconciler := &RabbitMQAccessReconciler{
+				Client: fakeClient,
+				Scheme: fakeScheme,
+			}
+
+			finalized, err := reconciler.finalizeRabbitMQAccess(context.Background(), rbq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalized).To(BeTrue())
+
+			finalizedResource := &accessv1.RabbitMQAccess{}
+			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(rbq), finalizedResource)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		})
+
 		It("should set Ready=False with ConnectionError when connection details are invalid", func() {
 			rbq := &accessv1.RabbitMQAccess{
 				ObjectMeta: metav1.ObjectMeta{

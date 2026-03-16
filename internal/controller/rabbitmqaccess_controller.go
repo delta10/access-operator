@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
@@ -39,6 +40,8 @@ type RabbitMQUserConfig struct {
 	Password    string
 	Permissions []accessv1.RabbitMQPermissionSpec
 }
+
+const rabbitMQAccessFinalizer = accessResourceFinalizer
 
 const (
 	// quick reasons for error
@@ -101,6 +104,27 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	inSync := true
+
+	finalized, err := r.finalizeRabbitMQAccess(ctx, &rbq)
+	if err != nil {
+		r.emitWarningEvent(&rbq, "FinalizeFailed", "Finalization failed: "+err.Error())
+		statusErr := setReconcileStatus(
+			ctx,
+			r.Client,
+			req.NamespacedName,
+			rabbitMQReconcileStatusConfig(),
+			accessv1.ReconcileStateError,
+			"FinalizeFailed",
+			fmt.Sprintf("Finalization failed: %v", err),
+		)
+		if statusErr != nil {
+			log.Error(statusErr, "failed to update status after finalization failure")
+		}
+		return ctrl.Result{}, err
+	}
+	if finalized {
+		return ctrl.Result{}, nil
+	}
 
 	_, passwordReused, err := reconcileGeneratedCredentialsSecret(
 		ctx,
@@ -180,6 +204,100 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
+}
+
+func (r *RabbitMQAccessReconciler) finalizeRabbitMQAccess(ctx context.Context, rbq *accessv1.RabbitMQAccess) (bool, error) {
+	log := logf.FromContext(ctx)
+
+	if rbq.DeletionTimestamp.IsZero() {
+		if err := addAccessFinalizerIfMissing(ctx, r.Client, rbq); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	if !controllerutil.ContainsFinalizer(rbq, rabbitMQAccessFinalizer) {
+		return true, nil
+	}
+
+	excludedUsers, err := r.resolveExcludedUsers(ctx)
+	if err != nil {
+		return true, err
+	}
+	if _, excluded := excludedUsers[rbq.Spec.Username]; excluded {
+		log.Info("Skipping finalizer RabbitMQ cleanup for excluded user", "username", rbq.Spec.Username)
+		if err := removeAccessFinalizerIfPresent(ctx, r.Client, rbq); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+
+	rmqc, err := r.initializeRabbitMQClientConnection(ctx, rbq)
+	if err != nil {
+		return true, fmt.Errorf("failed to connect to RabbitMQ during finalization: %w", err)
+	}
+
+	usersPermissions, err := r.ListUsersAndPermissions(rmqc)
+	if err != nil {
+		return true, fmt.Errorf("failed to list RabbitMQ users during finalization: %w", err)
+	}
+
+	connectionUsers, err := r.getAllRabbitMQConnectionUsernames(ctx)
+	if err != nil {
+		return true, fmt.Errorf("failed to resolve RabbitMQ connection usernames during finalization: %w", err)
+	}
+
+	remainingUsers, err := r.getRemainingRabbitMQUserConfigs(ctx, client.ObjectKeyFromObject(rbq))
+	if err != nil {
+		return true, fmt.Errorf("failed to list remaining RabbitMQAccess resources during finalization: %w", err)
+	}
+
+	if _, inUseByConnection := connectionUsers[rbq.Spec.Username]; !inUseByConnection {
+		if _, stillDesired := remainingUsers[rbq.Spec.Username]; !stillDesired {
+			if _, exists := usersPermissions[rbq.Spec.Username]; exists {
+				if err := r.DeleteUser(rmqc, rbq.Spec.Username); err != nil {
+					return true, fmt.Errorf("failed to delete RabbitMQ user %s during finalization: %w", rbq.Spec.Username, err)
+				}
+			}
+		} else {
+			log.Info("Skipping finalizer RabbitMQ user deletion because another RabbitMQAccess still manages it", "username", rbq.Spec.Username)
+		}
+	} else {
+		log.Info("Skipping finalizer RabbitMQ user deletion because it is used for RabbitMQ connections", "username", rbq.Spec.Username)
+	}
+
+	excludedVhosts, err := r.resolveExcludedVhosts(ctx)
+	if err != nil {
+		return true, fmt.Errorf("failed to resolve excluded RabbitMQ vhosts during finalization: %w", err)
+	}
+	staleVhostDeletionPolicy, err := r.resolveStaleVhostDeletionPolicy(ctx)
+	if err != nil {
+		return true, fmt.Errorf("failed to resolve stale RabbitMQ vhost deletion policy during finalization: %w", err)
+	}
+
+	currentVhosts, err := r.ListVhosts(rmqc)
+	if err != nil {
+		return true, fmt.Errorf("failed to list RabbitMQ vhosts during finalization: %w", err)
+	}
+
+	for _, vhost := range staleRabbitMQVhosts(
+		currentVhosts,
+		remainingUsers,
+		usersPermissions,
+		excludedUsers,
+		excludedVhosts,
+		staleVhostDeletionPolicy,
+	) {
+		if err := r.DeleteVhost(rmqc, vhost); err != nil {
+			return true, fmt.Errorf("failed to delete RabbitMQ vhost %s during finalization: %w", vhost, err)
+		}
+	}
+
+	if err := removeAccessFinalizerIfPresent(ctx, r.Client, rbq); err != nil {
+		return true, err
+	}
+
+	return true, nil
 }
 
 func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *accessv1.RabbitMQAccess, log logr.Logger) (bool, string, error) {
@@ -312,6 +430,30 @@ func (r *RabbitMQAccessReconciler) getAllRabbitMQUserConfigs(ctx context.Context
 		if config.Password == "" {
 			config.Password = password
 		}
+		config.Permissions = append(config.Permissions, rbq.Spec.Permissions...)
+		configs[rbq.Spec.Username] = config
+	}
+
+	return configs, nil
+}
+
+func (r *RabbitMQAccessReconciler) getRemainingRabbitMQUserConfigs(
+	ctx context.Context,
+	excludedKey client.ObjectKey,
+) (map[string]RabbitMQUserConfig, error) {
+	var rbqs accessv1.RabbitMQAccessList
+	if err := r.List(ctx, &rbqs); err != nil {
+		return nil, err
+	}
+
+	configs := make(map[string]RabbitMQUserConfig, len(rbqs.Items))
+	for i := range rbqs.Items {
+		rbq := &rbqs.Items[i]
+		if client.ObjectKeyFromObject(rbq) == excludedKey || !rbq.DeletionTimestamp.IsZero() {
+			continue
+		}
+
+		config := configs[rbq.Spec.Username]
 		config.Permissions = append(config.Permissions, rbq.Spec.Permissions...)
 		configs[rbq.Spec.Username] = config
 	}

@@ -43,7 +43,7 @@ type PostgresAccessReconciler struct {
 	Recorder events.EventRecorder
 }
 
-const postgresAccessFinalizer = "access.k8s.delta10.nl/finalizer"
+const postgresAccessFinalizer = accessResourceFinalizer
 
 func postgresReconcileStatusConfig() reconcileStatusConfig[*accessv1.PostgresAccess] {
 	return reconcileStatusConfig[*accessv1.PostgresAccess]{
@@ -335,14 +335,8 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, pg *accessv1.PostgresAccess) (bool, error) {
 	log := logf.FromContext(ctx)
 	if pg.DeletionTimestamp.IsZero() {
-		// The object is not being deleted, so if it does not have our finalizer,
-		// then let's add the finalizer and update the object. This is equivalent
-		// to registering our finalizer.
-		if !controllerutil.ContainsFinalizer(pg, postgresAccessFinalizer) {
-			controllerutil.AddFinalizer(pg, postgresAccessFinalizer)
-			if err := r.Update(ctx, pg); err != nil {
-				return false, err
-			}
+		if err := addAccessFinalizerIfMissing(ctx, r.Client, pg); err != nil {
+			return false, err
 		}
 		return false, nil
 	}
@@ -357,8 +351,7 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 	}
 	if _, excluded := excludedUsers[pg.Spec.Username]; excluded {
 		log.Info("Skipping finalizer database cleanup for excluded PostgreSQL user", "username", pg.Spec.Username)
-		controllerutil.RemoveFinalizer(pg, postgresAccessFinalizer)
-		if err := r.Update(ctx, pg); err != nil {
+		if err := removeAccessFinalizerIfPresent(ctx, r.Client, pg); err != nil {
 			return true, err
 		}
 		return true, nil
@@ -407,8 +400,7 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 		}
 	}
 
-	controllerutil.RemoveFinalizer(pg, postgresAccessFinalizer)
-	if err := r.Update(ctx, pg); err != nil {
+	if err := removeAccessFinalizerIfPresent(ctx, r.Client, pg); err != nil {
 		return true, err
 	}
 

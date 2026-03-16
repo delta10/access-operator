@@ -114,6 +114,16 @@ func WaitForSecretDeleted(namespace, secretName string) {
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 }
 
+// WaitForResourceDeleted waits until a namespaced resource is no longer found.
+func WaitForResourceDeleted(resourceType, name, namespace string) {
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", resourceType, name, "-n", namespace, "-o", "name", "--ignore-not-found")
+		output, err := Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to check if resource exists")
+		g.Expect(strings.TrimSpace(output)).To(BeEmpty(), "Resource should have been deleted")
+	}, 2*time.Minute, 5*time.Second).Should(Succeed())
+}
+
 // TriggerReconciliation forces a reconcile by updating an annotation.
 func TriggerReconciliation(resourceType, resourceName, namespace string) error {
 	timestamp := time.Now().Format(time.RFC3339Nano)

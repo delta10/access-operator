@@ -26,6 +26,7 @@ import (
 // Define constants for requeue intervals because when postgres changes something a reconcile loop won't be triggered so we need to check periodically.
 const privilegeDriftRequeueInterval = 30 * time.Second
 const syncedRequeueInterval = 5 * time.Minute
+const accessResourceFinalizer = "access.k8s.delta10.nl/finalizer"
 
 type controllerMultipleHandler func(*accessv1.Controller, string)
 
@@ -104,6 +105,24 @@ func reconcileGeneratedCredentialsSecret(
 	}
 
 	return password, passwordReused, nil
+}
+
+func addAccessFinalizerIfMissing(ctx context.Context, c client.Client, obj client.Object) error {
+	if controllerutil.ContainsFinalizer(obj, accessResourceFinalizer) {
+		return nil
+	}
+
+	controllerutil.AddFinalizer(obj, accessResourceFinalizer)
+	return c.Update(ctx, obj)
+}
+
+func removeAccessFinalizerIfPresent(ctx context.Context, c client.Client, obj client.Object) error {
+	if !controllerutil.ContainsFinalizer(obj, accessResourceFinalizer) {
+		return nil
+	}
+
+	controllerutil.RemoveFinalizer(obj, accessResourceFinalizer)
+	return c.Update(ctx, obj)
 }
 
 func setReconcileStatus[T client.Object](
