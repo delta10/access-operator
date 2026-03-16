@@ -36,7 +36,7 @@ Always use `kubebuilder create api` and `kubebuilder create webhook` to scaffold
 
 ### E2E Tests
 - E2E test should be added for most major features, run with `make test-e2e`. 
-- tests should be run on a kind cluster, this will me made by the test command.
+- tests should be run on a kind cluster; this will be created by the test command.
 
 ## After Making Changes
 
