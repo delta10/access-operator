@@ -44,11 +44,6 @@ type PostgresAccessReconciler struct {
 }
 
 const postgresAccessFinalizer = "access.k8s.delta10.nl/finalizer"
-const (
-	postgresAccessReadyConditionType      = "Ready"
-	postgresAccessSuccessConditionType    = "Success"
-	postgresAccessInProgressConditionType = "InProgress"
-)
 
 func postgresReconcileStatusConfig() reconcileStatusConfig[*accessv1.PostgresAccess] {
 	return reconcileStatusConfig[*accessv1.PostgresAccess]{
@@ -65,9 +60,9 @@ func postgresReconcileStatusConfig() reconcileStatusConfig[*accessv1.PostgresAcc
 			obj.Status.LastReconcileState = state
 		},
 		conditionTypes: reconcileConditionTypes{
-			Ready:      postgresAccessReadyConditionType,
-			Success:    postgresAccessSuccessConditionType,
-			InProgress: postgresAccessInProgressConditionType,
+			Ready:      ReadyConditionType,
+			Success:    SuccessConditionType,
+			InProgress: InProgressConditionType,
 		},
 	}
 }

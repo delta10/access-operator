@@ -23,8 +23,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 )
@@ -263,6 +266,60 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 	})
 
 	Context("When reconciling generated credentials secrets", func() {
+		It("should set Ready=False with ConnectionError when connection details are invalid", func() {
+			rbq := &accessv1.RabbitMQAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "status-error",
+					Namespace: "default",
+				},
+				Spec: accessv1.RabbitMQAccessSpec{
+					GeneratedSecret: "status-error-secret",
+					Username:        "demo-user",
+					Connection:      accessv1.ConnectionSpec{},
+					Permissions: []accessv1.RabbitMQPermissionSpec{
+						{VHost: "/app", Configure: ".*", Write: ".*", Read: ".*"},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(rbq)
+			eventRecorder := events.NewFakeRecorder(5)
+			reconciler := &RabbitMQAccessReconciler{
+				Client:   fakeClient,
+				Scheme:   fakeScheme,
+				Recorder: eventRecorder,
+			}
+
+			_, err := reconciler.Reconcile(context.Background(), reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: rbq.Name, Namespace: rbq.Namespace},
+			})
+			Expect(err).To(HaveOccurred())
+
+			updated := &accessv1.RabbitMQAccess{}
+			err = fakeClient.Get(context.Background(), types.NamespacedName{Name: rbq.Name, Namespace: rbq.Namespace}, updated)
+			Expect(err).NotTo(HaveOccurred())
+
+			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, ReadyConditionType)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCondition.Reason).To(Equal(rabbitMQAccessConnectionErrorReason))
+
+			successCondition := meta.FindStatusCondition(updated.Status.Conditions, SuccessConditionType)
+			Expect(successCondition).NotTo(BeNil())
+			Expect(successCondition.Status).To(Equal(metav1.ConditionFalse))
+
+			inProgressCondition := meta.FindStatusCondition(updated.Status.Conditions, InProgressConditionType)
+			Expect(inProgressCondition).NotTo(BeNil())
+			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionFalse))
+
+			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateError))
+			Expect(updated.Status.LastLog).To(ContainSubstring("no valid connection details provided"))
+
+			var event string
+			Eventually(eventRecorder.Events).Should(Receive(&event))
+			Expect(event).To(ContainSubstring(rabbitMQAccessConnectionErrorReason))
+		})
+
 		It("should create a generated secret for RabbitMQAccess", func() {
 			rbq := &accessv1.RabbitMQAccess{
 				ObjectMeta: metav1.ObjectMeta{

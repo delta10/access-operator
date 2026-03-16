@@ -41,9 +41,13 @@ type RabbitMQUserConfig struct {
 }
 
 const (
-	rabbitMQAccessReadyConditionType      = "Ready"
-	rabbitMQAccessSuccessConditionType    = "Success"
-	rabbitMQAccessInProgressConditionType = "InProgress"
+	// quick reasons for error
+	rabbitMQAccessConnectionErrorReason = "ConnectionError"
+	rabbitMQAccessListErrorReason       = "ListError"
+	rabbitMQAccessListCRsErrorReason    = "ListCRsError"
+	rabbitMQAccessDeleteErrorReason     = "DeleteError"
+	rabbitMQAccessCreateErrorReason     = "CreateError"
+	rabbitMQAccessGrantErrorReason      = "GrantError"
 )
 
 func rabbitMQReconcileStatusConfig() reconcileStatusConfig[*accessv1.RabbitMQAccess] {
@@ -61,9 +65,9 @@ func rabbitMQReconcileStatusConfig() reconcileStatusConfig[*accessv1.RabbitMQAcc
 			obj.Status.LastReconcileState = state
 		},
 		conditionTypes: reconcileConditionTypes{
-			Ready:      rabbitMQAccessReadyConditionType,
-			Success:    rabbitMQAccessSuccessConditionType,
-			InProgress: rabbitMQAccessInProgressConditionType,
+			Ready:      ReadyConditionType,
+			Success:    SuccessConditionType,
+			InProgress: InProgressConditionType,
 		},
 	}
 }
@@ -130,7 +134,7 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	rbmqSync, reason, err := reconcileRabbitMQ(ctx, r, &rbq, log)
 	if err != nil {
-		r.emitWarningEvent(&rbq, "CreateError", "Failed to create missing users or vhosts: "+err.Error())
+		r.emitWarningEvent(&rbq, reason, "Failed to reconcile RabbitMQAccess: "+err.Error())
 		_ = setReconcileStatus(
 			ctx,
 			r.Client,
@@ -183,21 +187,21 @@ func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *ac
 
 	rmqc, err := r.initializeRabbitMQClientConnection(ctx, rbq)
 	if err != nil {
-		return false, "connectionError", fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+		return false, rabbitMQAccessConnectionErrorReason, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
 	}
 
 	usersPermissions, err := r.ListUsersAndPermissions(rmqc)
 	if err != nil {
-		return false, "listError", fmt.Errorf("failed to list users and permissions: %w", err)
+		return false, rabbitMQAccessListErrorReason, fmt.Errorf("failed to list users and permissions: %w", err)
 	}
 
 	desiredUsers, err := r.getAllRabbitMQUserConfigs(ctx)
 	if err != nil {
-		return false, "ListCRsError", fmt.Errorf("failed to list RabbitMQAccess CRs: %w", err)
+		return false, rabbitMQAccessListCRsErrorReason, fmt.Errorf("failed to list RabbitMQAccess CRs: %w", err)
 	}
 	connectionUsers, err := r.getAllRabbitMQConnectionUsernames(ctx)
 	if err != nil {
-		return false, "ListCRsError", fmt.Errorf("failed to resolve RabbitMQ connection usernames: %w", err)
+		return false, rabbitMQAccessListCRsErrorReason, fmt.Errorf("failed to resolve RabbitMQ connection usernames: %w", err)
 	}
 
 	excludedUsers, err := r.resolveExcludedUsers(ctx)
@@ -236,14 +240,14 @@ func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *ac
 	// delete users that are not referenced by any CR
 	for username := range unhandledUsers {
 		if err := r.DeleteUser(rmqc, username); err != nil {
-			return false, "DeleteError", fmt.Errorf("failed to delete user %s: %w", username, err)
+			return false, rabbitMQAccessDeleteErrorReason, fmt.Errorf("failed to delete user %s: %w", username, err)
 		}
 		insync = false
 	}
 
 	currentVhosts, err := r.ListVhosts(rmqc)
 	if err != nil {
-		return false, "ListError", fmt.Errorf("failed to list vhosts: %w", err)
+		return false, rabbitMQAccessListErrorReason, fmt.Errorf("failed to list vhosts: %w", err)
 	}
 
 	for _, vhost := range staleRabbitMQVhosts(
@@ -255,7 +259,7 @@ func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *ac
 		staleVhostDeletionPolicy,
 	) {
 		if err := r.DeleteVhost(rmqc, vhost); err != nil {
-			return false, "DeleteError", fmt.Errorf("failed to delete vhost %s: %w", vhost, err)
+			return false, rabbitMQAccessDeleteErrorReason, fmt.Errorf("failed to delete vhost %s: %w", vhost, err)
 		}
 		insync = false
 	}
@@ -349,8 +353,6 @@ func (r *RabbitMQAccessReconciler) reconcileUsersAndVhosts(
 	excludedUsers map[string]struct{},
 	log logr.Logger,
 ) (bool, string, error) {
-	const createErrorReason = "CreateError"
-
 	inSync := true
 
 	for username, desiredUser := range desiredUsers {
@@ -365,18 +367,18 @@ func (r *RabbitMQAccessReconciler) reconcileUsersAndVhosts(
 
 		if err := r.CreateUser(rmqc, username, desiredUser.Password); err != nil {
 			if _, exists := currentPermissions[username]; exists {
-				return false, createErrorReason, fmt.Errorf("failed to update user %s: %w", username, err)
+				return false, rabbitMQAccessCreateErrorReason, fmt.Errorf("failed to update user %s: %w", username, err)
 			}
-			return false, createErrorReason, fmt.Errorf("failed to create user %s: %w", username, err)
+			return false, rabbitMQAccessCreateErrorReason, fmt.Errorf("failed to create user %s: %w", username, err)
 		}
 
 		for _, perm := range desiredUser.Permissions {
 			if exists, err := r.vhostExists(rmqc, perm.VHost); err != nil {
-				return false, createErrorReason, fmt.Errorf("failed to check if vhost %s exists: %w", perm.VHost, err)
+				return false, rabbitMQAccessCreateErrorReason, fmt.Errorf("failed to check if vhost %s exists: %w", perm.VHost, err)
 			} else if !exists {
 				inSync = false
 				if err = r.CreateVhost(rmqc, perm.VHost); err != nil {
-					return false, createErrorReason, fmt.Errorf("failed to create vhost %s: %w", perm.VHost, err)
+					return false, rabbitMQAccessCreateErrorReason, fmt.Errorf("failed to create vhost %s: %w", perm.VHost, err)
 				}
 			}
 		}
@@ -385,7 +387,7 @@ func (r *RabbitMQAccessReconciler) reconcileUsersAndVhosts(
 			inSync = false
 		}
 		if err := r.SetPermissionsExact(rmqc, username, desiredUser.Permissions, currentPermissions[username]); err != nil {
-			return false, "GrantError", fmt.Errorf("failed to grant permissions for user %s: %w", username, err)
+			return false, rabbitMQAccessGrantErrorReason, fmt.Errorf("failed to grant permissions for user %s: %w", username, err)
 		}
 	}
 

@@ -826,16 +826,16 @@ var _ = Describe("PostgresAccess Controller", func() {
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
 			Expect(err).NotTo(HaveOccurred())
 
-			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, ReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(readyCondition.Reason).To(Equal("DatabaseSyncFailed"))
 
-			successCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessSuccessConditionType)
+			successCondition := meta.FindStatusCondition(updated.Status.Conditions, SuccessConditionType)
 			Expect(successCondition).NotTo(BeNil())
 			Expect(successCondition.Status).To(Equal(metav1.ConditionFalse))
 
-			inProgressCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessInProgressConditionType)
+			inProgressCondition := meta.FindStatusCondition(updated.Status.Conditions, InProgressConditionType)
 			Expect(inProgressCondition).NotTo(BeNil())
 			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionFalse))
 
@@ -887,16 +887,16 @@ var _ = Describe("PostgresAccess Controller", func() {
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), inProgressStatus)
 			Expect(err).NotTo(HaveOccurred())
 
-			readyCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessReadyConditionType)
+			readyCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, ReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(readyCondition.Reason).To(Equal("Reconciling"))
 
-			successCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessSuccessConditionType)
+			successCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, SuccessConditionType)
 			Expect(successCondition).NotTo(BeNil())
 			Expect(successCondition.Status).To(Equal(metav1.ConditionFalse))
 
-			inProgressCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessInProgressConditionType)
+			inProgressCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, InProgressConditionType)
 			Expect(inProgressCondition).NotTo(BeNil())
 			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionTrue))
 
@@ -913,16 +913,16 @@ var _ = Describe("PostgresAccess Controller", func() {
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
 			Expect(err).NotTo(HaveOccurred())
 
-			readyCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			readyCondition = meta.FindStatusCondition(updated.Status.Conditions, ReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(readyCondition.Reason).To(Equal("Ready"))
 
-			successCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessSuccessConditionType)
+			successCondition = meta.FindStatusCondition(updated.Status.Conditions, SuccessConditionType)
 			Expect(successCondition).NotTo(BeNil())
 			Expect(successCondition.Status).To(Equal(metav1.ConditionTrue))
 
-			inProgressCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessInProgressConditionType)
+			inProgressCondition = meta.FindStatusCondition(updated.Status.Conditions, InProgressConditionType)
 			Expect(inProgressCondition).NotTo(BeNil())
 			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionFalse))
 
@@ -990,7 +990,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
 			Expect(err).NotTo(HaveOccurred())
 
-			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, ReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateSuccess))
@@ -1106,7 +1106,7 @@ func newFakeClientWithScheme(objs ...client.Object) (client.Client, *runtime.Sch
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&accessv1.PostgresAccess{}, &accessv1.Controller{}).
+		WithStatusSubresource(&accessv1.PostgresAccess{}, &accessv1.RabbitMQAccess{}, &accessv1.Controller{}).
 		WithObjects(objs...).
 		Build()
 

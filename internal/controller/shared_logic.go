@@ -42,6 +42,12 @@ type reconcileConditionTypes struct {
 	InProgress string
 }
 
+const (
+	ReadyConditionType      = "Ready"
+	SuccessConditionType    = "ReconcileSuccess"
+	InProgressConditionType = "ReconcileInProgress"
+)
+
 type reconcileStatusConfig[T client.Object] struct {
 	newObject             func() T
 	conditions            func(T) *[]metav1.Condition
@@ -106,7 +112,8 @@ func setReconcileStatus[T client.Object](
 	key types.NamespacedName,
 	config reconcileStatusConfig[T],
 	reconcileState accessv1.ReconcileState,
-	reason, message string,
+	reason,
+	message string,
 ) error {
 	if key.Name == "" || key.Namespace == "" {
 		return nil
