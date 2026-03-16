@@ -1,6 +1,5 @@
 ## Append samples of your project ##
 resources:
-  - pods_v1_postgresaccess.yaml
   - access_v1_rabbitmqaccess.yaml
   - access_v1_postgresaccess.yaml
   - access_v1_postgresaccess_conn_secret.yaml
