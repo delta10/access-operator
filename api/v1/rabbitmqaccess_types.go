@@ -58,7 +58,7 @@ type RabbitMQAccessSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	GeneratedSecret string `json:"generatedSecret"`
 
-	// username is the PostgreSQL username to create
+	// username is the RabbitMQ username to create
 	// +kubebuilder:validation:Required
 	Username string `json:"username"`
 
