@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"maps"
 
+	"github.com/go-logr/logr"
 	rabbithole "github.com/michaelklishin/rabbit-hole/v3"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -127,81 +128,7 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		inSync = false
 	}
 
-	rmqc, err := r.initializeRabbitMQClientConnection(ctx, &rbq)
-	if err != nil {
-		r.emitWarningEvent(&rbq, "ConnectionError", "Failed to connect to RabbitMQ: "+err.Error())
-		_ = setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			"ConnectionError",
-			err.Error(),
-		)
-		return ctrl.Result{}, err
-	}
-
-	usersPermissions, err := r.ListUsersAndPermissions(rmqc)
-	if err != nil {
-		r.emitWarningEvent(&rbq, "ListError", "Failed to list users and permissions: "+err.Error())
-		_ = setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			"ListError",
-			err.Error(),
-		)
-		return ctrl.Result{}, err
-	}
-
-	desiredUsers, err := r.getAllRabbitMQUserConfigs(ctx)
-	if err != nil {
-		r.emitWarningEvent(&rbq, "ListCRsError", "Failed to list RabbitMQAccess CRs: "+err.Error())
-		_ = setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			"ListCRsError",
-			err.Error(),
-		)
-		return ctrl.Result{}, err
-	}
-	connectionUsers, err := r.getAllRabbitMQConnectionUsernames(ctx)
-	if err != nil {
-		r.emitWarningEvent(&rbq, "ListCRsError", "Failed to resolve RabbitMQ connection usernames: "+err.Error())
-		_ = setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			"ListCRsError",
-			err.Error(),
-		)
-		return ctrl.Result{}, err
-	}
-
-	excludedUsers, err := r.resolveExcludedUsers(ctx)
-	if err != nil {
-		r.emitWarningEvent(&rbq, multipleControllersFoundReason, err.Error())
-		_ = setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			multipleControllersFoundReason,
-			err.Error(),
-		)
-		return ctrl.Result{}, err
-	}
-
-	err = r.reconcileUsersAndVhosts(rmqc, desiredUsers, usersPermissions, excludedUsers)
+	rbmqSync, reason, err := reconcileRabbitMQ(ctx, r, &rbq, log)
 	if err != nil {
 		r.emitWarningEvent(&rbq, "CreateError", "Failed to create missing users or vhosts: "+err.Error())
 		_ = setReconcileStatus(
@@ -210,10 +137,77 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			req.NamespacedName,
 			rabbitMQReconcileStatusConfig(),
 			accessv1.ReconcileStateError,
-			"CreateError",
+			reason,
 			err.Error(),
 		)
+
+		log.Error(err, "failed to reconcile RabbitMQAccess", "name", rbq.Name)
 		return ctrl.Result{}, err
+	}
+	if !rbmqSync {
+		inSync = false
+	}
+
+	if !inSync {
+		if err := setReconcileStatus(
+			ctx,
+			r.Client,
+			req.NamespacedName,
+			rabbitMQReconcileStatusConfig(),
+			accessv1.ReconcileStateInProgress,
+			"Reconciling",
+			"RabbitMQAccess is not yet in sync",
+		); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
+	}
+
+	if err := setReconcileStatus(
+		ctx,
+		r.Client,
+		req.NamespacedName,
+		rabbitMQReconcileStatusConfig(),
+		accessv1.ReconcileStateSuccess,
+		"Ready",
+		"RabbitMQAccess is in sync",
+	); err != nil {
+		return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
+	}
+
+	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
+}
+
+func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *accessv1.RabbitMQAccess, log logr.Logger) (bool, string, error) {
+	insync := true
+
+	rmqc, err := r.initializeRabbitMQClientConnection(ctx, rbq)
+	if err != nil {
+		return false, "connectionError", fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+	}
+
+	usersPermissions, err := r.ListUsersAndPermissions(rmqc)
+	if err != nil {
+		return false, "listError", fmt.Errorf("failed to list users and permissions: %w", err)
+	}
+
+	desiredUsers, err := r.getAllRabbitMQUserConfigs(ctx)
+	if err != nil {
+		return false, "ListCRsError", fmt.Errorf("failed to list RabbitMQAccess CRs: %w", err)
+	}
+	connectionUsers, err := r.getAllRabbitMQConnectionUsernames(ctx)
+	if err != nil {
+		return false, "ListCRsError", fmt.Errorf("failed to resolve RabbitMQ connection usernames: %w", err)
+	}
+
+	excludedUsers, err := r.resolveExcludedUsers(ctx)
+	if err != nil {
+		return false, multipleControllersFoundReason, fmt.Errorf("failed to resolve excluded users: %w", err)
+	}
+
+	err = r.reconcileUsersAndVhosts(rmqc, desiredUsers, usersPermissions, excludedUsers)
+	if err != nil {
+		return false, "CreateError", fmt.Errorf("failed to create missing users or vhosts: %w", err)
 	}
 
 	unhandledUsers := make(map[string][]accessv1.RabbitMQPermissionSpec, len(usersPermissions))
@@ -233,66 +227,25 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			continue
 		}
 		if err := r.SetPermissionsExact(rmqc, username, desiredUser.Permissions, usersPermissions[username]); err != nil {
-			r.emitWarningEvent(&rbq, "GrantError", fmt.Sprintf("Failed to grant permissions for user %s: %s", username, err.Error()))
-			_ = setReconcileStatus(
-				ctx,
-				r.Client,
-				req.NamespacedName,
-				rabbitMQReconcileStatusConfig(),
-				accessv1.ReconcileStateError,
-				"GrantError",
-				err.Error(),
-			)
-			return ctrl.Result{}, err
+			return false, "GrantError", fmt.Errorf("failed to grant permissions for user %s: %w", username, err)
 		}
 		delete(unhandledUsers, username)
+
+		permissionsMatch := permissionsEqual(desiredUser.Permissions, usersPermissions[username])
+		if !permissionsMatch {
+			insync = false
+		}
 	}
 
 	// delete users that are not referenced by any CR
 	for username := range unhandledUsers {
 		if err := r.DeleteUser(rmqc, username); err != nil {
-			r.emitWarningEvent(&rbq, "DeleteError", fmt.Sprintf("Failed to delete user %s: %s", username, err.Error()))
-			_ = setReconcileStatus(
-				ctx,
-				r.Client,
-				req.NamespacedName,
-				rabbitMQReconcileStatusConfig(),
-				accessv1.ReconcileStateError,
-				"DeleteError",
-				err.Error(),
-			)
-			return ctrl.Result{}, err
+			return false, "DeleteError", fmt.Errorf("failed to delete user %s: %w", username, err)
 		}
+		insync = false
 	}
 
-	if !inSync {
-		if err := setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateInProgress,
-			"Reconciling",
-			"RabbitMQAccess is not yet in sync",
-		); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{Requeue: true}, nil
-	}
-
-	if err := setReconcileStatus(
-		ctx,
-		r.Client,
-		req.NamespacedName,
-		rabbitMQReconcileStatusConfig(),
-		accessv1.ReconcileStateSuccess,
-		"Ready",
-		"RabbitMQAccess is in sync",
-	); err != nil {
-		return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
-	}
-
-	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
+	return insync, "", nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -409,4 +362,23 @@ func resolveRabbitMQControllerSettings(ctx context.Context, r *RabbitMQAccessRec
 	return resolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
 		r.emitWarningEvent(controllerObj, multipleControllersFoundReason, message)
 	})
+}
+
+func permissionsEqual(desired, current []accessv1.RabbitMQPermissionSpec) bool {
+	if len(desired) != len(current) {
+		return false
+	}
+
+	desiredMapStringString := make(map[string]string, len(desired))
+	currentMapStringString := make(map[string]string, len(current))
+
+	for i := range desired {
+		desiredMapStringString[desired[i].VHost] = fmt.Sprintf("conf:%s,write:%s,read:%s", desired[i].Configure, desired[i].Write, desired[i].Read)
+	}
+
+	for i := range current {
+		currentMapStringString[current[i].VHost] = fmt.Sprintf("conf:%s,write:%s,read:%s", current[i].Configure, current[i].Write, current[i].Read)
+	}
+
+	return maps.Equal(desiredMapStringString, currentMapStringString)
 }
