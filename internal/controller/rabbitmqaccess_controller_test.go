@@ -37,6 +37,12 @@ import (
 )
 
 var _ = Describe("RabbitMQAccess Controller", func() {
+	const (
+		testRabbitMQHost     = "rabbitmq.default.svc.cluster.local"
+		testRabbitMQUsername = "admin"
+		testRabbitMQPassword = "secret"
+	)
+
 	Context("When calculating stale RabbitMQ permissions", func() {
 		It("should return vhosts that are no longer desired", func() {
 			current := []accessv1.RabbitMQPermissionSpec{
@@ -173,10 +179,10 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 
 	Context("When resolving connection details", func() {
 		It("should build a management client from direct connection details", func() {
-			host := "rabbitmq.default.svc.cluster.local"
+			host := testRabbitMQHost
 			port := int32(5672)
-			username := "admin"
-			password := "secret"
+			username := testRabbitMQUsername
+			password := testRabbitMQPassword
 
 			reconciler := &RabbitMQAccessReconciler{}
 			rbq := &accessv1.RabbitMQAccess{
@@ -193,8 +199,8 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			client, err := reconciler.initializeRabbitMQClientConnection(context.Background(), rbq)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(client.Endpoint).To(Equal("http://rabbitmq.default.svc.cluster.local:15672"))
-			Expect(client.Username).To(Equal(username))
-			Expect(client.Password).To(Equal(password))
+			Expect(client.Username).To(Equal(testRabbitMQUsername))
+			Expect(client.Password).To(Equal(testRabbitMQPassword))
 		})
 
 		It("should build a management client from an existing secret", func() {
@@ -234,10 +240,10 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 
 	Context("When resolving RabbitMQ connection usernames", func() {
 		It("should preserve usernames declared in connection details", func() {
-			host := "rabbitmq.default.svc.cluster.local"
+			host := testRabbitMQHost
 			port := int32(5672)
-			username := "admin"
-			password := "secret"
+			username := testRabbitMQUsername
+			password := testRabbitMQPassword
 
 			fakeClient, fakeScheme := newFakeClientWithScheme(
 				&accessv1.RabbitMQAccess{
@@ -266,6 +272,58 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(connectionUsers).To(HaveKey("admin"))
 			Expect(connectionUsers).NotTo(HaveKey("app-user"))
+		})
+
+		It("should ignore deleting resources when resolving connection usernames", func() {
+			host := testRabbitMQHost
+			port := int32(5672)
+			username := testRabbitMQUsername
+			password := testRabbitMQPassword
+			now := metav1.NewTime(time.Now())
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(
+				&accessv1.RabbitMQAccess{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "active-rabbitmq-access",
+						Namespace: "default",
+					},
+					Spec: accessv1.RabbitMQAccessSpec{
+						Username:        "app-user",
+						GeneratedSecret: "app-user-rabbitmq",
+						Connection: accessv1.ConnectionSpec{
+							Host:     &host,
+							Port:     &port,
+							Username: &accessv1.SecretKeySelector{Value: &username},
+							Password: &accessv1.SecretKeySelector{Value: &password},
+						},
+						Permissions: []accessv1.RabbitMQPermissionSpec{
+							{VHost: "/app", Configure: ".*", Write: ".*", Read: ".*"},
+						},
+					},
+				},
+				&accessv1.RabbitMQAccess{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "deleting-invalid-rabbitmq-access",
+						Namespace:         "default",
+						Finalizers:        []string{rabbitMQAccessFinalizer},
+						DeletionTimestamp: &now,
+					},
+					Spec: accessv1.RabbitMQAccessSpec{
+						Username:        "broken-user",
+						GeneratedSecret: "broken-user-rabbitmq",
+						Connection:      accessv1.ConnectionSpec{},
+						Permissions: []accessv1.RabbitMQPermissionSpec{
+							{VHost: "/broken", Configure: ".*", Write: ".*", Read: ".*"},
+						},
+					},
+				},
+			)
+
+			reconciler := &RabbitMQAccessReconciler{Client: fakeClient, Scheme: fakeScheme}
+			connectionUsers, err := reconciler.getAllRabbitMQConnectionUsernames(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(connectionUsers).To(HaveKey("admin"))
+			Expect(connectionUsers).NotTo(HaveKey("broken-user"))
 		})
 	})
 
@@ -482,6 +540,60 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(updatedSecret.Data["username"])).To(Equal("app-user"))
 			Expect(string(updatedSecret.Data["password"])).To(Equal("kept-password"))
+		})
+
+		It("should ignore deleting resources when building desired RabbitMQ users", func() {
+			now := metav1.NewTime(time.Now())
+			active := &accessv1.RabbitMQAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "rabbitmq-access",
+					Namespace: "default",
+				},
+				Spec: accessv1.RabbitMQAccessSpec{
+					Username:        "app-user",
+					GeneratedSecret: "app-user-rabbitmq",
+					Permissions: []accessv1.RabbitMQPermissionSpec{
+						{VHost: "/app", Configure: ".*", Write: ".*", Read: ".*"},
+					},
+				},
+			}
+			deleting := &accessv1.RabbitMQAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "deleting-rabbitmq-access",
+					Namespace:         "default",
+					Finalizers:        []string{rabbitMQAccessFinalizer},
+					DeletionTimestamp: &now,
+				},
+				Spec: accessv1.RabbitMQAccessSpec{
+					Username:        "stale-user",
+					GeneratedSecret: "stale-user-rabbitmq",
+					Permissions: []accessv1.RabbitMQPermissionSpec{
+						{VHost: "/stale", Configure: ".*", Write: ".*", Read: ".*"},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := newFakeClientWithScheme(active, deleting)
+			reconciler := &RabbitMQAccessReconciler{Client: fakeClient, Scheme: fakeScheme}
+
+			configs, err := reconciler.getAllRabbitMQUserConfigs(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(configs).To(HaveKey("app-user"))
+			Expect(configs).NotTo(HaveKey("stale-user"))
+
+			activeSecret := &corev1.Secret{}
+			err = fakeClient.Get(context.Background(), types.NamespacedName{
+				Name:      "app-user-rabbitmq",
+				Namespace: "default",
+			}, activeSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			staleSecret := &corev1.Secret{}
+			err = fakeClient.Get(context.Background(), types.NamespacedName{
+				Name:      "stale-user-rabbitmq",
+				Namespace: "default",
+			}, staleSecret)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
 	})
 })

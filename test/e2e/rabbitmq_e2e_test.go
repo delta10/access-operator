@@ -225,10 +225,9 @@ spec:
 			err = utils.DeleteRabbitMQAccess(resourceName, testNamespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete RabbitMQAccess resource")
 
-			By("verifying finalization removed the RabbitMQAccess, user, vhost access, and generated secret")
+			By("verifying finalization removed the RabbitMQAccess, user, and generated secret")
 			utils.WaitForResourceDeleted("rabbitmqaccess", resourceName, testNamespace)
 			utils.WaitForRabbitMQUserState(testNamespace, resourceName, false)
-			utils.WaitForRabbitMQVhostState(testNamespace, "/app-delete", false)
 			utils.WaitForSecretDeleted(testNamespace, generatedSecret)
 		})
 

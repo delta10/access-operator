@@ -407,6 +407,9 @@ func (r *RabbitMQAccessReconciler) getAllRabbitMQUserConfigs(ctx context.Context
 	configs := make(map[string]RabbitMQUserConfig, len(rbqs.Items))
 	for i := range rbqs.Items {
 		rbq := &rbqs.Items[i]
+		if !rbq.DeletionTimestamp.IsZero() {
+			continue
+		}
 
 		password, _, err := reconcileGeneratedCredentialsSecret(
 			ctx,
@@ -470,6 +473,10 @@ func (r *RabbitMQAccessReconciler) getAllRabbitMQConnectionUsernames(ctx context
 	usernames := make(map[string]struct{}, len(rbqs.Items))
 	for i := range rbqs.Items {
 		rbq := &rbqs.Items[i]
+		if !rbq.DeletionTimestamp.IsZero() {
+			continue
+		}
+
 		connection, err := r.getConnectionDetails(ctx, rbq)
 		if err != nil {
 			return nil, fmt.Errorf(
