@@ -204,6 +204,170 @@ spec:
 			utils.WaitForRabbitMQPermissions(testNamespace, resourceName, permissions)
 		})
 
+		It("should delete stale RabbitMQ vhosts when singleton Controller policy enables deletion", func() {
+			testNamespace, conn := utils.GetRabbitMQVariables()
+			controllerName := "rabbitmq-vhost-cleanup-delete"
+			keeperName := "test-rabbitmq-vhost-keeper"
+			staleName := "test-rabbitmq-vhost-stale"
+			deletePolicy := accessv1.StaleVhostDeletionPolicyDelete
+			keeperPermissions := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/keeper", Configure: ".*", Write: ".*", Read: ".*"},
+			}
+			stalePermissions := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/orphan", Configure: ".*", Write: ".*", Read: ".*"},
+			}
+
+			By("enabling stale RabbitMQ vhost deletion through singleton Controller settings")
+			err := createRabbitMQController(controllerName, &deletePolicy, nil)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ controller settings")
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "controller", controllerName, "-n", namespace, "--ignore-not-found", "--wait=false")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("creating a keeper RabbitMQAccess resource")
+			err = utils.CreateRabbitMQAccessWithDirectConnection(keeperName, testNamespace, "test-rabbitmq-vhost-keeper-secret", conn, keeperPermissions)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create keeper RabbitMQAccess resource")
+
+			By("creating a second RabbitMQAccess resource that owns an orphanable vhost")
+			err = utils.CreateRabbitMQAccessWithDirectConnection(staleName, testNamespace, "test-rabbitmq-vhost-stale-secret", conn, stalePermissions)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create stale RabbitMQAccess resource")
+
+			By("waiting for both RabbitMQ users and vhosts to exist")
+			utils.WaitForRabbitMQUserState(testNamespace, keeperName, true)
+			utils.WaitForRabbitMQUserState(testNamespace, staleName, true)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/keeper", true)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/orphan", true)
+
+			By("deleting the stale RabbitMQAccess resource")
+			err = utils.DeleteRabbitMQAccess(staleName, testNamespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
+
+			By("triggering reconciliation on the remaining RabbitMQAccess resource")
+			err = utils.TriggerReconciliation("rabbitmqaccess", keeperName, testNamespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation on keeper RabbitMQAccess")
+
+			By("verifying the stale user and its vhost are deleted while the keeper remains")
+			utils.WaitForRabbitMQUserState(testNamespace, staleName, false)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/orphan", false)
+			utils.WaitForRabbitMQUserState(testNamespace, keeperName, true)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/keeper", true)
+		})
+
+		It("should retain orphaned RabbitMQ vhosts when stale vhost deletion is not enabled", func() {
+			testNamespace, conn := utils.GetRabbitMQVariables()
+			keeperName := "test-rabbitmq-vhost-retain-keeper"
+			staleName := "test-rabbitmq-vhost-retain-stale"
+			keeperPermissions := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/keeper-retain", Configure: ".*", Write: ".*", Read: ".*"},
+			}
+			stalePermissions := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/retained", Configure: ".*", Write: ".*", Read: ".*"},
+			}
+
+			By("creating a keeper RabbitMQAccess resource")
+			err := utils.CreateRabbitMQAccessWithDirectConnection(
+				keeperName,
+				testNamespace,
+				"test-rabbitmq-vhost-retain-keeper-secret",
+				conn,
+				keeperPermissions,
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create keeper RabbitMQAccess resource")
+
+			By("creating a second RabbitMQAccess resource whose vhost should be retained")
+			err = utils.CreateRabbitMQAccessWithDirectConnection(
+				staleName,
+				testNamespace,
+				"test-rabbitmq-vhost-retain-stale-secret",
+				conn,
+				stalePermissions,
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create stale RabbitMQAccess resource")
+
+			By("waiting for both RabbitMQ users and vhosts to exist")
+			utils.WaitForRabbitMQUserState(testNamespace, keeperName, true)
+			utils.WaitForRabbitMQUserState(testNamespace, staleName, true)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/keeper-retain", true)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/retained", true)
+
+			By("deleting the stale RabbitMQAccess resource")
+			err = utils.DeleteRabbitMQAccess(staleName, testNamespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
+
+			By("triggering reconciliation on the remaining RabbitMQAccess resource")
+			err = utils.TriggerReconciliation("rabbitmqaccess", keeperName, testNamespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation on keeper RabbitMQAccess")
+
+			By("verifying the stale user is deleted but its vhost is retained by policy")
+			utils.WaitForRabbitMQUserState(testNamespace, staleName, false)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/retained", true)
+			utils.WaitForRabbitMQUserState(testNamespace, keeperName, true)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/keeper-retain", true)
+		})
+
+		It("should preserve excluded RabbitMQ vhosts when stale vhost deletion is enabled", func() {
+			testNamespace, conn := utils.GetRabbitMQVariables()
+			controllerName := "rabbitmq-vhost-cleanup-excluded"
+			keeperName := "test-rabbitmq-vhost-excluded-keeper"
+			staleName := "test-rabbitmq-vhost-excluded-stale"
+			deletePolicy := accessv1.StaleVhostDeletionPolicyDelete
+			keeperPermissions := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/keeper-excluded", Configure: ".*", Write: ".*", Read: ".*"},
+			}
+			stalePermissions := []accessv1.RabbitMQPermissionSpec{
+				{VHost: "/protected", Configure: ".*", Write: ".*", Read: ".*"},
+			}
+
+			By("enabling stale RabbitMQ vhost deletion while excluding the protected vhost")
+			err := createRabbitMQController(controllerName, &deletePolicy, []string{"/protected"})
+			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ controller settings")
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "controller", controllerName, "-n", namespace, "--ignore-not-found", "--wait=false")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("creating a keeper RabbitMQAccess resource")
+			err = utils.CreateRabbitMQAccessWithDirectConnection(
+				keeperName,
+				testNamespace,
+				"test-rabbitmq-vhost-excluded-keeper-secret",
+				conn,
+				keeperPermissions,
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create keeper RabbitMQAccess resource")
+
+			By("creating a second RabbitMQAccess resource that uses the excluded vhost")
+			err = utils.CreateRabbitMQAccessWithDirectConnection(
+				staleName,
+				testNamespace,
+				"test-rabbitmq-vhost-excluded-stale-secret",
+				conn,
+				stalePermissions,
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create stale RabbitMQAccess resource")
+
+			By("waiting for both RabbitMQ users and vhosts to exist")
+			utils.WaitForRabbitMQUserState(testNamespace, keeperName, true)
+			utils.WaitForRabbitMQUserState(testNamespace, staleName, true)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/keeper-excluded", true)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/protected", true)
+
+			By("deleting the stale RabbitMQAccess resource")
+			err = utils.DeleteRabbitMQAccess(staleName, testNamespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
+
+			By("triggering reconciliation on the remaining RabbitMQAccess resource")
+			err = utils.TriggerReconciliation("rabbitmqaccess", keeperName, testNamespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation on keeper RabbitMQAccess")
+
+			By("verifying the stale user is deleted but the excluded vhost is retained")
+			utils.WaitForRabbitMQUserState(testNamespace, staleName, false)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/protected", true)
+			utils.WaitForRabbitMQUserState(testNamespace, keeperName, true)
+			utils.WaitForRabbitMQVhostState(testNamespace, "/keeper-excluded", true)
+		})
+
 		It("should deny cross-namespace existingSecret when no Controller resource exists", func() {
 			testNamespace, conn := utils.GetRabbitMQVariables()
 			connectionSecretNamespace := "rabbitmq-access-shared-no-controller"
@@ -601,3 +765,34 @@ spec:
 		})
 	})
 })
+
+func createRabbitMQController(
+	name string,
+	policy *accessv1.StaleVhostDeletionPolicy,
+	excludedVhosts []string,
+) error {
+	var manifest strings.Builder
+	manifest.WriteString(fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: Controller
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  settings:
+`, name, namespace))
+
+	if policy != nil || len(excludedVhosts) > 0 {
+		manifest.WriteString("    rabbitmq:\n")
+		if len(excludedVhosts) > 0 {
+			manifest.WriteString("      excludedVhosts:\n")
+			for _, vhost := range excludedVhosts {
+				manifest.WriteString(fmt.Sprintf("        - %s\n", vhost))
+			}
+		}
+		if policy != nil {
+			manifest.WriteString(fmt.Sprintf("      staleVhostDeletionPolicy: %s\n", *policy))
+		}
+	}
+
+	return utils.ApplyManifest(manifest.String())
+}

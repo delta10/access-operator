@@ -84,3 +84,28 @@ func (r *RabbitMQAccessReconciler) resolveExcludedUsers(ctx context.Context) (ma
 
 	return normalizeExcludedUsers(settings.RabbitMQSettings.ExcludedUsers), nil
 }
+
+func (r *RabbitMQAccessReconciler) resolveExcludedVhosts(ctx context.Context) (map[string]struct{}, error) {
+	settings, err := resolveRabbitMQControllerSettings(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+
+	excludedVhosts := normalizeExcludedUsers(settings.RabbitMQSettings.ExcludedVhosts)
+	excludedVhosts["/"] = struct{}{}
+
+	return excludedVhosts, nil
+}
+
+func (r *RabbitMQAccessReconciler) resolveStaleVhostDeletionPolicy(ctx context.Context) (accessv1.StaleVhostDeletionPolicy, error) {
+	settings, err := resolveRabbitMQControllerSettings(ctx, r)
+	if err != nil {
+		return "", err
+	}
+
+	if settings.RabbitMQSettings.StaleVhostDeletionPolicy == nil {
+		return accessv1.StaleVhostDeletionPolicyRetain, nil
+	}
+
+	return *settings.RabbitMQSettings.StaleVhostDeletionPolicy, nil
+}

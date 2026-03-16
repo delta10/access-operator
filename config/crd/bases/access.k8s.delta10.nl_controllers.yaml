@@ -77,6 +77,24 @@ spec:
                           type: string
                         type: array
                         x-kubernetes-list-type: set
+                      excludedVhosts:
+                        description: |-
+                          excludedVhosts is a list of RabbitMQ vhosts that the controller ignores
+                          when reconciling stale RabbitMQ vhosts.
+                          This prevents the operator from deleting the listed vhosts.
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      staleVhostDeletionPolicy:
+                        default: Retain
+                        description: |-
+                          staleVhostDeletionPolicy controls whether the controller deletes RabbitMQ
+                          vhosts that are no longer referenced by any managed RabbitMQAccess.
+                        enum:
+                        - Delete
+                        - Retain
+                        type: string
                     type: object
                 type: object
             type: object

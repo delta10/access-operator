@@ -21,6 +21,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// StaleVhostDeletionPolicy defines how the controller handles RabbitMQ vhosts
+// that are no longer referenced by any managed RabbitMQAccess resource.
+// +kubebuilder:validation:Enum=Delete;Retain
+type StaleVhostDeletionPolicy string
+
+const (
+	// StaleVhostDeletionPolicyDelete removes unreferenced RabbitMQ vhosts.
+	StaleVhostDeletionPolicyDelete StaleVhostDeletionPolicy = "Delete"
+	// StaleVhostDeletionPolicyRetain leaves unreferenced RabbitMQ vhosts intact.
+	StaleVhostDeletionPolicyRetain StaleVhostDeletionPolicy = "Retain"
+)
+
 type RabbitMQControllerSettings struct {
 	// excludedUsers is a list of RabbitMQ usernames that the controller ignores
 	// when reconciling RabbitMQAccess resources.
@@ -28,6 +40,19 @@ type RabbitMQControllerSettings struct {
 	// +listType=set
 	// +optional
 	ExcludedUsers []string `json:"excludedUsers,omitempty"`
+
+	// excludedVhosts is a list of RabbitMQ vhosts that the controller ignores
+	// when reconciling stale RabbitMQ vhosts.
+	// This prevents the operator from deleting the listed vhosts.
+	// +listType=set
+	// +optional
+	ExcludedVhosts []string `json:"excludedVhosts,omitempty"`
+
+	// staleVhostDeletionPolicy controls whether the controller deletes RabbitMQ
+	// vhosts that are no longer referenced by any managed RabbitMQAccess.
+	// +optional
+	// +kubebuilder:default="Retain"
+	StaleVhostDeletionPolicy *StaleVhostDeletionPolicy `json:"staleVhostDeletionPolicy,omitempty"`
 }
 
 type PostgresControllerSettings struct {

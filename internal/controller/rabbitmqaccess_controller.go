@@ -204,6 +204,14 @@ func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *ac
 	if err != nil {
 		return false, multipleControllersFoundReason, fmt.Errorf("failed to resolve excluded users: %w", err)
 	}
+	excludedVhosts, err := r.resolveExcludedVhosts(ctx)
+	if err != nil {
+		return false, multipleControllersFoundReason, fmt.Errorf("failed to resolve excluded vhosts: %w", err)
+	}
+	staleVhostDeletionPolicy, err := r.resolveStaleVhostDeletionPolicy(ctx)
+	if err != nil {
+		return false, multipleControllersFoundReason, fmt.Errorf("failed to resolve stale vhost deletion policy: %w", err)
+	}
 
 	usersAndVhostsInSync, reason, err := r.reconcileUsersAndVhosts(rmqc, desiredUsers, usersPermissions, excludedUsers, log)
 	if err != nil {
@@ -229,6 +237,25 @@ func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *ac
 	for username := range unhandledUsers {
 		if err := r.DeleteUser(rmqc, username); err != nil {
 			return false, "DeleteError", fmt.Errorf("failed to delete user %s: %w", username, err)
+		}
+		insync = false
+	}
+
+	currentVhosts, err := r.ListVhosts(rmqc)
+	if err != nil {
+		return false, "ListError", fmt.Errorf("failed to list vhosts: %w", err)
+	}
+
+	for _, vhost := range staleRabbitMQVhosts(
+		currentVhosts,
+		desiredUsers,
+		usersPermissions,
+		excludedUsers,
+		excludedVhosts,
+		staleVhostDeletionPolicy,
+	) {
+		if err := r.DeleteVhost(rmqc, vhost); err != nil {
+			return false, "DeleteError", fmt.Errorf("failed to delete vhost %s: %w", vhost, err)
 		}
 		insync = false
 	}

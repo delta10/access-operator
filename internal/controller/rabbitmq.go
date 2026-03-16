@@ -9,6 +9,7 @@ type RabbitMQInterface interface {
 	ListUsersAndPermissions() (map[string][]string, error)
 	CreateUser(username, password string) error
 	DeleteUser(username string) error
+	ListVhosts() ([]string, error)
 	CreateVhost(vhost string) error
 	DeleteVhost(vhost string) error
 }
@@ -56,6 +57,20 @@ func (r *RabbitMQAccessReconciler) DeleteUser(rmqc *rabbithole.Client, username 
 	_, err := rmqc.DeleteUser(username)
 
 	return err
+}
+
+func (r *RabbitMQAccessReconciler) ListVhosts(rmqc *rabbithole.Client) ([]string, error) {
+	vhostsResp, err := rmqc.ListVhosts()
+	if err != nil {
+		return nil, err
+	}
+
+	vhosts := make([]string, 0, len(vhostsResp))
+	for _, vh := range vhostsResp {
+		vhosts = append(vhosts, vh.Name)
+	}
+
+	return vhosts, nil
 }
 
 func (r *RabbitMQAccessReconciler) vhostExists(rmqc *rabbithole.Client, vhost string) (bool, error) {
@@ -137,6 +152,55 @@ func stalePermissionVHosts(
 		}
 		seen[perm.VHost] = struct{}{}
 		stale = append(stale, perm.VHost)
+	}
+
+	return stale
+}
+
+func staleRabbitMQVhosts(
+	currentVhosts []string,
+	desiredUsers map[string]RabbitMQUserConfig,
+	currentPermissions map[string][]accessv1.RabbitMQPermissionSpec,
+	excludedUsers map[string]struct{},
+	excludedVhosts map[string]struct{},
+	deletionPolicy accessv1.StaleVhostDeletionPolicy,
+) []string {
+	if deletionPolicy != accessv1.StaleVhostDeletionPolicyDelete {
+		return nil
+	}
+
+	keepVhosts := make(map[string]struct{}, len(excludedVhosts))
+	for vhost := range excludedVhosts {
+		keepVhosts[vhost] = struct{}{}
+	}
+
+	for _, desiredUser := range desiredUsers {
+		for _, perm := range desiredUser.Permissions {
+			keepVhosts[perm.VHost] = struct{}{}
+		}
+	}
+
+	for username, permissions := range currentPermissions {
+		if _, excluded := excludedUsers[username]; !excluded {
+			continue
+		}
+
+		for _, perm := range permissions {
+			keepVhosts[perm.VHost] = struct{}{}
+		}
+	}
+
+	stale := make([]string, 0, len(currentVhosts))
+	seen := make(map[string]struct{}, len(currentVhosts))
+	for _, vhost := range currentVhosts {
+		if _, keep := keepVhosts[vhost]; keep {
+			continue
+		}
+		if _, duplicate := seen[vhost]; duplicate {
+			continue
+		}
+		seen[vhost] = struct{}{}
+		stale = append(stale, vhost)
 	}
 
 	return stale
