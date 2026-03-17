@@ -100,6 +100,13 @@ spec:
 func deleteControllerResource(name, namespace string) {
 	cmd := exec.Command("kubectl", "delete", "controller", name, "-n", namespace, "--ignore-not-found", "--wait=false")
 	_, _ = utils.Run(cmd)
+
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "controller", name, "-n", namespace, "-o", "name", "--ignore-not-found")
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(strings.TrimSpace(output)).To(BeEmpty())
+	}, 30*time.Second, time.Second).Should(Succeed())
 }
 
 func waitForResourceWarningEvent(resource namespacedName, kind, reason string) {
@@ -136,6 +143,15 @@ func waitForControllerResourcesReadyCondition(resources []namespacedName, expect
 			}
 		}
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
+}
+
+func waitForNoControllers() {
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "controller", "-A", "-o", "name", "--ignore-not-found")
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(strings.TrimSpace(output)).To(BeEmpty())
+	}, 30*time.Second, time.Second).Should(Succeed())
 }
 
 func indentYAMLBlock(block, indent string) string {

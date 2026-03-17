@@ -207,7 +207,6 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
 }
 
-
 func (r *RabbitMQAccessReconciler) finalizeRabbitMQAccess(ctx context.Context, rbq *accessv1.RabbitMQAccess) (bool, error) {
 	log := logf.FromContext(ctx)
 

@@ -72,6 +72,7 @@ func deleteNamespace(name string) {
 func clearAllControllers() {
 	cmd := exec.Command("kubectl", "delete", "controller", "--all", "-A", "--ignore-not-found", "--wait=false")
 	_, _ = utils.Run(cmd)
+	waitForNoControllers()
 }
 
 func ensureWorkerBackend(

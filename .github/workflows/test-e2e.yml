@@ -35,4 +35,4 @@ jobs:
           POSTGRES_DB: testdb
         run: |
           go mod tidy
-          CERT_MANAGER_INSTALL_SKIP=true make test-e2e
+          make test-e2e

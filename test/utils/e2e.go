@@ -77,7 +77,9 @@ func GetMetricsOutput(namespace, podName string) (string, error) {
 // ApplyManifest applies the provided manifest through kubectl.
 func ApplyManifest(manifest string) error {
 	cmd := exec.Command("kubectl", "apply", "-f", "-")
-	cmd.Stdin = strings.NewReader(manifest)
+	// Raw multiline strings in Go can accidentally include leading/trailing
+	// indentation from the closing backtick line, which breaks YAML parsing.
+	cmd.Stdin = strings.NewReader(strings.TrimSpace(manifest) + "\n")
 	_, err := Run(cmd)
 	return err
 }
