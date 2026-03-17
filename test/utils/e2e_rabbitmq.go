@@ -116,7 +116,7 @@ spec:
     spec:
       containers:
         - name: rabbitmq
-          image: rabbitmq:3.13-management-alpine
+          image: rabbitmq:4.2.4-management-alpine
           env:
             - name: RABBITMQ_DEFAULT_USER
               value: %q

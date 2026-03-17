@@ -154,7 +154,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:15-alpine
+          image: postgres:18.3-alpine
           env:
             - name: POSTGRES_USER
               value: %q
@@ -202,7 +202,7 @@ metadata:
   namespace: %s
 spec:
   instances: 1
-  imageName: ghcr.io/cloudnative-pg/postgresql:15
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.3
   storage:
     size: 1Gi
   bootstrap:
