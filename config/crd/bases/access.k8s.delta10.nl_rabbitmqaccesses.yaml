@@ -177,7 +177,7 @@ spec:
                 minItems: 1
                 type: array
               username:
-                description: username is the PostgreSQL username to create
+                description: username is the RabbitMQ username to create
                 type: string
               vhostCreationPolicy:
                 description: VhostCreationPolicy defines if a vhost should be created

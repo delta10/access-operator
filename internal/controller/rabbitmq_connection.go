@@ -9,6 +9,7 @@ import (
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	rabbithole "github.com/michaelklishin/rabbit-hole/v3"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const defaultRabbitMQAMQPPort = "5672"
@@ -26,13 +27,7 @@ func (r *RabbitMQAccessReconciler) initializeRabbitMQClientConnection(ctx contex
 
 func (r *RabbitMQAccessReconciler) getConnectionDetails(ctx context.Context, rbq *accessv1.RabbitMQAccess) (ConnectionDetails, error) {
 	if rbq.Spec.Connection.ExistingSecret != nil && *rbq.Spec.Connection.ExistingSecret != "" {
-		secretNamespace, err := resolveConnectionSecretNamespace(
-			ctx,
-			r.Client,
-			rbq.Namespace,
-			rbq.Spec.Connection.ExistingSecretNamespace,
-			nil,
-		)
+		secretNamespace, err := r.resolveExistingSecretNamespace(ctx, rbq)
 		if err != nil {
 			return ConnectionDetails{}, err
 		}
@@ -51,6 +46,30 @@ func (r *RabbitMQAccessReconciler) getConnectionDetails(ctx context.Context, rbq
 	}
 
 	return ConnectionDetails{}, fmt.Errorf("no valid connection details provided")
+}
+
+// with interface here so we can use the emit function
+func (r *RabbitMQAccessReconciler) resolveExistingSecretNamespace(
+	ctx context.Context,
+	rbq *accessv1.RabbitMQAccess,
+) (string, error) {
+	secretNamespace, err := resolveConnectionSecretNamespace(
+		ctx,
+		r.Client,
+		rbq.Namespace,
+		rbq.Spec.Connection.ExistingSecretNamespace,
+		func(controllerObj *accessv1.Controller, message string) {
+			emitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, multipleControllersFoundReason, message)
+		},
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "multiple Controller resources found") {
+			emitEvent(r.Recorder, rbq, corev1.EventTypeWarning, multipleControllersFoundReason, err.Error())
+		}
+		return "", err
+	}
+
+	return secretNamespace, nil
 }
 
 func rabbitMQManagementEndpoint(host, port string) string {

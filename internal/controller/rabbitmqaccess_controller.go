@@ -51,6 +51,7 @@ const (
 	rabbitMQAccessDeleteErrorReason     = "DeleteError"
 	rabbitMQAccessCreateErrorReason     = "CreateError"
 	rabbitMQAccessGrantErrorReason      = "GrantError"
+	rabbitMQAccessFinalizeErrorReason   = "FinalizeError"
 )
 
 func rabbitMQReconcileStatusConfig() reconcileStatusConfig[*accessv1.RabbitMQAccess] {
@@ -107,14 +108,14 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	finalized, err := r.finalizeRabbitMQAccess(ctx, &rbq)
 	if err != nil {
-		r.emitWarningEvent(&rbq, "FinalizeFailed", "Finalization failed: "+err.Error())
+		emitEvent(r.Recorder, &rbq, corev1.EventTypeWarning, rabbitMQAccessFinalizeErrorReason, "Finalization failed: "+err.Error())
 		statusErr := setReconcileStatus(
 			ctx,
 			r.Client,
 			req.NamespacedName,
 			rabbitMQReconcileStatusConfig(),
 			accessv1.ReconcileStateError,
-			"FinalizeFailed",
+			rabbitMQAccessFinalizeErrorReason,
 			fmt.Sprintf("Finalization failed: %v", err),
 		)
 		if statusErr != nil {
@@ -137,14 +138,14 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	)
 	if err != nil {
 		log.Error(err, "failed to create/update secret", "secret", rbq.Spec.GeneratedSecret)
-		r.emitWarningEvent(&rbq, "SecretSyncFailed", err.Error())
+		emitEvent(r.Recorder, &rbq, corev1.EventTypeWarning, SecretSyncErrorEventReason, err.Error())
 		statusErr := setReconcileStatus(
 			ctx,
 			r.Client,
 			req.NamespacedName,
 			rabbitMQReconcileStatusConfig(),
 			accessv1.ReconcileStateError,
-			"SecretSyncFailed",
+			SecretSyncErrorEventReason,
 			err.Error(),
 		)
 		if statusErr != nil {
@@ -158,7 +159,7 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	rbmqSync, reason, err := reconcileRabbitMQ(ctx, r, &rbq, log)
 	if err != nil {
-		r.emitWarningEvent(&rbq, reason, "Failed to reconcile RabbitMQAccess: "+err.Error())
+		emitEvent(r.Recorder, &rbq, corev1.EventTypeWarning, reason, "Failed to reconcile RabbitMQAccess: "+err.Error())
 		_ = setReconcileStatus(
 			ctx,
 			r.Client,
@@ -200,11 +201,12 @@ func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"Ready",
 		"RabbitMQAccess is in sync",
 	); err != nil {
-		return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
+		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
+	return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
 }
+
 
 func (r *RabbitMQAccessReconciler) finalizeRabbitMQAccess(ctx context.Context, rbq *accessv1.RabbitMQAccess) (bool, error) {
 	log := logf.FromContext(ctx)
@@ -394,10 +396,6 @@ func (r *RabbitMQAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *RabbitMQAccessReconciler) emitWarningEvent(object client.Object, reason, message string) {
-	emitEvent(r.Recorder, object, corev1.EventTypeWarning, reason, message)
-}
-
 func (r *RabbitMQAccessReconciler) getAllRabbitMQUserConfigs(ctx context.Context) (map[string]RabbitMQUserConfig, error) {
 	var rbqs accessv1.RabbitMQAccessList
 	if err := r.List(ctx, &rbqs); err != nil {
@@ -545,7 +543,7 @@ func (r *RabbitMQAccessReconciler) reconcileUsersAndVhosts(
 
 func resolveRabbitMQControllerSettings(ctx context.Context, r *RabbitMQAccessReconciler) (accessv1.ControllerSettings, error) {
 	return resolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
-		r.emitWarningEvent(controllerObj, multipleControllersFoundReason, message)
+		emitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, multipleControllersFoundReason, message)
 	})
 }
 
