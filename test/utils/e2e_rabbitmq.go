@@ -117,6 +117,7 @@ spec:
       containers:
         - name: rabbitmq
           image: rabbitmq:4.2.4-management-alpine
+          imagePullPolicy: IfNotPresent
           env:
             - name: RABBITMQ_DEFAULT_USER
               value: %q

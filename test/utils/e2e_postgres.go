@@ -155,6 +155,7 @@ spec:
       containers:
         - name: postgres
           image: postgres:18.3-alpine
+          imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_USER
               value: %q
@@ -203,6 +204,7 @@ metadata:
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:18.3
+  imagePullPolicy: IfNotPresent
   storage:
     size: 1Gi
   bootstrap:
