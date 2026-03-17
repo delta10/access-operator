@@ -31,12 +31,8 @@ import (
 	"github.com/delta10/access-operator/internal/controller"
 )
 
-// GetRabbitMQVariables returns the namespace and admin connection details for e2e RabbitMQ tests.
-func GetRabbitMQVariables() (string, controller.ConnectionDetails) {
-	testNamespace := os.Getenv("RABBITMQ_TEST_NAMESPACE")
-	if testNamespace == "" {
-		testNamespace = "rabbitmq-access-test"
-	}
+// RabbitMQConnectionDetailsForNamespace returns admin connection details for the provided RabbitMQ namespace.
+func RabbitMQConnectionDetailsForNamespace(testNamespace string) controller.ConnectionDetails {
 	defaultClusterHost := fmt.Sprintf("rabbitmq.%s.svc", testNamespace)
 
 	host := os.Getenv("RABBITMQ_CLUSTER_HOST")
@@ -65,7 +61,7 @@ func GetRabbitMQVariables() (string, controller.ConnectionDetails) {
 		password = "secret"
 	}
 
-	return testNamespace, controller.ConnectionDetails{
+	return controller.ConnectionDetails{
 		SharedConnectionDetails: controller.SharedConnectionDetails{
 			Host:     host,
 			Port:     port,
@@ -73,6 +69,16 @@ func GetRabbitMQVariables() (string, controller.ConnectionDetails) {
 			Password: password,
 		},
 	}
+}
+
+// GetRabbitMQVariables returns the namespace and admin connection details for e2e RabbitMQ tests.
+func GetRabbitMQVariables() (string, controller.ConnectionDetails) {
+	testNamespace := os.Getenv("RABBITMQ_TEST_NAMESPACE")
+	if testNamespace == "" {
+		testNamespace = "rabbitmq-access-test"
+	}
+
+	return testNamespace, RabbitMQConnectionDetailsForNamespace(testNamespace)
 }
 
 // DeployRabbitMQInstance deploys a RabbitMQ service/deployment into the provided namespace.
@@ -110,7 +116,8 @@ spec:
     spec:
       containers:
         - name: rabbitmq
-          image: rabbitmq:3.13-management-alpine
+          image: rabbitmq:4.2.4-management-alpine
+          imagePullPolicy: IfNotPresent
           env:
             - name: RABBITMQ_DEFAULT_USER
               value: %q

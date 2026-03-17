@@ -50,7 +50,7 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "e2e suite")
 }
 
-var _ = BeforeSuite(func() {
+var _ = SynchronizedBeforeSuite(func() []byte {
 	SetDefaultEventuallyTimeout(2 * time.Minute)
 	SetDefaultEventuallyPollingInterval(time.Second)
 
@@ -87,9 +87,15 @@ var _ = BeforeSuite(func() {
 	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+	return nil
+}, func(_ []byte) {
+	SetDefaultEventuallyTimeout(2 * time.Minute)
+	SetDefaultEventuallyPollingInterval(time.Second)
 })
 
-var _ = AfterSuite(func() {
+var _ = SynchronizedAfterSuite(func() {
+	cleanupWorkerBackends()
+}, func() {
 	runCleanup := func(timeout time.Duration, name string, args ...string) {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
