@@ -21,19 +21,16 @@ type sharedBackend struct {
 	conn      controller.ConnectionDetails
 }
 
-type postgresSpecEnv struct {
+type specEnv struct {
 	namespace        string
 	backendNamespace string
 	conn             controller.ConnectionDetails
 	suffix           string
 }
 
-type rabbitMQSpecEnv struct {
-	namespace        string
-	backendNamespace string
-	conn             controller.ConnectionDetails
-	suffix           string
-}
+type postgresSpecEnv struct{ specEnv }
+
+type rabbitMQSpecEnv struct{ specEnv }
 
 var (
 	postgresBackendOnce sync.Once
@@ -77,68 +74,80 @@ func clearAllControllers() {
 	_, _ = utils.Run(cmd)
 }
 
-func ensurePostgresWorkerBackend() (string, controller.ConnectionDetails) {
-	postgresBackendOnce.Do(func() {
-		backendNamespace := fmt.Sprintf("postgres-backend-%s", workerID())
+func ensureWorkerBackend(
+	once *sync.Once,
+	backend *sharedBackend,
+	namespacePrefix string,
+	connectionForNamespace func(string) controller.ConnectionDetails,
+	setup func(string, controller.ConnectionDetails),
+) (string, controller.ConnectionDetails) {
+	once.Do(func() {
+		backendNamespace := fmt.Sprintf("%s-%s", namespacePrefix, workerID())
 		deleteNamespace(backendNamespace)
 		createNamespace(backendNamespace)
 
-		conn := utils.DatabaseConnectionDetailsForNamespace(backendNamespace)
-		Expect(utils.DeployPostgresInstance(backendNamespace, conn)).To(Succeed(),
-			"Failed to deploy shared PostgreSQL backend")
+		conn := connectionForNamespace(backendNamespace)
+		setup(backendNamespace, conn)
 
-		cmd := exec.Command(
-			"kubectl",
-			"wait",
-			"--for=condition=Available",
-			"deployment/postgres",
-			"-n",
-			backendNamespace,
-			"--timeout=2m",
-		)
-		_, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "PostgreSQL backend deployment should become available")
-
-		Eventually(func(g Gomega) {
-			output, queryErr := utils.RunPostgresQuery(backendNamespace, conn, "SELECT 1;")
-			g.Expect(queryErr).NotTo(HaveOccurred(), "Shared PostgreSQL backend should accept connections")
-			g.Expect(output).To(Equal("1"))
-		}, 2*time.Minute, 5*time.Second).Should(Succeed())
-
-		_, err = utils.RunPostgresQuery(
-			backendNamespace,
-			conn,
-			"CREATE TABLE IF NOT EXISTS public.access_operator_test(id SERIAL PRIMARY KEY, value TEXT);",
-		)
-		Expect(err).NotTo(HaveOccurred(), "Failed to prepare shared PostgreSQL backend table")
-
-		postgresBackend = sharedBackend{
+		*backend = sharedBackend{
 			namespace: backendNamespace,
 			conn:      conn,
 		}
 	})
 
-	return postgresBackend.namespace, postgresBackend.conn
+	return backend.namespace, backend.conn
+}
+
+func ensurePostgresWorkerBackend() (string, controller.ConnectionDetails) {
+	return ensureWorkerBackend(
+		&postgresBackendOnce,
+		&postgresBackend,
+		"postgres-backend",
+		utils.DatabaseConnectionDetailsForNamespace,
+		func(backendNamespace string, conn controller.ConnectionDetails) {
+			Expect(utils.DeployPostgresInstance(backendNamespace, conn)).To(Succeed(),
+				"Failed to deploy shared PostgreSQL backend")
+
+			cmd := exec.Command(
+				"kubectl",
+				"wait",
+				"--for=condition=Available",
+				"deployment/postgres",
+				"-n",
+				backendNamespace,
+				"--timeout=2m",
+			)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "PostgreSQL backend deployment should become available")
+
+			Eventually(func(g Gomega) {
+				output, queryErr := utils.RunPostgresQuery(backendNamespace, conn, "SELECT 1;")
+				g.Expect(queryErr).NotTo(HaveOccurred(), "Shared PostgreSQL backend should accept connections")
+				g.Expect(output).To(Equal("1"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			_, err = utils.RunPostgresQuery(
+				backendNamespace,
+				conn,
+				"CREATE TABLE IF NOT EXISTS public.access_operator_test(id SERIAL PRIMARY KEY, value TEXT);",
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to prepare shared PostgreSQL backend table")
+		},
+	)
 }
 
 func ensureRabbitMQWorkerBackend() (string, controller.ConnectionDetails) {
-	rabbitMQBackendOnce.Do(func() {
-		backendNamespace := fmt.Sprintf("rabbitmq-backend-%s", workerID())
-		deleteNamespace(backendNamespace)
-		createNamespace(backendNamespace)
-
-		conn := utils.RabbitMQConnectionDetailsForNamespace(backendNamespace)
-		Expect(utils.DeployRabbitMQInstance(backendNamespace, conn)).To(Succeed(),
-			"Failed to deploy shared RabbitMQ backend")
-		utils.WaitForRabbitMQReady(backendNamespace)
-
-		rabbitMQBackend = sharedBackend{
-			namespace: backendNamespace,
-			conn:      conn,
-		}
-	})
-
-	return rabbitMQBackend.namespace, rabbitMQBackend.conn
+	return ensureWorkerBackend(
+		&rabbitMQBackendOnce,
+		&rabbitMQBackend,
+		"rabbitmq-backend",
+		utils.RabbitMQConnectionDetailsForNamespace,
+		func(backendNamespace string, conn controller.ConnectionDetails) {
+			Expect(utils.DeployRabbitMQInstance(backendNamespace, conn)).To(Succeed(),
+				"Failed to deploy shared RabbitMQ backend")
+			utils.WaitForRabbitMQReady(backendNamespace)
+		},
+	)
 }
 
 func cleanupWorkerBackends() {
@@ -150,48 +159,30 @@ func cleanupWorkerBackends() {
 	}
 }
 
-func newPostgresSpecEnv() postgresSpecEnv {
-	backendNamespace, conn := ensurePostgresWorkerBackend()
-	return postgresSpecEnv{
-		namespace:        createTestNamespace("postgres-access"),
+func newSpecEnv(prefix string, ensureBackend func() (string, controller.ConnectionDetails)) specEnv {
+	backendNamespace, conn := ensureBackend()
+	return specEnv{
+		namespace:        createTestNamespace(prefix),
 		backendNamespace: backendNamespace,
 		conn:             conn,
 		suffix:           uniqueSuffix(),
 	}
 }
 
-func (e postgresSpecEnv) cleanup() {
+func (e specEnv) cleanup() {
 	deleteNamespace(e.namespace)
 }
 
-func (e postgresSpecEnv) name(base string) string {
+func (e specEnv) name(base string) string {
 	return fmt.Sprintf("%s-%s", base, e.suffix)
 }
 
-func (e postgresSpecEnv) namespaceName(base string) string {
-	return fmt.Sprintf("%s-%s", base, e.suffix)
+func newPostgresSpecEnv() postgresSpecEnv {
+	return postgresSpecEnv{specEnv: newSpecEnv("postgres-access", ensurePostgresWorkerBackend)}
 }
 
 func newRabbitMQSpecEnv() rabbitMQSpecEnv {
-	backendNamespace, conn := ensureRabbitMQWorkerBackend()
-	return rabbitMQSpecEnv{
-		namespace:        createTestNamespace("rabbitmq-access"),
-		backendNamespace: backendNamespace,
-		conn:             conn,
-		suffix:           uniqueSuffix(),
-	}
-}
-
-func (e rabbitMQSpecEnv) cleanup() {
-	deleteNamespace(e.namespace)
-}
-
-func (e rabbitMQSpecEnv) name(base string) string {
-	return fmt.Sprintf("%s-%s", base, e.suffix)
-}
-
-func (e rabbitMQSpecEnv) namespaceName(base string) string {
-	return fmt.Sprintf("%s-%s", base, e.suffix)
+	return rabbitMQSpecEnv{specEnv: newSpecEnv("rabbitmq-access", ensureRabbitMQWorkerBackend)}
 }
 
 func (e rabbitMQSpecEnv) vhost(base string) string {

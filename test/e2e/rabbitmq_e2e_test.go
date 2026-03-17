@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -70,33 +69,13 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create invalid RabbitMQAccess resource")
 
 			By("verifying the RabbitMQAccess status reports the reconcile failure")
-			Eventually(func(g Gomega) {
-				statusCmd := exec.Command(
-					"kubectl", "get", "rabbitmqaccess", resourceName, "-n", env.namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
-				)
-				statusOutput, statusErr := utils.Run(statusCmd)
-				g.Expect(statusErr).NotTo(HaveOccurred(), "Failed to retrieve Ready condition status")
-				g.Expect(strings.TrimSpace(statusOutput)).To(Equal("False"))
-
-				reasonCmd := exec.Command(
-					"kubectl", "get", "rabbitmqaccess", resourceName, "-n", env.namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}",
-				)
-				reasonOutput, reasonErr := utils.Run(reasonCmd)
-				g.Expect(reasonErr).NotTo(HaveOccurred(), "Failed to retrieve Ready condition reason")
-				g.Expect(strings.TrimSpace(reasonOutput)).To(Equal("ConnectionError"))
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			waitForReadyCondition("rabbitmqaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
+				status: "False",
+				reason: "ConnectionError",
+			})
 
 			By("verifying the controller logs the expected reconcile error")
-			Eventually(func(g Gomega) {
-				controllerPodName = ensureControllerPodName()
-				logCmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace, "--since=10m")
-				logOutput, logErr := utils.Run(logCmd)
-				g.Expect(logErr).NotTo(HaveOccurred(), "Failed to read controller logs")
-				g.Expect(logOutput).To(ContainSubstring(resourceName))
-				g.Expect(logOutput).To(ContainSubstring("no valid connection details provided"))
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			waitForControllerLogsContain(resourceName, "no valid connection details provided")
 		})
 
 		It("should create a RabbitMQAccess resource and create a RabbitMQ user with the specified permissions via direct connection details", func() {
@@ -312,8 +291,7 @@ spec:
 			err := createRabbitMQController(controllerName, &deletePolicy, nil)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ controller settings")
 			DeferCleanup(func() {
-				cmd := exec.Command("kubectl", "delete", "controller", controllerName, "-n", namespace, "--ignore-not-found", "--wait=false")
-				_, _ = utils.Run(cmd)
+				deleteControllerResource(controllerName, namespace)
 			})
 
 			By("creating a keeper RabbitMQAccess resource")
@@ -410,8 +388,7 @@ spec:
 			err := createRabbitMQController(controllerName, &deletePolicy, []string{protectedVhost})
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ controller settings")
 			DeferCleanup(func() {
-				cmd := exec.Command("kubectl", "delete", "controller", controllerName, "-n", namespace, "--ignore-not-found", "--wait=false")
-				_, _ = utils.Run(cmd)
+				deleteControllerResource(controllerName, namespace)
 			})
 
 			By("creating a keeper RabbitMQAccess resource")
@@ -472,31 +449,11 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RabbitMQAccess")
 
 			By("verifying reconcile is denied with cross-namespace policy disabled")
-			Eventually(func(g Gomega) {
-				statusCmd := exec.Command(
-					"kubectl", "get", "rabbitmqaccess", resourceName, "-n", env.namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
-				)
-				statusOutput, statusErr := utils.Run(statusCmd)
-				g.Expect(statusErr).NotTo(HaveOccurred())
-				g.Expect(strings.TrimSpace(statusOutput)).To(Equal("False"))
-
-				reasonCmd := exec.Command(
-					"kubectl", "get", "rabbitmqaccess", resourceName, "-n", env.namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}",
-				)
-				reasonOutput, reasonErr := utils.Run(reasonCmd)
-				g.Expect(reasonErr).NotTo(HaveOccurred())
-				g.Expect(strings.TrimSpace(reasonOutput)).To(Equal("ConnectionError"))
-
-				messageCmd := exec.Command(
-					"kubectl", "get", "rabbitmqaccess", resourceName, "-n", env.namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].message}",
-				)
-				messageOutput, messageErr := utils.Run(messageCmd)
-				g.Expect(messageErr).NotTo(HaveOccurred())
-				g.Expect(messageOutput).To(ContainSubstring("cross-namespace connection secret references are disabled"))
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			waitForReadyCondition("rabbitmqaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
+				status:          "False",
+				reason:          "ConnectionError",
+				messageContains: "cross-namespace connection secret references are disabled",
+			})
 
 			By("verifying the requested RabbitMQ user was not created")
 			utils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
@@ -515,20 +472,10 @@ spec:
 			}
 
 			By("creating a singleton Controller with existingSecretNamespace=false")
-			controllerYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
-kind: Controller
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  settings:
-    existingSecretNamespace: false
-`, controllerName, namespace)
-			err := utils.ApplyManifest(controllerYAML)
+			err := createControllerResource(controllerName, namespace, `existingSecretNamespace: false`)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with false policy")
 			DeferCleanup(func() {
-				cleanupCmd := exec.Command("kubectl", "delete", "controller", controllerName, "-n", namespace, "--ignore-not-found", "--wait=false")
-				_, _ = utils.Run(cleanupCmd)
+				deleteControllerResource(controllerName, namespace)
 			})
 
 			By("creating the connection secret in another namespace")
@@ -540,15 +487,9 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RabbitMQAccess")
 
 			By("verifying reconcile is denied because singleton Controller policy is false")
-			Eventually(func(g Gomega) {
-				messageCmd := exec.Command(
-					"kubectl", "get", "rabbitmqaccess", resourceName, "-n", env.namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].message}",
-				)
-				messageOutput, messageErr := utils.Run(messageCmd)
-				g.Expect(messageErr).NotTo(HaveOccurred())
-				g.Expect(messageOutput).To(ContainSubstring("cross-namespace connection secret references are disabled"))
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			waitForReadyCondition("rabbitmqaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
+				messageContains: "cross-namespace connection secret references are disabled",
+			})
 
 			By("verifying the requested RabbitMQ user was not created")
 			utils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
@@ -567,20 +508,10 @@ spec:
 			}
 
 			By("enabling cross-namespace references through the singleton Controller resource")
-			controllerYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
-kind: Controller
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  settings:
-    existingSecretNamespace: true
-`, controllerName, namespace)
-			err := utils.ApplyManifest(controllerYAML)
+			err := createControllerResource(controllerName, namespace, `existingSecretNamespace: true`)
 			Expect(err).NotTo(HaveOccurred(), "Failed to enable cross-namespace references via Controller CR")
 			DeferCleanup(func() {
-				cleanupCmd := exec.Command("kubectl", "delete", "controller", controllerName, "-n", namespace, "--ignore-not-found", "--wait=false")
-				_, _ = utils.Run(cleanupCmd)
+				deleteControllerResource(controllerName, namespace)
 			})
 
 			By("creating the connection secret in the shared namespace")
@@ -620,37 +551,17 @@ spec:
 			}
 
 			By("creating two Controller resources to violate singleton policy")
-			controllerAYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
-kind: Controller
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  settings:
-    existingSecretNamespace: true
-`, controllerAName, namespace)
-			err := utils.ApplyManifest(controllerAYAML)
+			err := createControllerResource(controllerAName, namespace, `existingSecretNamespace: true`)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create first Controller")
 
-			controllerBYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
-kind: Controller
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  settings:
-    existingSecretNamespace: true
-`, controllerBName, env.namespace)
-			err = utils.ApplyManifest(controllerBYAML)
+			err = createControllerResource(controllerBName, env.namespace, `existingSecretNamespace: true`)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create second Controller")
 
 			DeferCleanup(func() {
-				cleanupCmd := exec.Command("kubectl", "delete", "controller", controllerAName, "-n", namespace, "--ignore-not-found", "--wait=false")
-				_, _ = utils.Run(cleanupCmd)
+				deleteControllerResource(controllerAName, namespace)
 			})
 			DeferCleanup(func() {
-				cleanupCmd := exec.Command("kubectl", "delete", "controller", controllerBName, "-n", env.namespace, "--ignore-not-found", "--wait=false")
-				_, _ = utils.Run(cleanupCmd)
+				deleteControllerResource(controllerBName, env.namespace)
 			})
 
 			By("creating the connection secret in another namespace")
@@ -662,84 +573,28 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RabbitMQAccess")
 
 			By("verifying RabbitMQAccess fails with multiple-controller error")
-			Eventually(func(g Gomega) {
-				reasonCmd := exec.Command(
-					"kubectl", "get", "rabbitmqaccess", resourceName, "-n", env.namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}",
-				)
-				reasonOutput, reasonErr := utils.Run(reasonCmd)
-				g.Expect(reasonErr).NotTo(HaveOccurred())
-				g.Expect(strings.TrimSpace(reasonOutput)).To(Equal("ConnectionError"))
-
-				messageCmd := exec.Command(
-					"kubectl", "get", "rabbitmqaccess", resourceName, "-n", env.namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].message}",
-				)
-				messageOutput, messageErr := utils.Run(messageCmd)
-				g.Expect(messageErr).NotTo(HaveOccurred())
-				g.Expect(messageOutput).To(ContainSubstring("multiple Controller resources found"))
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			waitForReadyCondition("rabbitmqaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
+				reason:          "ConnectionError",
+				messageContains: "multiple Controller resources found",
+			})
 
 			By("verifying both Controller resources are marked Ready=False with MultipleControllersFound")
-			Eventually(func(g Gomega) {
-				for _, key := range []struct {
-					name      string
-					namespace string
-				}{
-					{name: controllerAName, namespace: namespace},
-					{name: controllerBName, namespace: env.namespace},
-				} {
-					statusCmd := exec.Command(
-						"kubectl", "get", "controller", key.name, "-n", key.namespace,
-						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
-					)
-					statusOutput, statusErr := utils.Run(statusCmd)
-					g.Expect(statusErr).NotTo(HaveOccurred())
-					g.Expect(strings.TrimSpace(statusOutput)).To(Equal("False"))
-
-					reasonCmd := exec.Command(
-						"kubectl", "get", "controller", key.name, "-n", key.namespace,
-						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}",
-					)
-					reasonOutput, reasonErr := utils.Run(reasonCmd)
-					g.Expect(reasonErr).NotTo(HaveOccurred())
-					g.Expect(strings.TrimSpace(reasonOutput)).To(Equal("MultipleControllersFound"))
-				}
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			controllerResources := []namespacedName{
+				{name: controllerAName, namespace: namespace},
+				{name: controllerBName, namespace: env.namespace},
+			}
+			waitForControllerResourcesReadyCondition(controllerResources, readyConditionExpectation{
+				status: "False",
+				reason: "MultipleControllersFound",
+			})
 
 			By("verifying warning events are emitted for both Controller resources")
-			Eventually(func(g Gomega) {
-				for _, key := range []struct {
-					name      string
-					namespace string
-				}{
-					{name: controllerAName, namespace: namespace},
-					{name: controllerBName, namespace: env.namespace},
-				} {
-					eventsCmd := exec.Command(
-						"kubectl", "get", "events", "-n", key.namespace,
-						"--field-selector",
-						fmt.Sprintf("involvedObject.kind=Controller,involvedObject.name=%s,reason=MultipleControllersFound", key.name),
-						"--no-headers",
-					)
-					eventsOutput, eventsErr := utils.Run(eventsCmd)
-					g.Expect(eventsErr).NotTo(HaveOccurred())
-					g.Expect(strings.TrimSpace(eventsOutput)).NotTo(BeEmpty())
-				}
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			for _, resource := range controllerResources {
+				waitForResourceWarningEvent(resource, "Controller", "MultipleControllersFound")
+			}
 
 			By("verifying warning event is emitted on controller-manager Deployment")
-			Eventually(func(g Gomega) {
-				eventsCmd := exec.Command(
-					"kubectl", "get", "events", "-n", namespace,
-					"--field-selector",
-					fmt.Sprintf("involvedObject.kind=Deployment,involvedObject.name=%s,reason=MultipleControllersFound", managerDeploymentName),
-					"--no-headers",
-				)
-				eventsOutput, eventsErr := utils.Run(eventsCmd)
-				g.Expect(eventsErr).NotTo(HaveOccurred())
-				g.Expect(strings.TrimSpace(eventsOutput)).NotTo(BeEmpty())
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			waitForResourceWarningEvent(namespacedName{name: managerDeploymentName, namespace: namespace}, "Deployment", "MultipleControllersFound")
 		})
 	})
 })
@@ -749,28 +604,20 @@ func createRabbitMQController(
 	policy *accessv1.StaleVhostDeletionPolicy,
 	excludedVhosts []string,
 ) error {
-	var manifest strings.Builder
-	manifest.WriteString(fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
-kind: Controller
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  settings:
-`, name, namespace))
+	var settings strings.Builder
 
 	if policy != nil || len(excludedVhosts) > 0 {
-		manifest.WriteString("    rabbitmq:\n")
+		settings.WriteString("rabbitmq:\n")
 		if len(excludedVhosts) > 0 {
-			manifest.WriteString("      excludedVhosts:\n")
+			settings.WriteString("  excludedVhosts:\n")
 			for _, vhost := range excludedVhosts {
-				manifest.WriteString(fmt.Sprintf("        - %s\n", vhost))
+				settings.WriteString(fmt.Sprintf("    - %s\n", vhost))
 			}
 		}
 		if policy != nil {
-			manifest.WriteString(fmt.Sprintf("      staleVhostDeletionPolicy: %s\n", *policy))
+			settings.WriteString(fmt.Sprintf("  staleVhostDeletionPolicy: %s\n", *policy))
 		}
 	}
 
-	return utils.ApplyManifest(manifest.String())
+	return createControllerResource(name, namespace, settings.String())
 }
