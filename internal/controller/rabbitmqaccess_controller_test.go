@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -235,6 +236,65 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			Expect(client.Endpoint).To(Equal("http://rabbitmq.default.svc:15672"))
 			Expect(client.Username).To(Equal("admin"))
 			Expect(client.Password).To(Equal("secret"))
+		})
+
+		It("should hard fail cross-namespace existingSecret when multiple Controller resources exist", func() {
+			secretName := "rabbitmq-admin"
+			secretNamespace := "shared-rabbitmq"
+
+			fakeClient, _ := newFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{Name: "controller-a", Namespace: "system"},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
+					},
+				},
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{Name: "controller-b", Namespace: "default"},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
+					},
+				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      secretName,
+						Namespace: secretNamespace,
+					},
+					Data: map[string][]byte{
+						"host":     []byte("rabbitmq"),
+						"port":     []byte(strconv.Itoa(5672)),
+						"username": []byte("admin"),
+						"password": []byte("secret"),
+					},
+				},
+			)
+
+			eventRecorder := events.NewFakeRecorder(10)
+			reconciler := &RabbitMQAccessReconciler{
+				Client:   fakeClient,
+				Recorder: eventRecorder,
+			}
+			rbq := &accessv1.RabbitMQAccess{
+				ObjectMeta: metav1.ObjectMeta{Name: "tenant-access", Namespace: "tenant-a"},
+				Spec: accessv1.RabbitMQAccessSpec{
+					Connection: accessv1.ConnectionSpec{
+						ExistingSecret:          &secretName,
+						ExistingSecretNamespace: &secretNamespace,
+					},
+				},
+			}
+
+			_, err := reconciler.getConnectionDetails(context.Background(), rbq)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("multiple Controller resources found"))
+
+			var eventOne, eventTwo, eventThree string
+			Eventually(eventRecorder.Events).Should(Receive(&eventOne))
+			Eventually(eventRecorder.Events).Should(Receive(&eventTwo))
+			Eventually(eventRecorder.Events).Should(Receive(&eventThree))
+
+			allEvents := strings.Join([]string{eventOne, eventTwo, eventThree}, " ")
+			Expect(allEvents).To(ContainSubstring(multipleControllersFoundReason))
 		})
 	})
 

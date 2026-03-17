@@ -47,6 +47,9 @@ const (
 	ReadyConditionType      = "Ready"
 	SuccessConditionType    = "ReconcileSuccess"
 	InProgressConditionType = "ReconcileInProgress"
+
+	// Shared reasons
+	SecretSyncErrorEventReason = "SecretSyncFailed"
 )
 
 type reconcileStatusConfig[T client.Object] struct {

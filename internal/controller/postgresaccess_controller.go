@@ -132,14 +132,14 @@ func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	)
 	if err != nil {
 		log.Error(err, "failed to create/update secret", "secret", pg.Spec.GeneratedSecret)
-		r.emitEvent(&pg, corev1.EventTypeWarning, "SecretSyncFailed", err.Error())
+		r.emitEvent(&pg, corev1.EventTypeWarning, SecretSyncErrorEventReason, err.Error())
 		statusErr := setReconcileStatus(
 			ctx,
 			r.Client,
 			req.NamespacedName,
 			postgresReconcileStatusConfig(),
 			accessv1.ReconcileStateError,
-			"SecretSyncFailed",
+			SecretSyncErrorEventReason,
 			err.Error(),
 		)
 		if statusErr != nil {
