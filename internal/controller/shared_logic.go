@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"net"
 	neturl "net/url"
+	"os"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -290,12 +293,32 @@ func resolveExistingSecretNamespacePolicy(
 	c client.Client,
 	onMultiple controllerMultipleHandler,
 ) (bool, error) {
-	settings, err := resolveControllerSettings(ctx, c, onMultiple)
+	controllerObj, err := resolveSingletonController(ctx, c, onMultiple)
 	if err != nil {
 		return false, err
 	}
+	if controllerObj == nil {
+		return false, nil
+	}
 
-	return settings.ExistingSecretNamespace, nil
+	if !controllerObj.Spec.Settings.ExistingSecretNamespace {
+		return false, nil
+	}
+
+	operatorNamespace, err := resolveOperatorNamespace(ctx, c)
+	if err != nil {
+		return false, err
+	}
+	if controllerObj.Namespace != operatorNamespace {
+		return false, fmt.Errorf(
+			"cross-namespace connection secret references are disabled: Controller resource %q must be created in the operator namespace %q, found in %q",
+			controllerObj.Name,
+			operatorNamespace,
+			controllerObj.Namespace,
+		)
+	}
+
+	return true, nil
 }
 
 func resolveControllerSettings(
@@ -303,16 +326,32 @@ func resolveControllerSettings(
 	c client.Client,
 	onMultiple controllerMultipleHandler,
 ) (accessv1.ControllerSettings, error) {
+	controllerObj, err := resolveSingletonController(ctx, c, onMultiple)
+	if err != nil {
+		return accessv1.ControllerSettings{}, err
+	}
+	if controllerObj == nil {
+		return accessv1.ControllerSettings{}, nil
+	}
+
+	return controllerObj.Spec.Settings, nil
+}
+
+func resolveSingletonController(
+	ctx context.Context,
+	c client.Client,
+	onMultiple controllerMultipleHandler,
+) (*accessv1.Controller, error) {
 	var controllers accessv1.ControllerList
 	if err := c.List(ctx, &controllers); err != nil {
-		return accessv1.ControllerSettings{}, err
+		return nil, err
 	}
 
 	switch len(controllers.Items) {
 	case 0:
-		return accessv1.ControllerSettings{}, nil
+		return nil, nil
 	case 1:
-		return controllers.Items[0].Spec.Settings, nil
+		return &controllers.Items[0], nil
 	default:
 		message := fmt.Sprintf(
 			"multiple Controller resources found (%d); exactly one is allowed cluster-wide",
@@ -323,8 +362,50 @@ func resolveControllerSettings(
 				onMultiple(&controllers.Items[i], message)
 			}
 		}
-		return accessv1.ControllerSettings{}, errors.New(message)
+		return nil, errors.New(message)
 	}
+}
+
+func resolveOperatorNamespace(ctx context.Context, c client.Client) (string, error) {
+	if podNamespace := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); podNamespace != "" {
+		return podNamespace, nil
+	}
+
+	managerDeployments, err := listManagerDeployments(ctx, c)
+	if err != nil {
+		return "", err
+	}
+
+	switch len(managerDeployments) {
+	case 0:
+		return defaultManagerDeploymentNamespace, nil
+	case 1:
+		return managerDeployments[0].Namespace, nil
+	default:
+		sort.Slice(managerDeployments, func(i, j int) bool {
+			if managerDeployments[i].Namespace == managerDeployments[j].Namespace {
+				return managerDeployments[i].Name < managerDeployments[j].Name
+			}
+			return managerDeployments[i].Namespace < managerDeployments[j].Namespace
+		})
+		return managerDeployments[0].Namespace, nil
+	}
+}
+
+func listManagerDeployments(ctx context.Context, c client.Client) ([]appsv1.Deployment, error) {
+	var deploymentList appsv1.DeploymentList
+	if err := c.List(
+		ctx,
+		&deploymentList,
+		client.MatchingLabels{
+			managerControlPlaneLabelKey: managerControlPlaneLabelValue,
+			managerAppNameLabelKey:      managerAppNameLabelValue,
+		},
+	); err != nil {
+		return nil, err
+	}
+
+	return deploymentList.Items, nil
 }
 
 func emitEvent(recorder events.EventRecorder, object client.Object, eventType, reason, message string) {

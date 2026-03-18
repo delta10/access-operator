@@ -587,6 +587,59 @@ data:
 			utils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
 		})
 
+		It("should deny cross-namespace existingSecret when the singleton Controller is outside the operator namespace", func() {
+			resourceName := env.name("test-cross-namespace-wrong-controller-namespace")
+			generatedSecret := env.name("test-cross-namespace-wrong-controller-namespace-secret")
+			controllerName := env.name("cluster-settings-wrong-namespace")
+			connectionSecretNamespace := createTestNamespace("postgres-shared-wrong-controller-namespace")
+			DeferCleanup(func() {
+				deleteNamespace(connectionSecretNamespace)
+			})
+
+			By("creating the singleton Controller in a workload namespace instead of the operator namespace")
+			err := createControllerResource(controllerName, env.namespace, `existingSecretNamespace: true`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller outside the operator namespace")
+			DeferCleanup(func() {
+				deleteControllerResource(controllerName, env.namespace)
+			})
+
+			By("creating the connection secret in another namespace")
+			secretName, err := utils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
+
+			By("creating a PostgresAccess that references the shared secret namespace")
+			err = utils.CreateResourceFromSecretReferenceWithNamespace(
+				resourceName,
+				env.namespace,
+				generatedSecret,
+				secretName,
+				connectionSecretNamespace,
+				nil,
+				accessv1.GrantSpec{
+					Database:   env.conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				},
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace PostgresAccess")
+
+			By("verifying reconcile is denied because the Controller is not in the operator namespace")
+			waitForReadyCondition("postgresaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
+				status:          "False",
+				reason:          "DatabaseSyncFailed",
+				messageContains: `must be created in the operator namespace "access-operator-system"`,
+			})
+
+			By("verifying the misplaced Controller is marked not ready")
+			waitForReadyCondition("controller", namespacedName{name: controllerName, namespace: env.namespace}, readyConditionExpectation{
+				status:          "False",
+				reason:          "InvalidControllerNamespace",
+				messageContains: `must be created in the operator namespace "access-operator-system"`,
+			})
+
+			By("verifying the requested database user was not created")
+			utils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
+		})
+
 		It("should fail when multiple Controller resources exist and emit warning events", func() {
 			resourceName := env.name("test-cross-namespace-multiple-controllers")
 			generatedSecret := env.name("test-cross-namespace-multiple-controllers-secret")

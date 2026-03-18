@@ -40,6 +40,7 @@ import (
 var _ = Describe("RabbitMQAccess Controller", func() {
 	const (
 		testRabbitMQHost     = "rabbitmq.default.svc.cluster.local"
+		testRabbitMQSecret   = "rabbitmq-admin"
 		testRabbitMQUsername = "admin"
 		testRabbitMQPassword = "secret"
 	)
@@ -205,7 +206,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 		})
 
 		It("should build a management client from an existing secret", func() {
-			secretName := "rabbitmq-admin"
+			secretName := testRabbitMQSecret
 			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
@@ -239,7 +240,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 		})
 
 		It("should hard fail cross-namespace existingSecret when multiple Controller resources exist", func() {
-			secretName := "rabbitmq-admin"
+			secretName := testRabbitMQSecret
 			secretNamespace := "shared-rabbitmq"
 
 			fakeClient, _ := newFakeClientWithScheme(
@@ -295,6 +296,47 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 
 			allEvents := strings.Join([]string{eventOne, eventTwo, eventThree}, " ")
 			Expect(allEvents).To(ContainSubstring(multipleControllersFoundReason))
+		})
+
+		It("should reject cross-namespace existingSecret when singleton Controller is outside the operator namespace", func() {
+			secretName := testRabbitMQSecret
+			secretNamespace := "shared-rabbitmq"
+
+			fakeClient, _ := newFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "tenant-a"},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
+					},
+				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      secretName,
+						Namespace: secretNamespace,
+					},
+					Data: map[string][]byte{
+						"host":     []byte("rabbitmq"),
+						"port":     []byte(strconv.Itoa(5672)),
+						"username": []byte("admin"),
+						"password": []byte("secret"),
+					},
+				},
+			)
+
+			reconciler := &RabbitMQAccessReconciler{Client: fakeClient}
+			rbq := &accessv1.RabbitMQAccess{
+				ObjectMeta: metav1.ObjectMeta{Name: "tenant-access", Namespace: "default"},
+				Spec: accessv1.RabbitMQAccessSpec{
+					Connection: accessv1.ConnectionSpec{
+						ExistingSecret:          &secretName,
+						ExistingSecretNamespace: &secretNamespace,
+					},
+				},
+			}
+
+			_, err := reconciler.getConnectionDetails(context.Background(), rbq)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(`must be created in the operator namespace "system"`))
 		})
 	})
 

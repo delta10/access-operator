@@ -465,6 +465,51 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.shared-db.svc:5432/appdb?sslmode=require"))
 		})
 
+		It("should reject cross-namespace existingSecret when singleton Controller is outside the operator namespace", func() {
+			fakeClient, _ := newFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "cluster-settings",
+						Namespace: "tenant-a",
+					},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{
+							ExistingSecretNamespace: true,
+						},
+					},
+				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      secretName,
+						Namespace: sharedSecretNamespace,
+					},
+					Data: map[string][]byte{
+						"host":     []byte("postgres"),
+						"port":     []byte(strconv.Itoa(int(port))),
+						"database": []byte(database),
+						"username": []byte(username),
+						"password": []byte(password),
+					},
+				},
+			)
+
+			reconciler := &PostgresAccessReconciler{Client: fakeClient}
+			secretNamespace := sharedSecretNamespace
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default"},
+				Spec: accessv1.PostgresAccessSpec{
+					Connection: accessv1.ConnectionSpec{
+						ExistingSecret:          &secretName,
+						ExistingSecretNamespace: &secretNamespace,
+					},
+				},
+			}
+
+			_, err := reconciler.getConnectionString(context.Background(), pg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(`must be created in the operator namespace "system"`))
+		})
+
 		It("should normalize excluded usernames from singleton Controller settings", func() {
 			fakeClient, _ := newFakeClientWithScheme(
 				&accessv1.Controller{

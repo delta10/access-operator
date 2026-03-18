@@ -48,6 +48,7 @@ const (
 	controllerReadyConditionType = "Ready"
 
 	multipleControllersFoundReason = "MultipleControllersFound"
+	invalidControllerNamespace     = "InvalidControllerNamespace"
 	deploymentReconcileFailed      = "DeploymentReconcileFailed"
 
 	managerControlPlaneLabelKey   = "control-plane"
@@ -91,7 +92,35 @@ func (r *ControllerReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (c
 		return ctrl.Result{}, nil
 	case 1:
 		controllerObj := controllers.Items[0]
-		if err := r.reconcileManagerDeployment(ctx, &controllerObj); err != nil {
+		managerKey, err := r.resolveManagerDeploymentKey(ctx)
+		if err != nil {
+			_ = r.setControllerReadyCondition(
+				ctx,
+				types.NamespacedName{Name: controllerObj.Name, Namespace: controllerObj.Namespace},
+				metav1.ConditionFalse,
+				deploymentReconcileFailed,
+				err.Error(),
+			)
+			return ctrl.Result{}, err
+		}
+		if controllerObj.Namespace != managerKey.Namespace {
+			message := fmt.Sprintf(
+				"Controller resource %s/%s must be created in the operator namespace %q",
+				controllerObj.Namespace,
+				controllerObj.Name,
+				managerKey.Namespace,
+			)
+			_ = r.setControllerReadyCondition(
+				ctx,
+				types.NamespacedName{Name: controllerObj.Name, Namespace: controllerObj.Namespace},
+				metav1.ConditionFalse,
+				invalidControllerNamespace,
+				message,
+			)
+			r.emitWarningEvent(&controllerObj, invalidControllerNamespace, message)
+			return ctrl.Result{}, errors.New(message)
+		}
+		if err := r.reconcileManagerDeployment(ctx, managerKey, &controllerObj); err != nil {
 			_ = r.setControllerReadyCondition(
 				ctx,
 				types.NamespacedName{Name: controllerObj.Name, Namespace: controllerObj.Namespace},
@@ -127,12 +156,11 @@ func (r *ControllerReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (c
 	}
 }
 
-func (r *ControllerReconciler) reconcileManagerDeployment(ctx context.Context, controllerObj *accessv1.Controller) error {
-	key, err := r.resolveManagerDeploymentKey(ctx)
-	if err != nil {
-		return err
-	}
-
+func (r *ControllerReconciler) reconcileManagerDeployment(
+	ctx context.Context,
+	key types.NamespacedName,
+	controllerObj *accessv1.Controller,
+) error {
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, key, deployment); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -145,7 +173,7 @@ func (r *ControllerReconciler) reconcileManagerDeployment(ctx context.Context, c
 		return err
 	}
 
-	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
 		if deployment.Annotations == nil {
 			deployment.Annotations = map[string]string{}
 		}
@@ -160,7 +188,7 @@ func (r *ControllerReconciler) reconcileManagerDeployment(ctx context.Context, c
 }
 
 func (r *ControllerReconciler) resolveManagerDeploymentKey(ctx context.Context) (types.NamespacedName, error) {
-	managerDeployments, err := r.listManagerDeployments(ctx)
+	managerDeployments, err := listManagerDeployments(ctx, r.Client)
 	if err != nil {
 		return types.NamespacedName{}, err
 	}
@@ -204,24 +232,8 @@ func (r *ControllerReconciler) resolveManagerDeploymentKey(ctx context.Context) 
 	}
 }
 
-func (r *ControllerReconciler) listManagerDeployments(ctx context.Context) ([]appsv1.Deployment, error) {
-	var deploymentList appsv1.DeploymentList
-	if err := r.List(
-		ctx,
-		&deploymentList,
-		client.MatchingLabels{
-			managerControlPlaneLabelKey: managerControlPlaneLabelValue,
-			managerAppNameLabelKey:      managerAppNameLabelValue,
-		},
-	); err != nil {
-		return nil, err
-	}
-
-	return deploymentList.Items, nil
-}
-
 func (r *ControllerReconciler) emitWarningOnManagerDeployments(ctx context.Context, reason, message string) {
-	deployments, err := r.listManagerDeployments(ctx)
+	deployments, err := listManagerDeployments(ctx, r.Client)
 	if err != nil {
 		return
 	}

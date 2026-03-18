@@ -162,4 +162,55 @@ var _ = Describe("Controller Controller", func() {
 		Expect(fakeClient.List(ctx, &deploymentList)).To(Succeed())
 		Expect(deploymentList.Items).To(HaveLen(1))
 	})
+
+	It("should reject a singleton Controller outside the operator namespace", func() {
+		controllerKey := types.NamespacedName{Name: "cluster-settings", Namespace: "default"}
+		deploymentKey := client.ObjectKey{
+			Name:      "access-operator-controller-manager",
+			Namespace: "access-operator-system",
+		}
+		fakeClient, fakeScheme := newFakeClientWithScheme(
+			&accessv1.Controller{
+				ObjectMeta: metav1.ObjectMeta{Name: controllerKey.Name, Namespace: controllerKey.Namespace},
+				Spec: accessv1.ControllerSpec{
+					Settings: accessv1.ControllerSettings{
+						ExistingSecretNamespace: true,
+					},
+				},
+			},
+			&appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentKey.Name,
+					Namespace: deploymentKey.Namespace,
+					Labels: map[string]string{
+						managerControlPlaneLabelKey: managerControlPlaneLabelValue,
+						managerAppNameLabelKey:      managerAppNameLabelValue,
+					},
+				},
+			},
+		)
+
+		eventRecorder := events.NewFakeRecorder(10)
+		reconciler := &ControllerReconciler{
+			Client:   fakeClient,
+			Scheme:   fakeScheme,
+			Recorder: eventRecorder,
+		}
+
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: controllerKey})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring(`must be created in the operator namespace "access-operator-system"`))
+
+		controllerObj := &accessv1.Controller{}
+		Expect(fakeClient.Get(ctx, controllerKey, controllerObj)).To(Succeed())
+
+		readyCondition := meta.FindStatusCondition(controllerObj.Status.Conditions, controllerReadyConditionType)
+		Expect(readyCondition).NotTo(BeNil())
+		Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+		Expect(readyCondition.Reason).To(Equal(invalidControllerNamespace))
+
+		var event string
+		Eventually(eventRecorder.Events).Should(Receive(&event))
+		Expect(event).To(ContainSubstring(invalidControllerNamespace))
+	})
 })

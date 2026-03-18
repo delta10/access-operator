@@ -5,11 +5,13 @@ metadata:
     app.kubernetes.io/name: access-operator
     app.kubernetes.io/managed-by: kustomize
   name: controller-sample
+  namespace: access-operator-system
 spec:
   settings:
     # Default is false.
     # Set to true to allow PostgresAccess connection.existingSecretNamespace
     # to reference a Secret in a different namespace.
+    # This Controller resource must live in the operator namespace.
     existingSecretNamespace: false
     # Configure PostgreSQL-specific controller behavior.
     # postgres:

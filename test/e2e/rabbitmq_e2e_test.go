@@ -537,6 +537,51 @@ spec:
 			utils.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
 		})
 
+		It("should deny cross-namespace existingSecret when the singleton Controller is outside the operator namespace", func() {
+			resourceName := env.name("test-rabbitmq-wrong-controller-namespace")
+			generatedSecretName := env.name("test-rabbitmq-wrong-controller-namespace-secret")
+			controllerName := env.name("rabbitmq-cluster-settings-wrong-namespace")
+			connectionSecretNamespace := createTestNamespace("rabbitmq-shared-wrong-controller-namespace")
+			DeferCleanup(func() {
+				deleteNamespace(connectionSecretNamespace)
+			})
+			permissions := []accessv1.RabbitMQPermissionSpec{
+				{VHost: env.vhost("app"), Configure: ".*", Write: ".*", Read: ".*"},
+			}
+
+			By("creating the singleton Controller in a workload namespace instead of the operator namespace")
+			err := createControllerResource(controllerName, env.namespace, `existingSecretNamespace: true`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller outside the operator namespace")
+			DeferCleanup(func() {
+				deleteControllerResource(controllerName, env.namespace)
+			})
+
+			By("creating the connection secret in another namespace")
+			secretName, err := utils.CreateRabbitMQConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
+
+			By("creating a RabbitMQAccess that references the shared secret namespace")
+			err = utils.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, permissions)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RabbitMQAccess")
+
+			By("verifying reconcile is denied because the Controller is not in the operator namespace")
+			waitForReadyCondition("rabbitmqaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
+				status:          "False",
+				reason:          "ConnectionError",
+				messageContains: `must be created in the operator namespace "access-operator-system"`,
+			})
+
+			By("verifying the misplaced Controller is marked not ready")
+			waitForReadyCondition("controller", namespacedName{name: controllerName, namespace: env.namespace}, readyConditionExpectation{
+				status:          "False",
+				reason:          "InvalidControllerNamespace",
+				messageContains: `must be created in the operator namespace "access-operator-system"`,
+			})
+
+			By("verifying the requested RabbitMQ user was not created")
+			utils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
+		})
+
 		It("should fail when multiple Controller resources exist and emit warning events", func() {
 			resourceName := env.name("test-rabbitmq-multiple-controllers")
 			generatedSecretName := env.name("test-rabbitmq-multiple-controllers-secret")
