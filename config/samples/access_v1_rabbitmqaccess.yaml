@@ -12,13 +12,9 @@ spec:
         host: rabbitmq.default.svc.cluster.local
         port: 5672
         username:
-            secretRef:
-                name: rabbitmq-admin-conn
-                key: username
+            value: app-user
         password:
-            secretRef:
-                name: rabbitmq-admin-conn
-                key: password
+            value: app-user-password
     permissions:
         - vhost: /app
           configure: ".*"
