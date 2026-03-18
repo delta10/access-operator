@@ -100,9 +100,13 @@ jobs:
         run: |
           image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           tag="${{ github.ref_name }}"
+          sources=()
+          for digest_file in *; do
+            sources+=("${image}@sha256:${digest_file}")
+          done
           docker buildx imagetools create \
             -t "${image}:${tag}" \
-            $(printf '%s@sha256:%s ' "${image}" *)
+            "${sources[@]}"
           digest="$(docker buildx imagetools inspect "${image}:${tag}" --format '{{json .Manifest}}' | jq -r '.digest')"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
