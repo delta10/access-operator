@@ -262,7 +262,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should default ssl mode to require when missing in existing secret", func() {
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -308,7 +308,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 		It("should build connection strings from an existing secret", func() {
 			expectedString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=require", username, password, host, port, database)
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -340,7 +340,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should reject cross-namespace existingSecret when no Controller resource exists", func() {
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -374,7 +374,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should reject cross-namespace existingSecret when singleton Controller policy is false", func() {
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "cluster-settings",
@@ -419,7 +419,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should allow cross-namespace existingSecret when singleton Controller policy is true", func() {
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "cluster-settings",
@@ -464,7 +464,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should reject cross-namespace existingSecret when singleton Controller is outside the operator namespace", func() {
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "cluster-settings",
@@ -509,7 +509,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should normalize excluded usernames from singleton Controller settings", func() {
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "cluster-settings",
@@ -534,7 +534,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should hard fail cross-namespace existingSecret when multiple Controller resources exist", func() {
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "controller-a", Namespace: "system"},
 					Spec: accessv1.ControllerSpec{
@@ -616,7 +616,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				}
 				delete(data, missingKey)
 
-				fakeClient, _ := controller.NewFakeClientWithScheme(
+				fakeClient, _ := newFakeClientWithScheme(
 					&corev1.Secret{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      secretName,
@@ -638,7 +638,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 		It("should fall back to postgres database when database name is missing or invalid in existing secret", func() {
 			expectedString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=require", username, password, host, port, "postgres")
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -728,7 +728,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			secondUser := "app-2"
 			otherNamespaceUser := "other"
 
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&accessv1.PostgresAccess{
 					ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "target"},
 					Spec: accessv1.PostgresAccessSpec{
@@ -778,7 +778,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should read user password from the generated secret name", func() {
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := newFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "custom-generated-secret",
@@ -802,7 +802,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					Namespace: "default",
 				},
 			}
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(pg)
+			fakeClient, fakeScheme := newFakeClientWithScheme(pg)
 
 			reconciler := &PostgresAccessReconciler{
 				Client: fakeClient,
@@ -851,7 +851,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(pg)
+			fakeClient, fakeScheme := newFakeClientWithScheme(pg)
 			eventRecorder := events.NewFakeRecorder(5)
 			reconciler := &PostgresAccessReconciler{
 				Client:   fakeClient,
@@ -913,7 +913,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(pg)
+			fakeClient, fakeScheme := newFakeClientWithScheme(pg)
 			reconciler := &PostgresAccessReconciler{
 				Client: fakeClient,
 				Scheme: fakeScheme,
@@ -999,7 +999,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(
+			fakeClient, fakeScheme := newFakeClientWithScheme(
 				pg,
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
@@ -1079,7 +1079,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(pg, controllerSettings)
+			fakeClient, fakeScheme := newFakeClientWithScheme(pg, controllerSettings)
 			mockDB := NewMockDB()
 			mockDB.Users = []string{"excluded-orphan"}
 			reconciler := &PostgresAccessReconciler{
@@ -1108,7 +1108,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			deletingPG.Finalizers = []string{postgresAccessFinalizer}
 			deletingPG.DeletionTimestamp = &now
 
-			finalizerClient, finalizerScheme := controller.NewFakeClientWithScheme(deletingPG, controllerSettings.DeepCopy())
+			finalizerClient, finalizerScheme := newFakeClientWithScheme(deletingPG, controllerSettings.DeepCopy())
 			finalizerReconciler := &PostgresAccessReconciler{
 				Client: finalizerClient,
 				Scheme: finalizerScheme,
