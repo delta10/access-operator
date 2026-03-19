@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/delta10/access-operator/internal/controller/postgres"
 	. "github.com/onsi/gomega" // nolint:revive,staticcheck
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
@@ -32,7 +33,7 @@ import (
 )
 
 // RabbitMQConnectionDetailsForNamespace returns admin connection details for the provided RabbitMQ namespace.
-func RabbitMQConnectionDetailsForNamespace(testNamespace string) controller.ConnectionDetails {
+func RabbitMQConnectionDetailsForNamespace(testNamespace string) postgres.ConnectionDetails {
 	defaultClusterHost := fmt.Sprintf("rabbitmq.%s.svc", testNamespace)
 
 	host := os.Getenv("RABBITMQ_CLUSTER_HOST")
@@ -61,7 +62,7 @@ func RabbitMQConnectionDetailsForNamespace(testNamespace string) controller.Conn
 		password = "secret"
 	}
 
-	return controller.ConnectionDetails{
+	return postgres.ConnectionDetails{
 		SharedConnectionDetails: controller.SharedConnectionDetails{
 			Host:     host,
 			Port:     port,
@@ -72,7 +73,7 @@ func RabbitMQConnectionDetailsForNamespace(testNamespace string) controller.Conn
 }
 
 // GetRabbitMQVariables returns the namespace and admin connection details for e2e RabbitMQ tests.
-func GetRabbitMQVariables() (string, controller.ConnectionDetails) {
+func GetRabbitMQVariables() (string, postgres.ConnectionDetails) {
 	testNamespace := os.Getenv("RABBITMQ_TEST_NAMESPACE")
 	if testNamespace == "" {
 		testNamespace = "rabbitmq-access-test"
@@ -82,7 +83,7 @@ func GetRabbitMQVariables() (string, controller.ConnectionDetails) {
 }
 
 // DeployRabbitMQInstance deploys a RabbitMQ service/deployment into the provided namespace.
-func DeployRabbitMQInstance(namespace string, connection controller.ConnectionDetails) error {
+func DeployRabbitMQInstance(namespace string, connection postgres.ConnectionDetails) error {
 	manifest := fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
@@ -164,7 +165,7 @@ func RunRabbitMQctl(namespace string, args ...string) (string, error) {
 }
 
 // CreateRabbitMQConnectionDetailsViaSecret creates a connection secret used by RabbitMQAccess.
-func CreateRabbitMQConnectionDetailsViaSecret(namespace string, connection controller.ConnectionDetails) (string, error) {
+func CreateRabbitMQConnectionDetailsViaSecret(namespace string, connection postgres.ConnectionDetails) (string, error) {
 	secretName := "rabbitmq-connection-secret"
 	secretYAML := fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -187,7 +188,7 @@ func CreateRabbitMQAccessWithDirectConnection(
 	username,
 	namespace,
 	generatedSecretName string,
-	connection controller.ConnectionDetails,
+	connection postgres.ConnectionDetails,
 	permissions []accessv1.RabbitMQPermissionSpec,
 ) error {
 	rabbitYAML := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
@@ -217,7 +218,7 @@ func CreateRabbitMQAccessWithConnectionSecretRef(
 	username,
 	namespace,
 	generatedSecretName string,
-	connection controller.ConnectionDetails,
+	connection postgres.ConnectionDetails,
 	secretName string,
 	permissions []accessv1.RabbitMQPermissionSpec,
 ) error {

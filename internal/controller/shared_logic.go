@@ -26,12 +26,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// Define constants for requeue intervals because when postgres changes something a reconcile loop won't be triggered so we need to check periodically.
-const privilegeDriftRequeueInterval = 30 * time.Second
-const syncedRequeueInterval = 5 * time.Minute
-const accessResourceFinalizer = "access.k8s.delta10.nl/finalizer"
+// PrivilegeDriftRequeueInterval is how long it takes when we detect a privilege drift before we check again for changes in the service that we need to reconcile.
+// Periodic checks are necessary because the actual services don't give a reconcile signal when they drift.
+const PrivilegeDriftRequeueInterval = 30 * time.Second
 
-type controllerMultipleHandler func(*accessv1.Controller, string)
+// SyncedRequeueInterval is how long it takes when everything is synced before we check again for changes in the service that we need to reconcile.
+// Periodic checks are necessary because the actual services don't give a reconcile signal when they drift.
+const SyncedRequeueInterval = 5 * time.Minute
+const AccessResourceFinalizer = "access.k8s.delta10.nl/finalizer"
+
+type SharedControllerMultipleHandler func(*accessv1.Controller, string)
 
 type SharedConnectionDetails struct {
 	Username string
@@ -40,7 +44,7 @@ type SharedConnectionDetails struct {
 	Port     string
 }
 
-type reconcileConditionTypes struct {
+type ReconcileConditionTypes struct {
 	Ready      string
 	Success    string
 	InProgress string
@@ -51,19 +55,24 @@ const (
 	SuccessConditionType    = "ReconcileSuccess"
 	InProgressConditionType = "ReconcileInProgress"
 
-	// Shared reasons
 	SecretSyncErrorEventReason = "SecretSyncFailed"
 )
 
-type reconcileStatusConfig[T client.Object] struct {
-	newObject             func() T
-	conditions            func(T) *[]metav1.Condition
-	setLastLog            func(T, string)
-	setLastReconcileState func(T, accessv1.ReconcileState)
-	conditionTypes        reconcileConditionTypes
+type ReconcileStatusConfig[T client.Object] struct {
+	NewObject             func() T
+	Conditions            func(T) *[]metav1.Condition
+	SetLastLog            func(T, string)
+	SetLastReconcileState func(T, accessv1.ReconcileState)
+	ConditionTypes        ReconcileConditionTypes
 }
 
-func reconcileGeneratedCredentialsSecret(
+type ConnectionDetails struct {
+	SharedConnectionDetails
+	Database string
+	SSLMode  string
+}
+
+func ReconcileGeneratedCredentialsSecret(
 	ctx context.Context,
 	c client.Client,
 	scheme *runtime.Scheme,
@@ -113,29 +122,29 @@ func reconcileGeneratedCredentialsSecret(
 	return password, passwordReused, nil
 }
 
-func addAccessFinalizerIfMissing(ctx context.Context, c client.Client, obj client.Object) error {
-	if controllerutil.ContainsFinalizer(obj, accessResourceFinalizer) {
+func AddAccessFinalizerIfMissing(ctx context.Context, c client.Client, obj client.Object) error {
+	if controllerutil.ContainsFinalizer(obj, AccessResourceFinalizer) {
 		return nil
 	}
 
-	controllerutil.AddFinalizer(obj, accessResourceFinalizer)
+	controllerutil.AddFinalizer(obj, AccessResourceFinalizer)
 	return c.Update(ctx, obj)
 }
 
-func removeAccessFinalizerIfPresent(ctx context.Context, c client.Client, obj client.Object) error {
-	if !controllerutil.ContainsFinalizer(obj, accessResourceFinalizer) {
+func RemoveAccessFinalizerIfPresent(ctx context.Context, c client.Client, obj client.Object) error {
+	if !controllerutil.ContainsFinalizer(obj, AccessResourceFinalizer) {
 		return nil
 	}
 
-	controllerutil.RemoveFinalizer(obj, accessResourceFinalizer)
+	controllerutil.RemoveFinalizer(obj, AccessResourceFinalizer)
 	return c.Update(ctx, obj)
 }
 
-func setReconcileStatus[T client.Object](
+func SetReconcileStatus[T client.Object](
 	ctx context.Context,
 	c client.Client,
 	key types.NamespacedName,
-	config reconcileStatusConfig[T],
+	config ReconcileStatusConfig[T],
 	reconcileState accessv1.ReconcileState,
 	reason,
 	message string,
@@ -144,7 +153,7 @@ func setReconcileStatus[T client.Object](
 		return nil
 	}
 
-	latest := config.newObject()
+	latest := config.NewObject()
 	if err := c.Get(ctx, key, latest); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
@@ -167,52 +176,53 @@ func setReconcileStatus[T client.Object](
 		return fmt.Errorf("invalid reconcile state %q", reconcileState)
 	}
 
-	conditions := config.conditions(latest)
+	conditions := config.Conditions(latest)
 	meta.SetStatusCondition(conditions, metav1.Condition{
-		Type:               config.conditionTypes.Ready,
+		Type:               config.ConditionTypes.Ready,
 		Status:             readyStatus,
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: latest.GetGeneration(),
 	})
 	meta.SetStatusCondition(conditions, metav1.Condition{
-		Type:               config.conditionTypes.Success,
+		Type:               config.ConditionTypes.Success,
 		Status:             successStatus,
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: latest.GetGeneration(),
 	})
 	meta.SetStatusCondition(conditions, metav1.Condition{
-		Type:               config.conditionTypes.InProgress,
+		Type:               config.ConditionTypes.InProgress,
 		Status:             inProgressStatus,
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: latest.GetGeneration(),
 	})
-	config.setLastLog(latest, message)
-	config.setLastReconcileState(latest, reconcileState)
+	config.SetLastLog(latest, message)
+	config.SetLastReconcileState(latest, reconcileState)
 
 	return c.Status().Update(ctx, latest)
 }
 
-func hasSharedConnectionDetails(connection accessv1.ConnectionSpec) bool {
+func HasSharedConnectionDetails(connection accessv1.ConnectionSpec) bool {
 	return connection.Username != nil && connection.Password != nil &&
 		connection.Host != nil && *connection.Host != "" &&
 		connection.Port != nil
 }
 
-func getDirectConnectionDetails(
+func GetDirectConnectionDetails(
 	ctx context.Context,
 	c client.Client,
 	connection accessv1.ConnectionSpec,
 	namespace string,
+	defaults accessv1.ConnectionSpec,
 ) (ConnectionDetails, error) {
-	username, err := resolveValueOrSecretRef(ctx, c, connection.Username, namespace)
+	username, err := ResolveValueOrSecretRef(ctx, c, connection.Username, namespace)
 	if err != nil {
 		return ConnectionDetails{}, fmt.Errorf("failed to resolve username: %w", err)
 	}
 
-	password, err := resolveValueOrSecretRef(ctx, c, connection.Password, namespace)
+	password, err := ResolveValueOrSecretRef(ctx, c, connection.Password, namespace)
 	if err != nil {
 		return ConnectionDetails{}, fmt.Errorf("failed to resolve password: %w", err)
 	}
@@ -224,7 +234,7 @@ func getDirectConnectionDetails(
 			Host:     *connection.Host,
 			Port:     fmt.Sprintf("%d", *connection.Port),
 		},
-		SSLMode: resolveSSLMode(connection.SSLMode),
+		SSLMode: ResolveSSLMode(connection.SSLMode, defaults),
 	}
 
 	if connection.Database != nil && *connection.Database != "" {
@@ -234,7 +244,7 @@ func getDirectConnectionDetails(
 	return details, nil
 }
 
-func resolveValueOrSecretRef(ctx context.Context, c client.Client, ref *accessv1.SecretKeySelector, namespace string) (string, error) {
+func ResolveValueOrSecretRef(ctx context.Context, c client.Client, ref *accessv1.SecretKeySelector, namespace string) (string, error) {
 	if ref == nil {
 		return "", fmt.Errorf("value or secret reference is nil")
 	}
@@ -258,8 +268,8 @@ func resolveValueOrSecretRef(ctx context.Context, c client.Client, ref *accessv1
 	return "", fmt.Errorf("neither value nor secretRef is specified")
 }
 
-func resolveConnectionSecretNamespace(ctx context.Context, c client.Client, resourceNamespace string,
-	requestedNamespace *string, onMultiple controllerMultipleHandler) (string, error) {
+func ResolveConnectionSecretNamespace(ctx context.Context, c client.Client, resourceNamespace string,
+	requestedNamespace *string, onMultiple SharedControllerMultipleHandler) (string, error) {
 	secretNamespace := resourceNamespace
 	if requestedNamespace == nil {
 		return secretNamespace, nil
@@ -274,7 +284,7 @@ func resolveConnectionSecretNamespace(ctx context.Context, c client.Client, reso
 		return requested, nil
 	}
 
-	allowed, err := resolveExistingSecretNamespacePolicy(ctx, c, onMultiple)
+	allowed, err := ResolveExistingSecretNamespacePolicy(ctx, c, onMultiple)
 	if err != nil {
 		return "", err
 	}
@@ -288,12 +298,12 @@ func resolveConnectionSecretNamespace(ctx context.Context, c client.Client, reso
 	return requested, nil
 }
 
-func resolveExistingSecretNamespacePolicy(
+func ResolveExistingSecretNamespacePolicy(
 	ctx context.Context,
 	c client.Client,
-	onMultiple controllerMultipleHandler,
+	onMultiple SharedControllerMultipleHandler,
 ) (bool, error) {
-	controllerObj, err := resolveSingletonController(ctx, c, onMultiple)
+	controllerObj, err := ResolveSingletonController(ctx, c, onMultiple)
 	if err != nil {
 		return false, err
 	}
@@ -305,7 +315,7 @@ func resolveExistingSecretNamespacePolicy(
 		return false, nil
 	}
 
-	operatorNamespace, err := resolveOperatorNamespace(ctx, c)
+	operatorNamespace, err := ResolveOperatorNamespace(ctx, c)
 	if err != nil {
 		return false, err
 	}
@@ -321,12 +331,12 @@ func resolveExistingSecretNamespacePolicy(
 	return true, nil
 }
 
-func resolveControllerSettings(
+func ResolveControllerSettings(
 	ctx context.Context,
 	c client.Client,
-	onMultiple controllerMultipleHandler,
+	onMultiple SharedControllerMultipleHandler,
 ) (accessv1.ControllerSettings, error) {
-	controllerObj, err := resolveSingletonController(ctx, c, onMultiple)
+	controllerObj, err := ResolveSingletonController(ctx, c, onMultiple)
 	if err != nil {
 		return accessv1.ControllerSettings{}, err
 	}
@@ -337,10 +347,10 @@ func resolveControllerSettings(
 	return controllerObj.Spec.Settings, nil
 }
 
-func resolveSingletonController(
+func ResolveSingletonController(
 	ctx context.Context,
 	c client.Client,
-	onMultiple controllerMultipleHandler,
+	onMultiple SharedControllerMultipleHandler,
 ) (*accessv1.Controller, error) {
 	var controllers accessv1.ControllerList
 	if err := c.List(ctx, &controllers); err != nil {
@@ -366,12 +376,12 @@ func resolveSingletonController(
 	}
 }
 
-func resolveOperatorNamespace(ctx context.Context, c client.Client) (string, error) {
+func ResolveOperatorNamespace(ctx context.Context, c client.Client) (string, error) {
 	if podNamespace := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); podNamespace != "" {
 		return podNamespace, nil
 	}
 
-	managerDeployments, err := listManagerDeployments(ctx, c)
+	managerDeployments, err := ListManagerDeployments(ctx, c)
 	if err != nil {
 		return "", err
 	}
@@ -392,7 +402,7 @@ func resolveOperatorNamespace(ctx context.Context, c client.Client) (string, err
 	}
 }
 
-func listManagerDeployments(ctx context.Context, c client.Client) ([]appsv1.Deployment, error) {
+func ListManagerDeployments(ctx context.Context, c client.Client) ([]appsv1.Deployment, error) {
 	var deploymentList appsv1.DeploymentList
 	if err := c.List(
 		ctx,
@@ -408,7 +418,7 @@ func listManagerDeployments(ctx context.Context, c client.Client) ([]appsv1.Depl
 	return deploymentList.Items, nil
 }
 
-func emitEvent(recorder events.EventRecorder, object client.Object, eventType, reason, message string) {
+func EmitEvent(recorder events.EventRecorder, object client.Object, eventType, reason, message string) {
 	if recorder == nil || object == nil {
 		return
 	}
@@ -417,42 +427,43 @@ func emitEvent(recorder events.EventRecorder, object client.Object, eventType, r
 	recorder.Eventf(object, nil, eventType, reason, "PolicyValidation", "%s", message)
 }
 
-func getExistingSecretConnectionDetails(
+func GetExistingSecretConnectionDetails(
 	ctx context.Context,
 	c client.Client,
 	secretName,
 	namespace string,
 	connection *accessv1.ConnectionSpec,
+	defaults accessv1.ConnectionSpec,
 ) (ConnectionDetails, error) {
 	var existingSec corev1.Secret
 	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &existingSec); err != nil {
 		return ConnectionDetails{}, fmt.Errorf("failed to get existing secret for connection details: %w", err)
 	}
 
-	existingUsername, ok := getSecretValue(existingSec.Data, "username", "user")
+	existingUsername, ok := GetSecretValue(existingSec.Data, "username", "user")
 	if !ok {
 		return ConnectionDetails{}, fmt.Errorf("existing secret is missing username (username or user key)")
 	}
 
-	existingPassword, ok := getSecretValue(existingSec.Data, "password")
+	existingPassword, ok := GetSecretValue(existingSec.Data, "password")
 	if !ok {
 		return ConnectionDetails{}, fmt.Errorf("existing secret is missing password")
 	}
 
-	existingHost, hasHost := getSecretValue(existingSec.Data, "host")
-	uriHost, uriPort := getHostAndPortFromURI(existingSec.Data, "fqdn-uri", "uri", "jdbc-uri")
+	existingHost, hasHost := GetSecretValue(existingSec.Data, "host")
+	uriHost, uriPort := GetHostAndPortFromURI(existingSec.Data, "fqdn-uri", "uri", "jdbc-uri")
 	if !hasHost {
 		existingHost = uriHost
 	}
 	if existingHost == "" {
 		return ConnectionDetails{}, fmt.Errorf("existing secret is missing host")
 	}
-	if uriHost != "" && !isQualifiedHost(existingHost) {
+	if uriHost != "" && !IsQualifiedHost(existingHost) {
 		existingHost = uriHost
 	}
-	existingHost = qualifyServiceHost(existingHost, namespace)
+	existingHost = QualifyServiceHost(existingHost, namespace)
 
-	existingPort, ok := getSecretValue(existingSec.Data, "port")
+	existingPort, ok := GetSecretValue(existingSec.Data, "port")
 	if !ok {
 		if uriPort != "" {
 			existingPort = uriPort
@@ -464,10 +475,13 @@ func getExistingSecretConnectionDetails(
 		return ConnectionDetails{}, fmt.Errorf("existing secret is missing port")
 	}
 
-	existingDatabase, ok := getSecretValue(existingSec.Data, "dbname", "database")
+	existingDatabase, ok := GetSecretValue(existingSec.Data, "dbname", "database")
 	invalidDatabases := []string{"*", "%", "(none)", "null", ""}
 	if !ok || slices.Contains(invalidDatabases, strings.ToLower(existingDatabase)) {
-		existingDatabase = defaultPostgresDatabase
+		// should always be set
+		if defaults.Database != nil && *defaults.Database != "" {
+			existingDatabase = *defaults.Database
+		}
 	}
 
 	if connection != nil && connection.Database != nil && *connection.Database != "" {
@@ -482,11 +496,34 @@ func getExistingSecretConnectionDetails(
 			Port:     existingPort,
 		},
 		Database: existingDatabase,
-		SSLMode:  resolveSSLModeFromSecret(existingSec.Data),
+		SSLMode:  ResolveSSLModeFromSecret(existingSec.Data, defaults),
 	}, nil
 }
 
-func getSecretValue(secretData map[string][]byte, keys ...string) (string, bool) {
+func ResolveSSLMode(sslMode *string, defaults accessv1.ConnectionSpec) string {
+	if sslMode != nil && *sslMode != "" {
+		return *sslMode
+	}
+
+	if defaults.Database != nil && *defaults.Database != "" {
+		return *defaults.Database
+	}
+
+	return ""
+}
+
+func ResolveSSLModeFromSecret(secretData map[string][]byte, defaults accessv1.ConnectionSpec) string {
+	if existingSSLMode, ok := GetSecretValue(secretData, "sslmode"); ok {
+		return existingSSLMode
+	}
+
+	if defaults.Database != nil && *defaults.Database != "" {
+		return *defaults.Database
+	}
+	return ""
+}
+
+func GetSecretValue(secretData map[string][]byte, keys ...string) (string, bool) {
 	for _, key := range keys {
 		if data, ok := secretData[key]; ok && len(data) > 0 {
 			return strings.TrimSpace(string(data)), true
@@ -496,7 +533,7 @@ func getSecretValue(secretData map[string][]byte, keys ...string) (string, bool)
 	return "", false
 }
 
-func getHostAndPortFromURI(secretData map[string][]byte, keys ...string) (string, string) {
+func GetHostAndPortFromURI(secretData map[string][]byte, keys ...string) (string, string) {
 	for _, key := range keys {
 		rawURI, ok := secretData[key]
 		if !ok || len(rawURI) == 0 {
@@ -519,14 +556,27 @@ func getHostAndPortFromURI(secretData map[string][]byte, keys ...string) (string
 	return "", ""
 }
 
-func isQualifiedHost(host string) bool {
+func IsQualifiedHost(host string) bool {
 	return strings.Contains(host, ".") || net.ParseIP(host) != nil || strings.EqualFold(host, "localhost")
 }
 
-func qualifyServiceHost(host, namespace string) string {
-	if isQualifiedHost(host) || namespace == "" {
+func QualifyServiceHost(host, namespace string) string {
+	if IsQualifiedHost(host) || namespace == "" {
 		return host
 	}
 
 	return fmt.Sprintf("%s.%s.svc", host, namespace)
+}
+
+func NormalizeExcludedUsers(users []string) map[string]struct{} {
+	normalized := make(map[string]struct{}, len(users))
+	for _, user := range users {
+		trimmed := strings.TrimSpace(user)
+		if trimmed == "" {
+			continue
+		}
+		normalized[trimmed] = struct{}{}
+	}
+
+	return normalized
 }

@@ -47,7 +47,7 @@ import (
 const (
 	controllerReadyConditionType = "Ready"
 
-	multipleControllersFoundReason = "MultipleControllersFound"
+	MultipleControllersFoundReason = "MultipleControllersFound"
 	invalidControllerNamespace     = "InvalidControllerNamespace"
 	deploymentReconcileFailed      = "DeploymentReconcileFailed"
 
@@ -147,10 +147,10 @@ func (r *ControllerReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (c
 		)
 		for _, controllerObj := range controllers.Items {
 			key := types.NamespacedName{Name: controllerObj.Name, Namespace: controllerObj.Namespace}
-			_ = r.setControllerReadyCondition(ctx, key, metav1.ConditionFalse, multipleControllersFoundReason, message)
-			r.emitWarningEvent(&controllerObj, multipleControllersFoundReason, message)
+			_ = r.setControllerReadyCondition(ctx, key, metav1.ConditionFalse, MultipleControllersFoundReason, message)
+			r.emitWarningEvent(&controllerObj, MultipleControllersFoundReason, message)
 		}
-		r.emitWarningOnManagerDeployments(ctx, multipleControllersFoundReason, message)
+		r.emitWarningOnManagerDeployments(ctx, MultipleControllersFoundReason, message)
 
 		return ctrl.Result{}, errors.New(message)
 	}
@@ -188,7 +188,7 @@ func (r *ControllerReconciler) reconcileManagerDeployment(
 }
 
 func (r *ControllerReconciler) resolveManagerDeploymentKey(ctx context.Context) (types.NamespacedName, error) {
-	managerDeployments, err := listManagerDeployments(ctx, r.Client)
+	managerDeployments, err := ListManagerDeployments(ctx, r.Client)
 	if err != nil {
 		return types.NamespacedName{}, err
 	}
@@ -233,7 +233,7 @@ func (r *ControllerReconciler) resolveManagerDeploymentKey(ctx context.Context) 
 }
 
 func (r *ControllerReconciler) emitWarningOnManagerDeployments(ctx context.Context, reason, message string) {
-	deployments, err := listManagerDeployments(ctx, r.Client)
+	deployments, err := ListManagerDeployments(ctx, r.Client)
 	if err != nil {
 		return
 	}

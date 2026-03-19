@@ -9,22 +9,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/delta10/access-operator/internal/controller/postgres"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/delta10/access-operator/internal/controller"
 	"github.com/delta10/access-operator/test/utils"
 )
 
 type sharedBackend struct {
 	namespace string
-	conn      controller.ConnectionDetails
+	conn      postgres.ConnectionDetails
 }
 
 type specEnv struct {
 	namespace        string
 	backendNamespace string
-	conn             controller.ConnectionDetails
+	conn             postgres.ConnectionDetails
 	suffix           string
 }
 
@@ -79,9 +79,9 @@ func ensureWorkerBackend(
 	once *sync.Once,
 	backend *sharedBackend,
 	namespacePrefix string,
-	connectionForNamespace func(string) controller.ConnectionDetails,
-	setup func(string, controller.ConnectionDetails),
-) (string, controller.ConnectionDetails) {
+	connectionForNamespace func(string) postgres.ConnectionDetails,
+	setup func(string, postgres.ConnectionDetails),
+) (string, postgres.ConnectionDetails) {
 	once.Do(func() {
 		backendNamespace := fmt.Sprintf("%s-%s", namespacePrefix, workerID())
 		deleteNamespace(backendNamespace)
@@ -99,13 +99,13 @@ func ensureWorkerBackend(
 	return backend.namespace, backend.conn
 }
 
-func ensurePostgresWorkerBackend() (string, controller.ConnectionDetails) {
+func ensurePostgresWorkerBackend() (string, postgres.ConnectionDetails) {
 	return ensureWorkerBackend(
 		&postgresBackendOnce,
 		&postgresBackend,
 		"postgres-backend",
 		utils.DatabaseConnectionDetailsForNamespace,
-		func(backendNamespace string, conn controller.ConnectionDetails) {
+		func(backendNamespace string, conn postgres.ConnectionDetails) {
 			Expect(utils.DeployPostgresInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared PostgreSQL backend")
 
@@ -137,13 +137,13 @@ func ensurePostgresWorkerBackend() (string, controller.ConnectionDetails) {
 	)
 }
 
-func ensureRabbitMQWorkerBackend() (string, controller.ConnectionDetails) {
+func ensureRabbitMQWorkerBackend() (string, postgres.ConnectionDetails) {
 	return ensureWorkerBackend(
 		&rabbitMQBackendOnce,
 		&rabbitMQBackend,
 		"rabbitmq-backend",
 		utils.RabbitMQConnectionDetailsForNamespace,
-		func(backendNamespace string, conn controller.ConnectionDetails) {
+		func(backendNamespace string, conn postgres.ConnectionDetails) {
 			Expect(utils.DeployRabbitMQInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared RabbitMQ backend")
 			utils.WaitForRabbitMQReady(backendNamespace)
@@ -160,7 +160,7 @@ func cleanupWorkerBackends() {
 	}
 }
 
-func newSpecEnv(prefix string, ensureBackend func() (string, controller.ConnectionDetails)) specEnv {
+func newSpecEnv(prefix string, ensureBackend func() (string, postgres.ConnectionDetails)) specEnv {
 	backendNamespace, conn := ensureBackend()
 	return specEnv{
 		namespace:        createTestNamespace(prefix),

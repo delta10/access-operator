@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package postgres
 
 import (
 	"context"
@@ -39,24 +39,18 @@ type DBInterface interface {
 	GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error)
 }
 
-// PostgresDB implements DBInterface using pgx
-type PostgresDB struct {
+// DB implements DBInterface using pgx
+type DB struct {
 	conn *pgx.Conn
-}
-
-type ConnectionDetails struct {
-	SharedConnectionDetails
-	Database string
-	SSLMode  string
 }
 
 const defaultSchemaName = "public"
 
-func NewPostgresDB() *PostgresDB {
-	return &PostgresDB{}
+func NewPostgresDB() *DB {
+	return &DB{}
 }
 
-func (p *PostgresDB) Connect(ctx context.Context, connectionString string) error {
+func (p *DB) Connect(ctx context.Context, connectionString string) error {
 	conn, err := pgx.Connect(ctx, connectionString)
 	if err != nil {
 		return err
@@ -65,14 +59,14 @@ func (p *PostgresDB) Connect(ctx context.Context, connectionString string) error
 	return nil
 }
 
-func (p *PostgresDB) Close(ctx context.Context) error {
+func (p *DB) Close(ctx context.Context) error {
 	if p.conn != nil {
 		return p.conn.Close(ctx)
 	}
 	return nil
 }
 
-func (p *PostgresDB) CreateUser(ctx context.Context, username, password string) error {
+func (p *DB) CreateUser(ctx context.Context, username, password string) error {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
@@ -95,7 +89,7 @@ func (p *PostgresDB) CreateUser(ctx context.Context, username, password string) 
 	return err
 }
 
-func (p *PostgresDB) UpdateUserPassword(ctx context.Context, username, newPassword string) error {
+func (p *DB) UpdateUserPassword(ctx context.Context, username, newPassword string) error {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
@@ -107,7 +101,7 @@ func (p *PostgresDB) UpdateUserPassword(ctx context.Context, username, newPasswo
 	return err
 }
 
-func (p *PostgresDB) DropUser(ctx context.Context, username string, policy accessv1.CleanupPolicy) (err error) {
+func (p *DB) DropUser(ctx context.Context, username string, policy accessv1.CleanupPolicy) (err error) {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
@@ -222,7 +216,7 @@ func (p *PostgresDB) DropUser(ctx context.Context, username string, policy acces
 	return nil
 }
 
-func (p *PostgresDB) GetUsers(ctx context.Context) ([]string, error) {
+func (p *DB) GetUsers(ctx context.Context) ([]string, error) {
 	if p.conn == nil {
 		return nil, fmt.Errorf("database connection is not initialized")
 	}
@@ -244,7 +238,7 @@ func (p *PostgresDB) GetUsers(ctx context.Context) ([]string, error) {
 	return users, nil
 }
 
-func (p *PostgresDB) GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
+func (p *DB) GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
@@ -347,7 +341,7 @@ func (p *PostgresDB) GrantPrivileges(ctx context.Context, grants []accessv1.Gran
 	return nil
 }
 
-func (p *PostgresDB) RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
+func (p *DB) RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
@@ -449,7 +443,7 @@ func (p *PostgresDB) RevokePrivileges(ctx context.Context, grants []accessv1.Gra
 	return nil
 }
 
-func (p *PostgresDB) GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error) {
+func (p *DB) GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error) {
 	if p.conn == nil {
 		return nil, fmt.Errorf("database connection is not initialized")
 	}

@@ -41,7 +41,7 @@ var _ = Describe("Controller Controller", func() {
 		controllerAKey := types.NamespacedName{Name: "controller-a", Namespace: "system"}
 		controllerBKey := types.NamespacedName{Name: "controller-b", Namespace: "default"}
 
-		fakeClient, fakeScheme := newFakeClientWithScheme(
+		fakeClient, fakeScheme := NewFakeClientWithScheme(
 			&accessv1.Controller{
 				ObjectMeta: metav1.ObjectMeta{Name: controllerAKey.Name, Namespace: controllerAKey.Namespace},
 			},
@@ -78,7 +78,7 @@ var _ = Describe("Controller Controller", func() {
 			readyCondition := meta.FindStatusCondition(controllerObj.Status.Conditions, controllerReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(readyCondition.Reason).To(Equal(multipleControllersFoundReason))
+			Expect(readyCondition.Reason).To(Equal(MultipleControllersFoundReason))
 		}
 
 		var eventOne, eventTwo, eventThree string
@@ -87,7 +87,7 @@ var _ = Describe("Controller Controller", func() {
 		Eventually(eventRecorder.Events).Should(Receive(&eventThree))
 
 		allEvents := strings.Join([]string{eventOne, eventTwo, eventThree}, " ")
-		Expect(allEvents).To(ContainSubstring(multipleControllersFoundReason))
+		Expect(allEvents).To(ContainSubstring(MultipleControllersFoundReason))
 		Expect(allEvents).To(ContainSubstring("controller-manager deployment: access-operator-system/access-operator-controller-manager"))
 	})
 
@@ -97,7 +97,7 @@ var _ = Describe("Controller Controller", func() {
 			Name:      defaultManagerDeploymentName,
 			Namespace: defaultManagerDeploymentNamespace,
 		}
-		fakeClient, fakeScheme := newFakeClientWithScheme(
+		fakeClient, fakeScheme := NewFakeClientWithScheme(
 			&accessv1.Controller{
 				ObjectMeta: metav1.ObjectMeta{Name: controllerKey.Name, Namespace: controllerKey.Namespace},
 				Spec: accessv1.ControllerSpec{
@@ -169,7 +169,7 @@ var _ = Describe("Controller Controller", func() {
 			Name:      "access-operator-controller-manager",
 			Namespace: "access-operator-system",
 		}
-		fakeClient, fakeScheme := newFakeClientWithScheme(
+		fakeClient, fakeScheme := NewFakeClientWithScheme(
 			&accessv1.Controller{
 				ObjectMeta: metav1.ObjectMeta{Name: controllerKey.Name, Namespace: controllerKey.Namespace},
 				Spec: accessv1.ControllerSpec{
