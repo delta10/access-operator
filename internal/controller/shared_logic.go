@@ -234,11 +234,8 @@ func GetDirectConnectionDetails(
 			Host:     *connection.Host,
 			Port:     fmt.Sprintf("%d", *connection.Port),
 		},
-		SSLMode: ResolveSSLMode(connection.SSLMode, defaults),
-	}
-
-	if connection.Database != nil && *connection.Database != "" {
-		details.Database = *connection.Database
+		Database: ResolveDatabase(connection.Database, defaults),
+		SSLMode:  ResolveSSLMode(connection.SSLMode, defaults),
 	}
 
 	return details, nil
@@ -505,8 +502,8 @@ func ResolveSSLMode(sslMode *string, defaults accessv1.ConnectionSpec) string {
 		return *sslMode
 	}
 
-	if defaults.Database != nil && *defaults.Database != "" {
-		return *defaults.Database
+	if defaults.SSLMode != nil && *defaults.SSLMode != "" {
+		return *defaults.SSLMode
 	}
 
 	return ""
@@ -517,9 +514,26 @@ func ResolveSSLModeFromSecret(secretData map[string][]byte, defaults accessv1.Co
 		return existingSSLMode
 	}
 
+	if defaults.SSLMode != nil && *defaults.SSLMode != "" {
+		return *defaults.SSLMode
+	}
+	return ""
+}
+
+func ResolveDatabase(database *string, defaults accessv1.ConnectionSpec) string {
+	if database != nil {
+		trimmedDatabase := strings.TrimSpace(*database)
+		switch strings.ToLower(trimmedDatabase) {
+		case "", "*", "%", "(none)", "null":
+		default:
+			return trimmedDatabase
+		}
+	}
+
 	if defaults.Database != nil && *defaults.Database != "" {
 		return *defaults.Database
 	}
+
 	return ""
 }
 

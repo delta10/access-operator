@@ -10,10 +10,12 @@ import (
 )
 
 var defaultPort = int32(5432)
+var defaultDatabase = "postgres"
 var defaultSSLMode = "require"
 var connectionDefaults = accessv1.ConnectionSpec{
-	Port:    &defaultPort,
-	SSLMode: &defaultSSLMode,
+	Port:     &defaultPort,
+	Database: &defaultDatabase,
+	SSLMode:  &defaultSSLMode,
 }
 
 // getConnectionString constructs the PostgreSQL connection string based on the PostgresAccess spec.
@@ -46,7 +48,7 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 }
 
 func hasDirectConnectionDetails(c accessv1.ConnectionSpec) bool {
-	return controller.HasSharedConnectionDetails(c) && c.Database != nil && *c.Database != ""
+	return controller.HasSharedConnectionDetails(c)
 }
 
 func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {

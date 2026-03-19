@@ -42,10 +42,6 @@ import (
 
 const localHost = "localhost"
 
-var (
-	k8sClient client.Client
-)
-
 var _ = Describe("PostgresAccess Controller", func() {
 	Context("When testing PostgreSQL connections", func() {
 		const connectionTestResourceName = "postgres-connection-test"
