@@ -23,11 +23,6 @@ kubectl apply -f https://github.com/<org>/<repo>/releases/download/<tag>/install
 
 If you wish to install the operator via its yaml you can find it in `config/crd/bases/access.k8s.delta10.nl_postgresaccesses.yaml`
 
-Then run it:
-```bash
-make run
-```
-
 ## Cross-namespace existing secrets (optional)
 By default, `PostgresAccess.spec.connection.existingSecret` is resolved in the same namespace as the `PostgresAccess` resource.
 
