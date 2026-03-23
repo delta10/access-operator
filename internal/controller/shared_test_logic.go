@@ -2,20 +2,19 @@ package controller
 
 import (
 	accessv1 "github.com/delta10/access-operator/api/v1"
+	"github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	. "github.com/onsi/gomega"
 )
 
 func NewFakeClientWithScheme(objs ...client.Object) (client.Client, *runtime.Scheme) {
 	scheme := runtime.NewScheme()
-	Expect(accessv1.AddToScheme(scheme)).To(Succeed())
-	Expect(corev1.AddToScheme(scheme)).To(Succeed())
-	Expect(appsv1.AddToScheme(scheme)).To(Succeed())
+	gomega.Expect(accessv1.AddToScheme(scheme)).To(gomega.Succeed())
+	gomega.Expect(corev1.AddToScheme(scheme)).To(gomega.Succeed())
+	gomega.Expect(appsv1.AddToScheme(scheme)).To(gomega.Succeed())
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).

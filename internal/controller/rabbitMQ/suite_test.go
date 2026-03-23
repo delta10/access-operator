@@ -17,24 +17,24 @@ limitations under the License.
 package rabbitMQ
 
 import (
-    "context"
-    "os"
-    "path/filepath"
-    "testing"
-    "time"
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
 
-    "github.com/delta10/access-operator/internal/controller"
-    . "github.com/onsi/ginkgo/v2"
-    . "github.com/onsi/gomega"
-    "k8s.io/apimachinery/pkg/runtime"
-    "k8s.io/client-go/kubernetes/scheme"
-    "k8s.io/client-go/rest"
-    "sigs.k8s.io/controller-runtime/pkg/client"
-    "sigs.k8s.io/controller-runtime/pkg/envtest"
-    logf "sigs.k8s.io/controller-runtime/pkg/log"
-    "sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"github.com/delta10/access-operator/internal/controller"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-    accessv1 "github.com/delta10/access-operator/api/v1"
+	accessv1 "github.com/delta10/access-operator/api/v1"
 )
 
 var (
@@ -103,5 +103,5 @@ func getFirstFoundEnvTestBinaryDir() string {
 }
 
 func newFakeClientWithScheme(objs ...client.Object) (client.Client, *runtime.Scheme) {
-    return controller.NewFakeClientWithScheme(objs...)
+	return controller.NewFakeClientWithScheme(objs...)
 }
