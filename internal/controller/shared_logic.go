@@ -74,11 +74,11 @@ type ManagedAccessReconcileConfig[T client.Object] struct {
 
 	StatusConfig ReconcileStatusConfig[T]
 	Finalize     func(context.Context, T) (bool, error)
-    // Sync is the function used to reconcile the backend service.
-	Sync         func(context.Context, T) (bool, string, error)
-	SecretName   func(T) string
-	Username     func(T) string
-	EmitEvent    func(T, string, string, string)
+	// Sync is the function used to reconcile the backend service.
+	Sync       func(context.Context, T) (bool, string, error)
+	SecretName func(T) string
+	Username   func(T) string
+	EmitEvent  func(T, string, string, string)
 
 	FinalizeErrorReason string
 	SyncErrorReason     string

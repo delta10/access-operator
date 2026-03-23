@@ -84,6 +84,22 @@ func ApplyManifest(manifest string) error {
 	return err
 }
 
+// WaitForCRDsEstablished waits until the provided CRDs are Established.
+func WaitForCRDsEstablished(crdNames ...string) error {
+	if len(crdNames) == 0 {
+		return nil
+	}
+
+	args := []string{"wait", "--for=condition=Established", "--timeout=2m"}
+	for _, crdName := range crdNames {
+		args = append(args, "crd/"+crdName)
+	}
+
+	cmd := exec.Command("kubectl", args...)
+	_, err := Run(cmd)
+	return err
+}
+
 // WaitForSecretField waits until a secret data field is present and returns its value.
 func WaitForSecretField(namespace, secretName, field string) string {
 	var output string

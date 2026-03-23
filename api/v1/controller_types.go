@@ -64,10 +64,19 @@ type PostgresControllerSettings struct {
 	ExcludedUsers []string `json:"excludedUsers,omitempty"`
 }
 
+type RedisControllerSettings struct {
+	// excludedUsers is a list of Redis ACL usernames that the controller ignores
+	// when reconciling RedisAccess resources.
+	// This prevents the operator from creating, updating, or deleting the listed users.
+	// +listType=set
+	// +optional
+	ExcludedUsers []string `json:"excludedUsers,omitempty"`
+}
+
 // ControllerSettings defines operator-wide behavior toggles.
 type ControllerSettings struct {
 	// existingSecretNamespace enables cross-namespace references for
-	// PostgresAccess.spec.connection.existingSecretNamespace.
+	// managed access resources that use spec.connection.existingSecretNamespace.
 	// +optional
 	// +kubebuilder:default=false
 	ExistingSecretNamespace bool `json:"existingSecretNamespace,omitempty"`
@@ -79,6 +88,10 @@ type ControllerSettings struct {
 	// rabbitmq contains settings specific to RabbitMQAccess controllers.
 	// +optional
 	RabbitMQSettings RabbitMQControllerSettings `json:"rabbitmq,omitempty"`
+
+	// redis contains settings specific to RedisAccess controllers.
+	// +optional
+	RedisSettings RedisControllerSettings `json:"redis,omitempty"`
 }
 
 // ControllerSpec defines the desired state of Controller.

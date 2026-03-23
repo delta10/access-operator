@@ -34,12 +34,17 @@ type postgresSpecEnv struct{ specEnv }
 
 type rabbitMQSpecEnv struct{ specEnv }
 
+type redisSpecEnv struct{ specEnv }
+
 var (
 	postgresBackendOnce sync.Once
 	postgresBackend     sharedBackend
 
 	rabbitMQBackendOnce sync.Once
 	rabbitMQBackend     sharedBackend
+
+	redisBackendOnce sync.Once
+	redisBackend     sharedBackend
 
 	suffixCounter uint64
 )
@@ -178,12 +183,29 @@ func ensureRabbitMQWorkerBackend() (string, controller.ConnectionDetails) {
 	)
 }
 
+func ensureRedisWorkerBackend() (string, controller.ConnectionDetails) {
+	return ensureWorkerBackend(
+		&redisBackendOnce,
+		&redisBackend,
+		"redis-backend",
+		utils.RedisConnectionDetailsForNamespace,
+		func(backendNamespace string, conn controller.ConnectionDetails) {
+			Expect(utils.DeployRedisInstance(backendNamespace, conn)).To(Succeed(),
+				"Failed to deploy shared Redis backend")
+			utils.WaitForRedisReady(backendNamespace, conn)
+		},
+	)
+}
+
 func cleanupWorkerBackends() {
 	if postgresBackend.namespace != "" {
 		deleteNamespace(postgresBackend.namespace)
 	}
 	if rabbitMQBackend.namespace != "" {
 		deleteNamespace(rabbitMQBackend.namespace)
+	}
+	if redisBackend.namespace != "" {
+		deleteNamespace(redisBackend.namespace)
 	}
 }
 
@@ -211,6 +233,10 @@ func newPostgresSpecEnv() postgresSpecEnv {
 
 func newRabbitMQSpecEnv() rabbitMQSpecEnv {
 	return rabbitMQSpecEnv{specEnv: newSpecEnv("rabbitmq-access", ensureRabbitMQWorkerBackend)}
+}
+
+func newRedisSpecEnv() redisSpecEnv {
+	return redisSpecEnv{specEnv: newSpecEnv("redis-access", ensureRedisWorkerBackend)}
 }
 
 func (e rabbitMQSpecEnv) vhost(base string) string {

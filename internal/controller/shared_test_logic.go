@@ -18,7 +18,7 @@ func NewFakeClientWithScheme(objs ...client.Object) (client.Client, *runtime.Sch
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&accessv1.PostgresAccess{}, &accessv1.RabbitMQAccess{}, &accessv1.Controller{}).
+		WithStatusSubresource(&accessv1.PostgresAccess{}, &accessv1.RabbitMQAccess{}, &accessv1.RedisAccess{}, &accessv1.Controller{}).
 		WithObjects(objs...).
 		Build()
 

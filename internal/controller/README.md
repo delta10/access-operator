@@ -7,6 +7,7 @@ Current patterns in this repository:
 - `internal/controller/controller_controller.go` contains operator-wide reconciliation for the `Controller` CR.
 - `internal/controller/postgres/` contains the `PostgresAccess` controller and PostgreSQL-specific helpers.
 - `internal/controller/rabbitMQ/` contains the `RabbitMQAccess` controller and RabbitMQ-specific helpers.
+- `internal/controller/redis/` contains the `RedisAccess` controller and Redis ACL-specific helpers.
 - `internal/controller/shared_logic.go` contains shared helpers for access-style controllers that generate credentials and reconcile an external backend.
 
 Use this guide when adding a new controller under `internal/controller`.

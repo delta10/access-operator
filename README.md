@@ -1,6 +1,6 @@
 # Access operator
 
-Manages users and permissions for Postgres and RabbitMQ.
+Manages users and permissions for Postgres, RabbitMQ, and Redis.
 
 CloudNativePG is supported.
 
@@ -125,6 +125,49 @@ spec:
                       - containerPort: 15672
 ```
 
+#### Redis
+After creating the RabbitMQ operator make the following yaml file and apply it to your cluster:
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+    name: redis
+    namespace: access-operator-demo
+spec:
+    selector:
+        app: redis
+    ports:
+        - name: redis
+          port: 6379
+          targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: redis
+    namespace: access-operator-demo
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: redis
+    template:
+        metadata:
+            labels:
+                app: redis
+        spec:
+            containers:
+                - name: redis
+                  image: redis:7.4-alpine
+                  imagePullPolicy: IfNotPresent
+                  args:
+                      - redis-server
+                      - --requirepass
+                      - redis-password
+                  ports:
+                      - containerPort: 6379
+```
+
 ### Applying the sample CRs
 After creating the test resources, you can apply the sample CRs to create users and permissions for those services. 
 If you use the used the test resources above, you can apply the sample CRs using the following command:
@@ -147,6 +190,8 @@ In sample CR's you'll notice 3 ways of connecting to the service:
 3. `Connection details`: Here you'll specify the connection details directly in the CR, such as host, port, username, and password.   
     This is the simplest way to connect, but it's discouraged for production use since the credentials are stored in plain text within the CR.
 
+Redis ACL rules are configured through `spec.aclRules`. The operator always owns authentication state and prepends `reset`, `on`, and the generated password before your rules. User-supplied ACL rules must not include authentication directives such as `reset`, `on`, `off`, `nopass`, or password rules.
+
 
 # Controller configuration
 All of these settings are optional, and have safe defaults. If you don't need to change any of these settings, you can skip this section.
@@ -165,7 +210,7 @@ By default, no users are ignored **except** for Postgres users that can't login 
 To exclude certain usernames from being managed by the operator, you can specify them in the `Controller` resource as well.   
 This is useful for excluding default users like `postgres` or `admin` that are created by the service itself for example.
 
-Add the service's key (postgres, rabbitmq) within the settings as shown here in the CR to exclude the `postgres` and `admin` users:
+Add the service's key (postgres, rabbitmq, redis) within the settings as shown here in the CR to exclude the `postgres`, `admin`, and `default` users:
 ```yaml
 spec:
     settings:
@@ -176,4 +221,7 @@ spec:
     rabbitmq:
        excludedUsers:
          - admin
+    redis:
+       excludedUsers:
+         - default
 ```
