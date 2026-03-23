@@ -1,4 +1,4 @@
-# Access operator developer/contibutor guide
+# Access operator developer/contributor guide
 
 This project uses [Kubebuilder](https://kubebuilder.io/) to implement a Kubernetes operator that manages access to Postgres and RabbitMQ.
 
@@ -19,15 +19,18 @@ Then run a local instance of the operator with:
 make run
 ```
 
+## Adding a controller
+For the repository-specific workflow for new controllers, see [`internal/controller/README.md`](internal/controller/README.md).
+
 ## Running tests
-Ofcourse you can also use [act](https://github.com/nektos/act) to run the whole pipeline locally in Docker but performance isn't great.
+Of course you can also use [act](https://github.com/nektos/act) to run the whole pipeline locally in Docker but performance isn't great.
 
 ### Unit tests
 ```bash
 make test
 ```
 ### e2e tests
-for e2e tests, you can use:
+For e2e tests:
 Make sure you have [kind](https://kind.sigs.k8s.io/) installed and running, then you can run the e2e tests with:
 ```bash
 make test-e2e
@@ -38,5 +41,5 @@ A machine with 24gb of memory is highly recommended for running the e2e tests wh
 ### Linting
 This project uses [golangci-lint](https://golangci-lint.run/) for linting and formatting the codebase, you can run it with:
 ```bash
-make lint-fmt
+make lint-fix
 ```
