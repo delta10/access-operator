@@ -23,7 +23,6 @@ import (
 
 	"github.com/delta10/access-operator/internal/controller"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -47,25 +46,20 @@ type PostgresAccessReconciler struct {
 const postgresAccessFinalizer = controller.AccessResourceFinalizer
 
 func postgresReconcileStatusConfig() controller.ReconcileStatusConfig[*accessv1.PostgresAccess] {
-	return controller.ReconcileStatusConfig[*accessv1.PostgresAccess]{
-		NewObject: func() *accessv1.PostgresAccess {
+	return controller.NewStandardReconcileStatusConfig(
+		func() *accessv1.PostgresAccess {
 			return &accessv1.PostgresAccess{}
 		},
-		Conditions: func(obj *accessv1.PostgresAccess) *[]metav1.Condition {
+		func(obj *accessv1.PostgresAccess) *[]metav1.Condition {
 			return &obj.Status.Conditions
 		},
-		SetLastLog: func(obj *accessv1.PostgresAccess, message string) {
+		func(obj *accessv1.PostgresAccess, message string) {
 			obj.Status.LastLog = message
 		},
-		SetLastReconcileState: func(obj *accessv1.PostgresAccess, state accessv1.ReconcileState) {
+		func(obj *accessv1.PostgresAccess, state accessv1.ReconcileState) {
 			obj.Status.LastReconcileState = state
 		},
-		ConditionTypes: controller.ReconcileConditionTypes{
-			Ready:      controller.ReadyConditionType,
-			Success:    controller.SuccessConditionType,
-			InProgress: controller.InProgressConditionType,
-		},
-	}
+	)
 }
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -84,128 +78,31 @@ func postgresReconcileStatusConfig() controller.ReconcileStatusConfig[*accessv1.
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-
-	log.Info("Reconciling PostgresAccess", "namespace", req.Namespace, "name", req.Name)
-
-	var pg accessv1.PostgresAccess
-	if err := r.Get(ctx, req.NamespacedName, &pg); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
-	}
-
-	inSync := true
-
-	finalized, err := r.finalizePostgresAccess(ctx, &pg)
-	if err != nil {
-		r.emitEvent(&pg, corev1.EventTypeWarning, "FinalizeFailed", fmt.Sprintf("Finalization failed: %v", err))
-		statusErr := controller.SetReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			postgresReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			"FinalizeFailed",
-			fmt.Sprintf("Finalization failed: %v", err),
-		)
-		if statusErr != nil {
-			log.Error(statusErr, "failed to update status after finalization failure")
-		}
-		return ctrl.Result{}, err
-	}
-	// If the resource is finalized, we return early to avoid requeuing.
-	// The finalizer will have been removed, so no further reconciliation will occur for this resource.
-	if finalized {
-		return ctrl.Result{}, nil
-	}
-
-	// reconcile the secret that holds the connection details for this PostgresAccess CR.
-	_, passwordReused, err := controller.ReconcileGeneratedCredentialsSecret(
-		ctx,
-		r.Client,
-		r.Scheme,
-		&pg,
-		pg.Spec.GeneratedSecret,
-		req.Namespace,
-		pg.Spec.Username,
-	)
-	if err != nil {
-		log.Error(err, "failed to create/update secret", "secret", pg.Spec.GeneratedSecret)
-		r.emitEvent(&pg, corev1.EventTypeWarning, controller.SecretSyncErrorEventReason, err.Error())
-		statusErr := controller.SetReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			postgresReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			controller.SecretSyncErrorEventReason,
-			err.Error(),
-		)
-		if statusErr != nil {
-			log.Error(statusErr, "failed to update status after secret sync failure")
-		}
-		return ctrl.Result{}, err
-	}
-	if !passwordReused {
-		inSync = false
-	}
-
-	pgSync, err := r.reconcilePostgresAccess(ctx, &pg)
-	if err != nil {
-		log.Error(err, "failed to reconcile PostgresAccess")
-		r.emitEvent(&pg, corev1.EventTypeWarning, "DatabaseSyncFailed", err.Error())
-		statusErr := controller.SetReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			postgresReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			"DatabaseSyncFailed",
-			err.Error(),
-		)
-		if statusErr != nil {
-			log.Error(statusErr, "failed to update status after database sync failure")
-		}
-		return ctrl.Result{}, err
-	}
-
-	if inSync {
-		inSync = pgSync
-	}
-
-	if inSync {
-		if err := controller.SetReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			postgresReconcileStatusConfig(),
-			accessv1.ReconcileStateSuccess,
-			"Ready",
-			"PostgresAccess is in sync",
-		); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		r.emitEvent(&pg, corev1.EventTypeNormal, "ReconcileSuccess", "PostgresAccess is in sync and ready")
-
-		return ctrl.Result{RequeueAfter: controller.SyncedRequeueInterval}, nil
-	}
-
-	if err := controller.SetReconcileStatus(
-		ctx,
-		r.Client,
-		req.NamespacedName,
-		postgresReconcileStatusConfig(),
-		accessv1.ReconcileStateInProgress,
-		"Reconciling",
-		"PostgresAccess is not yet in sync",
-	); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{RequeueAfter: controller.PrivilegeDriftRequeueInterval}, nil
+	return controller.ReconcileManagedAccess(ctx, req, controller.ManagedAccessReconcileConfig[*accessv1.PostgresAccess]{
+		Client:       r.Client,
+		Scheme:       r.Scheme,
+		StatusConfig: postgresReconcileStatusConfig(),
+		Finalize:     r.finalizePostgresAccess,
+		Sync: func(ctx context.Context, pg *accessv1.PostgresAccess) (bool, string, error) {
+			inSync, err := r.reconcilePostgresAccess(ctx, pg)
+			return inSync, "DatabaseSyncFailed", err
+		},
+		SecretName: func(pg *accessv1.PostgresAccess) string {
+			return pg.Spec.GeneratedSecret
+		},
+		Username: func(pg *accessv1.PostgresAccess) string {
+			return pg.Spec.Username
+		},
+		EmitEvent: func(pg *accessv1.PostgresAccess, eventType, reason, message string) {
+			r.emitEvent(pg, eventType, reason, message)
+		},
+		FinalizeErrorReason: "FinalizeFailed",
+		SyncErrorReason:     "DatabaseSyncFailed",
+		InProgressMessage:   "PostgresAccess is not yet in sync",
+		SuccessMessage:      "PostgresAccess is in sync",
+		SuccessEventReason:  "ReconcileSuccess",
+		SuccessEventMessage: "PostgresAccess is in sync and ready",
+	})
 }
 
 // reconcilePostgresAccess connects to the PostgreSQL database, retrieves current grants and users.

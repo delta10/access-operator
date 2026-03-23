@@ -4,16 +4,18 @@
 package e2e
 
 import (
-    "fmt"
-    "os/exec"
-    "sync"
-    "time"
+	"fmt"
+	"os/exec"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
 
-    "github.com/delta10/access-operator/internal/controller"
-    . "github.com/onsi/ginkgo/v2"
-    . "github.com/onsi/gomega"
+	"github.com/delta10/access-operator/internal/controller"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
-    "github.com/delta10/access-operator/test/utils"
+	"github.com/delta10/access-operator/test/utils"
 )
 
 type sharedBackend struct {
@@ -38,6 +40,8 @@ var (
 
 	rabbitMQBackendOnce sync.Once
 	rabbitMQBackend     sharedBackend
+
+	suffixCounter uint64
 )
 
 func workerID() string {
@@ -45,7 +49,13 @@ func workerID() string {
 }
 
 func uniqueSuffix() string {
-	return fmt.Sprintf("%s-%d", workerID(), time.Now().UnixNano()%1_000_000)
+	counter := atomic.AddUint64(&suffixCounter, 1)
+	return fmt.Sprintf(
+		"%s-%s-%s",
+		workerID(),
+		strconv.FormatInt(time.Now().UnixNano(), 36),
+		strconv.FormatUint(counter, 36),
+	)
 }
 
 func createNamespace(name string) {
@@ -56,6 +66,13 @@ metadata:
 `, name)
 
 	Expect(utils.ApplyManifest(manifest)).To(Succeed(), "Failed to create namespace %s", name)
+
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "ns", name, "-o", "jsonpath={.status.phase}")
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to get namespace %s", name)
+		g.Expect(output).To(Equal("Active"))
+	}, 30*time.Second, time.Second).Should(Succeed())
 }
 
 func createTestNamespace(prefix string) string {
@@ -67,6 +84,15 @@ func createTestNamespace(prefix string) string {
 func deleteNamespace(name string) {
 	cmd := exec.Command("kubectl", "delete", "ns", name, "--ignore-not-found", "--wait=false")
 	_, _ = utils.Run(cmd)
+}
+
+func waitForNamespaceDeleted(name string) {
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "ns", name, "-o", "name", "--ignore-not-found")
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to check namespace %s", name)
+		g.Expect(output).To(BeEmpty())
+	}, 2*time.Minute, 2*time.Second).Should(Succeed())
 }
 
 func clearAllControllers() {
@@ -85,6 +111,7 @@ func ensureWorkerBackend(
 	once.Do(func() {
 		backendNamespace := fmt.Sprintf("%s-%s", namespacePrefix, workerID())
 		deleteNamespace(backendNamespace)
+		waitForNamespaceDeleted(backendNamespace)
 		createNamespace(backendNamespace)
 
 		conn := connectionForNamespace(backendNamespace)

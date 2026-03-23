@@ -25,7 +25,6 @@ import (
 	"github.com/go-logr/logr"
 	rabbithole "github.com/michaelklishin/rabbit-hole/v3"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
@@ -56,25 +55,20 @@ const (
 )
 
 func rabbitMQReconcileStatusConfig() controller.ReconcileStatusConfig[*accessv1.RabbitMQAccess] {
-	return controller.ReconcileStatusConfig[*accessv1.RabbitMQAccess]{
-		NewObject: func() *accessv1.RabbitMQAccess {
+	return controller.NewStandardReconcileStatusConfig(
+		func() *accessv1.RabbitMQAccess {
 			return &accessv1.RabbitMQAccess{}
 		},
-		Conditions: func(obj *accessv1.RabbitMQAccess) *[]metav1.Condition {
+		func(obj *accessv1.RabbitMQAccess) *[]metav1.Condition {
 			return &obj.Status.Conditions
 		},
-		SetLastLog: func(obj *accessv1.RabbitMQAccess, message string) {
+		func(obj *accessv1.RabbitMQAccess, message string) {
 			obj.Status.LastLog = message
 		},
-		SetLastReconcileState: func(obj *accessv1.RabbitMQAccess, state accessv1.ReconcileState) {
+		func(obj *accessv1.RabbitMQAccess, state accessv1.ReconcileState) {
 			obj.Status.LastReconcileState = state
 		},
-		ConditionTypes: controller.ReconcileConditionTypes{
-			Ready:      controller.ReadyConditionType,
-			Success:    controller.SuccessConditionType,
-			InProgress: controller.InProgressConditionType,
-		},
-	}
+	)
 }
 
 // AccessReconciler reconciles a RabbitMQAccess object
@@ -97,115 +91,30 @@ type AccessReconciler struct {
 func (r *AccessReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var rbq accessv1.RabbitMQAccess
-	if err := r.Get(ctx, req.NamespacedName, &rbq); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
-	}
-
-	inSync := true
-
-	finalized, err := r.finalizeRabbitMQAccess(ctx, &rbq)
-	if err != nil {
-		controller.EmitEvent(r.Recorder, &rbq, corev1.EventTypeWarning, rabbitMQAccessFinalizeErrorReason, "Finalization failed: "+err.Error())
-		statusErr := controller.SetReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			rabbitMQAccessFinalizeErrorReason,
-			fmt.Sprintf("Finalization failed: %v", err),
-		)
-		if statusErr != nil {
-			log.Error(statusErr, "failed to update status after finalization failure")
-		}
-		return ctrl.Result{}, err
-	}
-	if finalized {
-		return ctrl.Result{}, nil
-	}
-
-	_, passwordReused, err := controller.ReconcileGeneratedCredentialsSecret(
-		ctx,
-		r.Client,
-		r.Scheme,
-		&rbq,
-		rbq.Spec.GeneratedSecret,
-		req.Namespace,
-		rbq.Spec.Username,
-	)
-	if err != nil {
-		log.Error(err, "failed to create/update secret", "secret", rbq.Spec.GeneratedSecret)
-		controller.EmitEvent(r.Recorder, &rbq, corev1.EventTypeWarning, controller.SecretSyncErrorEventReason, err.Error())
-		statusErr := controller.SetReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			controller.SecretSyncErrorEventReason,
-			err.Error(),
-		)
-		if statusErr != nil {
-			log.Error(statusErr, "failed to update status after secret sync failure")
-		}
-		return ctrl.Result{}, err
-	}
-	if !passwordReused {
-		inSync = false
-	}
-
-	rbmqSync, reason, err := reconcileRabbitMQ(ctx, r, &rbq, log)
-	if err != nil {
-		controller.EmitEvent(r.Recorder, &rbq, corev1.EventTypeWarning, reason, "Failed to reconcile RabbitMQAccess: "+err.Error())
-		_ = controller.SetReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			reason,
-			err.Error(),
-		)
-
-		log.Error(err, "failed to reconcile RabbitMQAccess", "name", rbq.Name)
-		return ctrl.Result{}, err
-	}
-	if !rbmqSync {
-		inSync = false
-	}
-
-	if !inSync {
-		if err := controller.SetReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateInProgress,
-			"Reconciling",
-			"RabbitMQAccess is not yet in sync",
-		); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: controller.PrivilegeDriftRequeueInterval}, nil
-	}
-
-	if err := controller.SetReconcileStatus(
-		ctx,
-		r.Client,
-		req.NamespacedName,
-		rabbitMQReconcileStatusConfig(),
-		accessv1.ReconcileStateSuccess,
-		"Ready",
-		"RabbitMQAccess is in sync",
-	); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{RequeueAfter: controller.SyncedRequeueInterval}, nil
+	return controller.ReconcileManagedAccess(ctx, req, controller.ManagedAccessReconcileConfig[*accessv1.RabbitMQAccess]{
+		Client:       r.Client,
+		Scheme:       r.Scheme,
+		StatusConfig: rabbitMQReconcileStatusConfig(),
+		Finalize:     r.finalizeRabbitMQAccess,
+		Sync: func(ctx context.Context, rbq *accessv1.RabbitMQAccess) (bool, string, error) {
+			return reconcileRabbitMQ(ctx, r, rbq, log)
+		},
+		SecretName: func(rbq *accessv1.RabbitMQAccess) string {
+			return rbq.Spec.GeneratedSecret
+		},
+		Username: func(rbq *accessv1.RabbitMQAccess) string {
+			return rbq.Spec.Username
+		},
+		EmitEvent: func(rbq *accessv1.RabbitMQAccess, eventType, reason, message string) {
+			controller.EmitEvent(r.Recorder, rbq, eventType, reason, message)
+		},
+		FinalizeErrorReason: rabbitMQAccessFinalizeErrorReason,
+		SyncErrorEventText: func(_ *accessv1.RabbitMQAccess, _ string, err error) string {
+			return "Failed to reconcile RabbitMQAccess: " + err.Error()
+		},
+		InProgressMessage: "RabbitMQAccess is not yet in sync",
+		SuccessMessage:    "RabbitMQAccess is in sync",
+	})
 }
 
 func (r *AccessReconciler) finalizeRabbitMQAccess(ctx context.Context, rbq *accessv1.RabbitMQAccess) (bool, error) {

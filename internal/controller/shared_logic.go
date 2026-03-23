@@ -22,8 +22,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // PrivilegeDriftRequeueInterval is how long it takes when we detect a privilege drift before we check again for changes in the service that we need to reconcile.
@@ -66,10 +68,193 @@ type ReconcileStatusConfig[T client.Object] struct {
 	ConditionTypes        ReconcileConditionTypes
 }
 
+type ManagedAccessReconcileConfig[T client.Object] struct {
+	Client client.Client
+	Scheme *runtime.Scheme
+
+	StatusConfig ReconcileStatusConfig[T]
+	Finalize     func(context.Context, T) (bool, error)
+    // Sync is the function used to reconcile the backend service.
+	Sync         func(context.Context, T) (bool, string, error)
+	SecretName   func(T) string
+	Username     func(T) string
+	EmitEvent    func(T, string, string, string)
+
+	FinalizeErrorReason string
+	SyncErrorReason     string
+	SyncErrorEventText  func(T, string, error) string
+	InProgressMessage   string
+	SuccessMessage      string
+	SuccessEventReason  string
+	SuccessEventMessage string
+}
+
 type ConnectionDetails struct {
 	SharedConnectionDetails
 	Database string
 	SSLMode  string
+}
+
+func NewStandardReconcileStatusConfig[T client.Object](
+	newObject func() T,
+	conditions func(T) *[]metav1.Condition,
+	setLastLog func(T, string),
+	setLastReconcileState func(T, accessv1.ReconcileState),
+) ReconcileStatusConfig[T] {
+	return ReconcileStatusConfig[T]{
+		NewObject:             newObject,
+		Conditions:            conditions,
+		SetLastLog:            setLastLog,
+		SetLastReconcileState: setLastReconcileState,
+		ConditionTypes: ReconcileConditionTypes{
+			Ready:      ReadyConditionType,
+			Success:    SuccessConditionType,
+			InProgress: InProgressConditionType,
+		},
+	}
+}
+
+func ReconcileManagedAccess[T client.Object](
+	ctx context.Context,
+	req ctrl.Request,
+	config ManagedAccessReconcileConfig[T],
+) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	obj := config.StatusConfig.NewObject()
+	if err := config.Client.Get(ctx, req.NamespacedName, obj); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	emitEvent := func(eventType, reason, message string) {
+		if config.EmitEvent == nil {
+			return
+		}
+		config.EmitEvent(obj, eventType, reason, message)
+	}
+
+	inSync := true
+
+	finalized, err := config.Finalize(ctx, obj)
+	if err != nil {
+		message := fmt.Sprintf("Finalization failed: %v", err)
+		emitEvent(corev1.EventTypeWarning, config.FinalizeErrorReason, message)
+		statusErr := SetReconcileStatus(
+			ctx,
+			config.Client,
+			req.NamespacedName,
+			config.StatusConfig,
+			accessv1.ReconcileStateError,
+			config.FinalizeErrorReason,
+			message,
+		)
+		if statusErr != nil {
+			log.Error(statusErr, "failed to update status after finalization failure")
+		}
+		return ctrl.Result{}, err
+	}
+	if finalized {
+		return ctrl.Result{}, nil
+	}
+
+	_, passwordReused, err := ReconcileGeneratedCredentialsSecret(
+		ctx,
+		config.Client,
+		config.Scheme,
+		obj,
+		config.SecretName(obj),
+		req.Namespace,
+		config.Username(obj),
+	)
+	if err != nil {
+		log.Error(err, "failed to create/update secret", "secret", config.SecretName(obj))
+		emitEvent(corev1.EventTypeWarning, SecretSyncErrorEventReason, err.Error())
+		statusErr := SetReconcileStatus(
+			ctx,
+			config.Client,
+			req.NamespacedName,
+			config.StatusConfig,
+			accessv1.ReconcileStateError,
+			SecretSyncErrorEventReason,
+			err.Error(),
+		)
+		if statusErr != nil {
+			log.Error(statusErr, "failed to update status after secret sync failure")
+		}
+		return ctrl.Result{}, err
+	}
+	if !passwordReused {
+		inSync = false
+	}
+
+	backendInSync, reason, err := config.Sync(ctx, obj)
+	if err != nil {
+		if reason == "" {
+			reason = config.SyncErrorReason
+		}
+		if reason == "" {
+			reason = "ReconcileFailed"
+		}
+		message := err.Error()
+		if config.SyncErrorEventText != nil {
+			message = config.SyncErrorEventText(obj, reason, err)
+		}
+		emitEvent(corev1.EventTypeWarning, reason, message)
+		statusErr := SetReconcileStatus(
+			ctx,
+			config.Client,
+			req.NamespacedName,
+			config.StatusConfig,
+			accessv1.ReconcileStateError,
+			reason,
+			err.Error(),
+		)
+		if statusErr != nil {
+			log.Error(statusErr, "failed to update status after reconcile failure")
+		}
+
+		log.Error(err, "failed to reconcile managed access resource", "name", obj.GetName())
+		return ctrl.Result{}, err
+	}
+	if !backendInSync {
+		inSync = false
+	}
+
+	if !inSync {
+		if err := SetReconcileStatus(
+			ctx,
+			config.Client,
+			req.NamespacedName,
+			config.StatusConfig,
+			accessv1.ReconcileStateInProgress,
+			"Reconciling",
+			config.InProgressMessage,
+		); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: PrivilegeDriftRequeueInterval}, nil
+	}
+
+	if err := SetReconcileStatus(
+		ctx,
+		config.Client,
+		req.NamespacedName,
+		config.StatusConfig,
+		accessv1.ReconcileStateSuccess,
+		"Ready",
+		config.SuccessMessage,
+	); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if config.SuccessEventReason != "" && config.SuccessEventMessage != "" {
+		emitEvent(corev1.EventTypeNormal, config.SuccessEventReason, config.SuccessEventMessage)
+	}
+
+	return ctrl.Result{RequeueAfter: SyncedRequeueInterval}, nil
 }
 
 func ReconcileGeneratedCredentialsSecret(
