@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -81,12 +80,7 @@ var _ = Describe("Controller Controller", func() {
 			Expect(readyCondition.Reason).To(Equal(MultipleControllersFoundReason))
 		}
 
-		var eventOne, eventTwo, eventThree string
-		Eventually(eventRecorder.Events).Should(Receive(&eventOne))
-		Eventually(eventRecorder.Events).Should(Receive(&eventTwo))
-		Eventually(eventRecorder.Events).Should(Receive(&eventThree))
-
-		allEvents := strings.Join([]string{eventOne, eventTwo, eventThree}, " ")
+		allEvents := ReceiveEvents(eventRecorder.Events, 3)
 		Expect(allEvents).To(ContainSubstring(MultipleControllersFoundReason))
 		Expect(allEvents).To(ContainSubstring("controller-manager deployment: access-operator-system/access-operator-controller-manager"))
 	})
@@ -209,8 +203,7 @@ var _ = Describe("Controller Controller", func() {
 		Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 		Expect(readyCondition.Reason).To(Equal(invalidControllerNamespace))
 
-		var event string
-		Eventually(eventRecorder.Events).Should(Receive(&event))
+		event := ReceiveEvents(eventRecorder.Events, 1)
 		Expect(event).To(ContainSubstring(invalidControllerNamespace))
 	})
 })

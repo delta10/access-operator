@@ -19,7 +19,6 @@ package rabbitMQ
 import (
 	"context"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/delta10/access-operator/internal/controller"
@@ -73,7 +72,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 
 	Context("When resolving excluded RabbitMQ users", func() {
 		It("should normalize excluded usernames from singleton Controller settings", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "cluster-settings",
@@ -100,7 +99,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 
 	Context("When resolving excluded RabbitMQ vhosts", func() {
 		It("should normalize excluded vhosts and always retain the default vhost", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "cluster-settings",
@@ -208,7 +207,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 
 		It("should build a management client from an existing secret", func() {
 			secretName := testRabbitMQSecret
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -244,7 +243,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			secretName := testRabbitMQSecret
 			secretNamespace := "shared-rabbitmq"
 
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "controller-a", Namespace: "system"},
 					Spec: accessv1.ControllerSpec{
@@ -290,12 +289,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("multiple Controller resources found"))
 
-			var eventOne, eventTwo, eventThree string
-			Eventually(eventRecorder.Events).Should(Receive(&eventOne))
-			Eventually(eventRecorder.Events).Should(Receive(&eventTwo))
-			Eventually(eventRecorder.Events).Should(Receive(&eventThree))
-
-			allEvents := strings.Join([]string{eventOne, eventTwo, eventThree}, " ")
+			allEvents := controller.ReceiveEvents(eventRecorder.Events, 3)
 			Expect(allEvents).To(ContainSubstring(controller.MultipleControllersFoundReason))
 		})
 
@@ -303,7 +297,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			secretName := testRabbitMQSecret
 			secretNamespace := "shared-rabbitmq"
 
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "tenant-a"},
 					Spec: accessv1.ControllerSpec{
@@ -348,7 +342,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			username := testRabbitMQUsername
 			password := testRabbitMQPassword
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(
 				&accessv1.RabbitMQAccess{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "rabbitmq-access",
@@ -384,7 +378,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			password := testRabbitMQPassword
 			now := metav1.NewTime(time.Now())
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(
 				&accessv1.RabbitMQAccess{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "active-rabbitmq-access",
@@ -439,7 +433,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(rbq)
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(rbq)
 			reconciler := &AccessReconciler{
 				Client: fakeClient,
 				Scheme: fakeScheme,
@@ -500,7 +494,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(rbq, controllerSettings)
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(rbq, controllerSettings)
 			reconciler := &AccessReconciler{
 				Client: fakeClient,
 				Scheme: fakeScheme,
@@ -531,7 +525,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(rbq)
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(rbq)
 			eventRecorder := events.NewFakeRecorder(5)
 			reconciler := &AccessReconciler{
 				Client:   fakeClient,
@@ -564,8 +558,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateError))
 			Expect(updated.Status.LastLog).To(ContainSubstring("no valid connection details provided"))
 
-			var event string
-			Eventually(eventRecorder.Events).Should(Receive(&event))
+			event := controller.ReceiveEvents(eventRecorder.Events, 1)
 			Expect(event).To(ContainSubstring(rabbitMQAccessConnectionErrorReason))
 		})
 
@@ -584,7 +577,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(rbq)
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(rbq)
 			reconciler := &AccessReconciler{Client: fakeClient, Scheme: fakeScheme}
 
 			configs, err := reconciler.getAllRabbitMQUserConfigs(context.Background())
@@ -628,7 +621,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(rbq, existingSecret)
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(rbq, existingSecret)
 			reconciler := &AccessReconciler{Client: fakeClient, Scheme: fakeScheme}
 
 			configs, err := reconciler.getAllRabbitMQUserConfigs(context.Background())
@@ -676,7 +669,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(active, deleting)
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(active, deleting)
 			reconciler := &AccessReconciler{Client: fakeClient, Scheme: fakeScheme}
 
 			configs, err := reconciler.getAllRabbitMQUserConfigs(context.Background())
