@@ -21,6 +21,40 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// StaleVhostDeletionPolicy defines how the controller handles RabbitMQ vhosts
+// that are no longer referenced by any managed RabbitMQAccess resource.
+// +kubebuilder:validation:Enum=Delete;Retain
+type StaleVhostDeletionPolicy string
+
+const (
+	// StaleVhostDeletionPolicyDelete removes unreferenced RabbitMQ vhosts.
+	StaleVhostDeletionPolicyDelete StaleVhostDeletionPolicy = "Delete"
+	// StaleVhostDeletionPolicyRetain leaves unreferenced RabbitMQ vhosts intact.
+	StaleVhostDeletionPolicyRetain StaleVhostDeletionPolicy = "Retain"
+)
+
+type RabbitMQControllerSettings struct {
+	// excludedUsers is a list of RabbitMQ usernames that the controller ignores
+	// when reconciling RabbitMQAccess resources.
+	// This prevents the operator from creating, updating, or deleting the listed users.
+	// +listType=set
+	// +optional
+	ExcludedUsers []string `json:"excludedUsers,omitempty"`
+
+	// excludedVhosts is a list of RabbitMQ vhosts that the controller ignores
+	// when reconciling stale RabbitMQ vhosts.
+	// This prevents the operator from deleting the listed vhosts.
+	// +listType=set
+	// +optional
+	ExcludedVhosts []string `json:"excludedVhosts,omitempty"`
+
+	// staleVhostDeletionPolicy controls whether the controller deletes RabbitMQ
+	// vhosts that are no longer referenced by any managed RabbitMQAccess.
+	// +optional
+	// +kubebuilder:default="Retain"
+	StaleVhostDeletionPolicy *StaleVhostDeletionPolicy `json:"staleVhostDeletionPolicy,omitempty"`
+}
+
 type PostgresControllerSettings struct {
 	// excludedUsers is a list of PostgreSQL usernames that the controller ignores
 	// when reconciling PostgresAccess resources.
@@ -30,10 +64,19 @@ type PostgresControllerSettings struct {
 	ExcludedUsers []string `json:"excludedUsers,omitempty"`
 }
 
+type RedisControllerSettings struct {
+	// excludedUsers is a list of Redis ACL usernames that the controller ignores
+	// when reconciling RedisAccess resources.
+	// This prevents the operator from creating, updating, or deleting the listed users.
+	// +listType=set
+	// +optional
+	ExcludedUsers []string `json:"excludedUsers,omitempty"`
+}
+
 // ControllerSettings defines operator-wide behavior toggles.
 type ControllerSettings struct {
 	// existingSecretNamespace enables cross-namespace references for
-	// PostgresAccess.spec.connection.existingSecretNamespace.
+	// managed access resources that use spec.connection.existingSecretNamespace.
 	// +optional
 	// +kubebuilder:default=false
 	ExistingSecretNamespace bool `json:"existingSecretNamespace,omitempty"`
@@ -41,6 +84,14 @@ type ControllerSettings struct {
 	// postgres contains settings specific to PostgresAccess controllers.
 	// +optional
 	PostgresSettings PostgresControllerSettings `json:"postgres,omitempty"`
+
+	// rabbitmq contains settings specific to RabbitMQAccess controllers.
+	// +optional
+	RabbitMQSettings RabbitMQControllerSettings `json:"rabbitmq,omitempty"`
+
+	// redis contains settings specific to RedisAccess controllers.
+	// +optional
+	RedisSettings RedisControllerSettings `json:"redis,omitempty"`
 }
 
 // ControllerSpec defines the desired state of Controller.

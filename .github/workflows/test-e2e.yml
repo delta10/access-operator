@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -35,4 +35,4 @@ jobs:
           POSTGRES_DB: testdb
         run: |
           go mod tidy
-          CERT_MANAGER_INSTALL_SKIP=true make test-e2e
+          make test-e2e

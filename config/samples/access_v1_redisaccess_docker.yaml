@@ -1,0 +1,22 @@
+apiVersion: access.k8s.delta10.nl/v1
+kind: RedisAccess
+metadata:
+  labels:
+    app.kubernetes.io/name: access-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: redisaccess-sample
+spec:
+  generatedSecret: app-user-redis-credentials
+  username: app-user
+  connection:
+    host: localhost
+    port: 6379
+    username:
+      value: default
+    password:
+      value: redis-password
+  aclRules:
+    - "~cache:*"
+    - "~sessions:*"
+    - "+@read"
+    - "+@write"

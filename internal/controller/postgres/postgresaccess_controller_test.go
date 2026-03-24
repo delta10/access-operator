@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package postgres
 
 import (
 	"context"
@@ -23,17 +23,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/delta10/access-operator/internal/controller"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -144,7 +142,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(privilegeDriftRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(controller.PrivilegeDriftRequeueInterval))
 
 			By("verifying the mock database was called correctly")
 			Expect(mockDB.ConnectCalled).To(BeTrue())
@@ -218,7 +216,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(privilegeDriftRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(controller.PrivilegeDriftRequeueInterval))
 
 			By("verifying the secret was created with the specified username and password")
 			createdSecret := &corev1.Secret{}
@@ -264,7 +262,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should default ssl mode to require when missing in existing secret", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -280,7 +278,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			)
 
-			connectionDetails, err := getExistingSecretConnectionDetails(context.Background(), fakeClient, secretName, "default", nil)
+			connectionDetails, err := controller.GetExistingSecretConnectionDetails(context.Background(), fakeClient, secretName, "default", nil, connectionDefaults)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(connectionDetails.SSLMode).To(Equal("require"))
 		})
@@ -310,7 +308,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 		It("should build connection strings from an existing secret", func() {
 			expectedString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=require", username, password, host, port, database)
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -342,7 +340,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should reject cross-namespace existingSecret when no Controller resource exists", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -376,7 +374,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should reject cross-namespace existingSecret when singleton Controller policy is false", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "cluster-settings",
@@ -421,7 +419,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should allow cross-namespace existingSecret when singleton Controller policy is true", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "cluster-settings",
@@ -465,8 +463,53 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.shared-db.svc:5432/appdb?sslmode=require"))
 		})
 
+		It("should reject cross-namespace existingSecret when singleton Controller is outside the operator namespace", func() {
+			fakeClient, _ := controller.NewFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "cluster-settings",
+						Namespace: "tenant-a",
+					},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{
+							ExistingSecretNamespace: true,
+						},
+					},
+				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      secretName,
+						Namespace: sharedSecretNamespace,
+					},
+					Data: map[string][]byte{
+						"host":     []byte("postgres"),
+						"port":     []byte(strconv.Itoa(int(port))),
+						"database": []byte(database),
+						"username": []byte(username),
+						"password": []byte(password),
+					},
+				},
+			)
+
+			reconciler := &PostgresAccessReconciler{Client: fakeClient}
+			secretNamespace := sharedSecretNamespace
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default"},
+				Spec: accessv1.PostgresAccessSpec{
+					Connection: accessv1.ConnectionSpec{
+						ExistingSecret:          &secretName,
+						ExistingSecretNamespace: &secretNamespace,
+					},
+				},
+			}
+
+			_, err := reconciler.getConnectionString(context.Background(), pg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(`must be created in the operator namespace "system"`))
+		})
+
 		It("should normalize excluded usernames from singleton Controller settings", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "cluster-settings",
@@ -491,7 +534,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should hard fail cross-namespace existingSecret when multiple Controller resources exist", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "controller-a", Namespace: "system"},
 					Spec: accessv1.ControllerSpec{
@@ -539,13 +582,8 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("multiple Controller resources found"))
 
-			var eventOne, eventTwo, eventThree string
-			Eventually(eventRecorder.Events).Should(Receive(&eventOne))
-			Eventually(eventRecorder.Events).Should(Receive(&eventTwo))
-			Eventually(eventRecorder.Events).Should(Receive(&eventThree))
-
-			allEvents := strings.Join([]string{eventOne, eventTwo, eventThree}, " ")
-			Expect(allEvents).To(ContainSubstring(multipleControllersFoundReason))
+			allEvents := controller.ReceiveEvents(eventRecorder.Events, 3)
+			Expect(allEvents).To(ContainSubstring(controller.MultipleControllersFoundReason))
 		})
 
 		It("should return an error when no valid connection details are provided", func() {
@@ -573,7 +611,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				}
 				delete(data, missingKey)
 
-				fakeClient, _ := newFakeClientWithScheme(
+				fakeClient, _ := controller.NewFakeClientWithScheme(
 					&corev1.Secret{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      secretName,
@@ -583,7 +621,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					},
 				)
 
-				_, err := getExistingSecretConnectionDetails(context.Background(), fakeClient, secretName, "default", nil)
+				_, err := controller.GetExistingSecretConnectionDetails(context.Background(), fakeClient, secretName, "default", nil, connectionDefaults)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring(expectedError))
 			},
@@ -595,7 +633,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 		It("should fall back to postgres database when database name is missing or invalid in existing secret", func() {
 			expectedString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=require", username, password, host, port, "postgres")
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -685,7 +723,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			secondUser := "app-2"
 			otherNamespaceUser := "other"
 
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&accessv1.PostgresAccess{
 					ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "target"},
 					Spec: accessv1.PostgresAccessSpec{
@@ -735,7 +773,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		})
 
 		It("should read user password from the generated secret name", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient, _ := controller.NewFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "custom-generated-secret",
@@ -759,7 +797,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					Namespace: "default",
 				},
 			}
-			fakeClient, fakeScheme := newFakeClientWithScheme(pg)
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(pg)
 
 			reconciler := &PostgresAccessReconciler{
 				Client: fakeClient,
@@ -808,7 +846,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(pg)
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(pg)
 			eventRecorder := events.NewFakeRecorder(5)
 			reconciler := &PostgresAccessReconciler{
 				Client:   fakeClient,
@@ -826,24 +864,23 @@ var _ = Describe("PostgresAccess Controller", func() {
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
 			Expect(err).NotTo(HaveOccurred())
 
-			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, controller.ReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(readyCondition.Reason).To(Equal("DatabaseSyncFailed"))
 
-			successCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessSuccessConditionType)
+			successCondition := meta.FindStatusCondition(updated.Status.Conditions, controller.SuccessConditionType)
 			Expect(successCondition).NotTo(BeNil())
 			Expect(successCondition.Status).To(Equal(metav1.ConditionFalse))
 
-			inProgressCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessInProgressConditionType)
+			inProgressCondition := meta.FindStatusCondition(updated.Status.Conditions, controller.InProgressConditionType)
 			Expect(inProgressCondition).NotTo(BeNil())
 			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionFalse))
 
 			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateError))
 			Expect(updated.Status.LastLog).To(ContainSubstring("no valid connection details provided"))
 
-			var event string
-			Eventually(eventRecorder.Events).Should(Receive(&event))
+			event := controller.ReceiveEvents(eventRecorder.Events, 1)
 			Expect(event).To(ContainSubstring("DatabaseSyncFailed"))
 		})
 
@@ -870,7 +907,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(pg)
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(pg)
 			reconciler := &PostgresAccessReconciler{
 				Client: fakeClient,
 				Scheme: fakeScheme,
@@ -881,22 +918,22 @@ var _ = Describe("PostgresAccess Controller", func() {
 				NamespacedName: client.ObjectKeyFromObject(pg),
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(privilegeDriftRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(controller.PrivilegeDriftRequeueInterval))
 
 			inProgressStatus := &accessv1.PostgresAccess{}
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), inProgressStatus)
 			Expect(err).NotTo(HaveOccurred())
 
-			readyCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessReadyConditionType)
+			readyCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, controller.ReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(readyCondition.Reason).To(Equal("Reconciling"))
 
-			successCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessSuccessConditionType)
+			successCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, controller.SuccessConditionType)
 			Expect(successCondition).NotTo(BeNil())
 			Expect(successCondition.Status).To(Equal(metav1.ConditionFalse))
 
-			inProgressCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, postgresAccessInProgressConditionType)
+			inProgressCondition := meta.FindStatusCondition(inProgressStatus.Status.Conditions, controller.InProgressConditionType)
 			Expect(inProgressCondition).NotTo(BeNil())
 			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionTrue))
 
@@ -907,22 +944,22 @@ var _ = Describe("PostgresAccess Controller", func() {
 				NamespacedName: client.ObjectKeyFromObject(pg),
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(syncedRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(controller.SyncedRequeueInterval))
 
 			updated := &accessv1.PostgresAccess{}
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
 			Expect(err).NotTo(HaveOccurred())
 
-			readyCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			readyCondition = meta.FindStatusCondition(updated.Status.Conditions, controller.ReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(readyCondition.Reason).To(Equal("Ready"))
 
-			successCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessSuccessConditionType)
+			successCondition = meta.FindStatusCondition(updated.Status.Conditions, controller.SuccessConditionType)
 			Expect(successCondition).NotTo(BeNil())
 			Expect(successCondition.Status).To(Equal(metav1.ConditionTrue))
 
-			inProgressCondition = meta.FindStatusCondition(updated.Status.Conditions, postgresAccessInProgressConditionType)
+			inProgressCondition = meta.FindStatusCondition(updated.Status.Conditions, controller.InProgressConditionType)
 			Expect(inProgressCondition).NotTo(BeNil())
 			Expect(inProgressCondition.Status).To(Equal(metav1.ConditionFalse))
 
@@ -956,7 +993,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(
 				pg,
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
@@ -981,7 +1018,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				NamespacedName: client.ObjectKeyFromObject(pg),
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(syncedRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(controller.SyncedRequeueInterval))
 			Expect(mockDB.GrantPrivilegesCalled).To(BeTrue())
 			Expect(grantKeySet(mockDB.LastGrants)).To(HaveKey("appdb:public:CONNECT"))
 			Expect(grantKeySet(mockDB.LastGrants)).To(HaveKey("appdb:public:SELECT"))
@@ -990,7 +1027,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pg), updated)
 			Expect(err).NotTo(HaveOccurred())
 
-			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, postgresAccessReadyConditionType)
+			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, controller.ReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateSuccess))
@@ -1036,7 +1073,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := newFakeClientWithScheme(pg, controllerSettings)
+			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(pg, controllerSettings)
 			mockDB := NewMockDB()
 			mockDB.Users = []string{"excluded-orphan"}
 			reconciler := &PostgresAccessReconciler{
@@ -1049,7 +1086,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				NamespacedName: client.ObjectKeyFromObject(pg),
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(privilegeDriftRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(controller.PrivilegeDriftRequeueInterval))
 			Expect(mockDB.CreateUserCalled).To(BeFalse())
 			Expect(mockDB.GrantPrivilegesCalled).To(BeFalse())
 			Expect(mockDB.DropUserCalled).To(BeFalse())
@@ -1058,14 +1095,14 @@ var _ = Describe("PostgresAccess Controller", func() {
 				NamespacedName: client.ObjectKeyFromObject(pg),
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(syncedRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(controller.SyncedRequeueInterval))
 
 			now := metav1.NewTime(time.Now())
 			deletingPG := pg.DeepCopy()
 			deletingPG.Finalizers = []string{postgresAccessFinalizer}
 			deletingPG.DeletionTimestamp = &now
 
-			finalizerClient, finalizerScheme := newFakeClientWithScheme(deletingPG, controllerSettings.DeepCopy())
+			finalizerClient, finalizerScheme := controller.NewFakeClientWithScheme(deletingPG, controllerSettings.DeepCopy())
 			finalizerReconciler := &PostgresAccessReconciler{
 				Client: finalizerClient,
 				Scheme: finalizerScheme,
@@ -1096,19 +1133,4 @@ func grantKeySet(grants []accessv1.GrantSpec) map[string]struct{} {
 		}
 	}
 	return out
-}
-
-func newFakeClientWithScheme(objs ...client.Object) (client.Client, *runtime.Scheme) {
-	scheme := runtime.NewScheme()
-	Expect(accessv1.AddToScheme(scheme)).To(Succeed())
-	Expect(corev1.AddToScheme(scheme)).To(Succeed())
-	Expect(appsv1.AddToScheme(scheme)).To(Succeed())
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&accessv1.PostgresAccess{}, &accessv1.Controller{}).
-		WithObjects(objs...).
-		Build()
-
-	return fakeClient, scheme
 }

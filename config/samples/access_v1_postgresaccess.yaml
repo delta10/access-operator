@@ -5,11 +5,12 @@ metadata:
         app.kubernetes.io/name: access-operator
         app.kubernetes.io/managed-by: kustomize
     name: postgresaccess-sample
+    namespace: access-operator-demo
 spec:
     generatedSecret: my-app-postgres-credentials
     username: my-app-user
     connection:
-        host: localhost
+        host: postgres.access-operator-demo.svc.cluster.local
         port: 5432
         database: postgres
         username:

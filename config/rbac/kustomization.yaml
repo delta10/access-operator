@@ -22,7 +22,18 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the access-operator itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- redisaccess_admin_role.yaml
+- redisaccess_editor_role.yaml
+- redisaccess_viewer_role.yaml
 - postgresaccess_admin_role.yaml
 - postgresaccess_editor_role.yaml
 - postgresaccess_viewer_role.yaml
+
+# For each CRD, "Admin", "Editor" and "Viewer" roles are scaffolded by
+# default, aiding admins in cluster management. Those roles are
+# not used by the access-operator itself. You can comment the following lines
+# if you do not want those helpers be installed with your Project.
+- rabbitmqaccess_admin_role.yaml
+- rabbitmqaccess_editor_role.yaml
+- rabbitmqaccess_viewer_role.yaml
 

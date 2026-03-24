@@ -19,6 +19,7 @@ package utils
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -65,11 +66,24 @@ func Run(cmd *exec.Cmd) (string, error) {
 	return string(output), nil
 }
 
+// RunCommandWithTimeout executes a command with a deadline and returns its output.
+func RunCommandWithTimeout(timeout time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	output, err := Run(cmd)
+	if ctx.Err() != nil {
+		return output, fmt.Errorf("%q timed out after %s: %w", strings.Join(cmd.Args, " "), timeout, err)
+	}
+
+	return output, err
+}
+
 // UninstallCertManager uninstalls the cert manager
 func UninstallCertManager() {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
-	cmd := exec.Command("kubectl", "delete", "-f", url)
-	if _, err := Run(cmd); err != nil {
+	if _, err := RunCommandWithTimeout(2*time.Minute, "kubectl", "delete", "-f", url); err != nil {
 		warnError(err)
 	}
 
@@ -79,9 +93,18 @@ func UninstallCertManager() {
 		"cert-manager-controller",
 	}
 	for _, lease := range kubeSystemLeases {
-		cmd = exec.Command("kubectl", "delete", "lease", lease,
-			"-n", "kube-system", "--ignore-not-found", "--force", "--grace-period=0")
-		if _, err := Run(cmd); err != nil {
+		if _, err := RunCommandWithTimeout(
+			30*time.Second,
+			"kubectl",
+			"delete",
+			"lease",
+			lease,
+			"-n",
+			"kube-system",
+			"--ignore-not-found",
+			"--force",
+			"--grace-period=0",
+		); err != nil {
 			warnError(err)
 		}
 	}
@@ -90,19 +113,16 @@ func UninstallCertManager() {
 // InstallCertManager installs the cert manager bundle.
 func InstallCertManager() error {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
-	cmd := exec.Command("kubectl", "apply", "-f", url)
-	if _, err := Run(cmd); err != nil {
+	if _, err := RunCommandWithTimeout(2*time.Minute, "kubectl", "apply", "-f", url); err != nil {
 		return err
 	}
 	// Wait for cert-manager-webhook to be ready, which can take time if cert-manager
 	// was re-installed after uninstalling on a cluster.
-	cmd = exec.Command("kubectl", "wait", "deployment.apps/cert-manager-webhook",
+	_, err := RunCommandWithTimeout(6*time.Minute, "kubectl", "wait", "deployment.apps/cert-manager-webhook",
 		"--for", "condition=Available",
 		"--namespace", "cert-manager",
 		"--timeout", "5m",
 	)
-
-	_, err := Run(cmd)
 	return err
 }
 
@@ -120,8 +140,7 @@ func IsCertManagerCRDsInstalled() bool {
 	}
 
 	// Execute the kubectl command to get all CRDs
-	cmd := exec.Command("kubectl", "get", "crds")
-	output, err := Run(cmd)
+	output, err := RunCommandWithTimeout(30*time.Second, "kubectl", "get", "crds")
 	if err != nil {
 		return false
 	}
@@ -150,8 +169,7 @@ func LoadImageToKindClusterWithName(name string) error {
 	if v, ok := os.LookupEnv("KIND"); ok {
 		kindBinary = v
 	}
-	cmd := exec.Command(kindBinary, kindOptions...)
-	_, err := Run(cmd)
+	_, err := RunCommandWithTimeout(3*time.Minute, kindBinary, kindOptions...)
 	return err
 }
 

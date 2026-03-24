@@ -200,9 +200,7 @@ spec:
                 minItems: 1
                 type: array
               username:
-                description: |-
-                  username is the PostgreSQL username to create
-                  If empty, the operator will generate one
+                description: username is the PostgreSQL username to create
                 type: string
             required:
             - connection

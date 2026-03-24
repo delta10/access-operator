@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -41,7 +40,7 @@ var _ = Describe("Controller Controller", func() {
 		controllerAKey := types.NamespacedName{Name: "controller-a", Namespace: "system"}
 		controllerBKey := types.NamespacedName{Name: "controller-b", Namespace: "default"}
 
-		fakeClient, fakeScheme := newFakeClientWithScheme(
+		fakeClient, fakeScheme := NewFakeClientWithScheme(
 			&accessv1.Controller{
 				ObjectMeta: metav1.ObjectMeta{Name: controllerAKey.Name, Namespace: controllerAKey.Namespace},
 			},
@@ -78,16 +77,11 @@ var _ = Describe("Controller Controller", func() {
 			readyCondition := meta.FindStatusCondition(controllerObj.Status.Conditions, controllerReadyConditionType)
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(readyCondition.Reason).To(Equal(multipleControllersFoundReason))
+			Expect(readyCondition.Reason).To(Equal(MultipleControllersFoundReason))
 		}
 
-		var eventOne, eventTwo, eventThree string
-		Eventually(eventRecorder.Events).Should(Receive(&eventOne))
-		Eventually(eventRecorder.Events).Should(Receive(&eventTwo))
-		Eventually(eventRecorder.Events).Should(Receive(&eventThree))
-
-		allEvents := strings.Join([]string{eventOne, eventTwo, eventThree}, " ")
-		Expect(allEvents).To(ContainSubstring(multipleControllersFoundReason))
+		allEvents := ReceiveEvents(eventRecorder.Events, 3)
+		Expect(allEvents).To(ContainSubstring(MultipleControllersFoundReason))
 		Expect(allEvents).To(ContainSubstring("controller-manager deployment: access-operator-system/access-operator-controller-manager"))
 	})
 
@@ -97,7 +91,7 @@ var _ = Describe("Controller Controller", func() {
 			Name:      defaultManagerDeploymentName,
 			Namespace: defaultManagerDeploymentNamespace,
 		}
-		fakeClient, fakeScheme := newFakeClientWithScheme(
+		fakeClient, fakeScheme := NewFakeClientWithScheme(
 			&accessv1.Controller{
 				ObjectMeta: metav1.ObjectMeta{Name: controllerKey.Name, Namespace: controllerKey.Namespace},
 				Spec: accessv1.ControllerSpec{
@@ -161,5 +155,55 @@ var _ = Describe("Controller Controller", func() {
 		var deploymentList appsv1.DeploymentList
 		Expect(fakeClient.List(ctx, &deploymentList)).To(Succeed())
 		Expect(deploymentList.Items).To(HaveLen(1))
+	})
+
+	It("should reject a singleton Controller outside the operator namespace", func() {
+		controllerKey := types.NamespacedName{Name: "cluster-settings", Namespace: "default"}
+		deploymentKey := client.ObjectKey{
+			Name:      "access-operator-controller-manager",
+			Namespace: "access-operator-system",
+		}
+		fakeClient, fakeScheme := NewFakeClientWithScheme(
+			&accessv1.Controller{
+				ObjectMeta: metav1.ObjectMeta{Name: controllerKey.Name, Namespace: controllerKey.Namespace},
+				Spec: accessv1.ControllerSpec{
+					Settings: accessv1.ControllerSettings{
+						ExistingSecretNamespace: true,
+					},
+				},
+			},
+			&appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentKey.Name,
+					Namespace: deploymentKey.Namespace,
+					Labels: map[string]string{
+						managerControlPlaneLabelKey: managerControlPlaneLabelValue,
+						managerAppNameLabelKey:      managerAppNameLabelValue,
+					},
+				},
+			},
+		)
+
+		eventRecorder := events.NewFakeRecorder(10)
+		reconciler := &ControllerReconciler{
+			Client:   fakeClient,
+			Scheme:   fakeScheme,
+			Recorder: eventRecorder,
+		}
+
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: controllerKey})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring(`must be created in the operator namespace "access-operator-system"`))
+
+		controllerObj := &accessv1.Controller{}
+		Expect(fakeClient.Get(ctx, controllerKey, controllerObj)).To(Succeed())
+
+		readyCondition := meta.FindStatusCondition(controllerObj.Status.Conditions, controllerReadyConditionType)
+		Expect(readyCondition).NotTo(BeNil())
+		Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+		Expect(readyCondition.Reason).To(Equal(invalidControllerNamespace))
+
+		event := ReceiveEvents(eventRecorder.Events, 1)
+		Expect(event).To(ContainSubstring(invalidControllerNamespace))
 	})
 })
