@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package postgres
 
 import (
 	"context"
@@ -39,24 +39,18 @@ type DBInterface interface {
 	GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error)
 }
 
-// PostgresDB implements DBInterface using pgx
-type PostgresDB struct {
+// DB implements DBInterface using pgx
+type DB struct {
 	conn *pgx.Conn
-}
-
-type ConnectionDetails struct {
-	SharedConnectionDetails
-	Database string
-	SSLMode  string
 }
 
 const defaultSchemaName = "public"
 
-func NewPostgresDB() *PostgresDB {
-	return &PostgresDB{}
+func NewPostgresDB() *DB {
+	return &DB{}
 }
 
-func (p *PostgresDB) Connect(ctx context.Context, connectionString string) error {
+func (p *DB) Connect(ctx context.Context, connectionString string) error {
 	conn, err := pgx.Connect(ctx, connectionString)
 	if err != nil {
 		return err
@@ -65,14 +59,14 @@ func (p *PostgresDB) Connect(ctx context.Context, connectionString string) error
 	return nil
 }
 
-func (p *PostgresDB) Close(ctx context.Context) error {
+func (p *DB) Close(ctx context.Context) error {
 	if p.conn != nil {
 		return p.conn.Close(ctx)
 	}
 	return nil
 }
 
-func (p *PostgresDB) CreateUser(ctx context.Context, username, password string) error {
+func (p *DB) CreateUser(ctx context.Context, username, password string) error {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
@@ -95,7 +89,7 @@ func (p *PostgresDB) CreateUser(ctx context.Context, username, password string) 
 	return err
 }
 
-func (p *PostgresDB) UpdateUserPassword(ctx context.Context, username, newPassword string) error {
+func (p *DB) UpdateUserPassword(ctx context.Context, username, newPassword string) error {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
@@ -107,7 +101,7 @@ func (p *PostgresDB) UpdateUserPassword(ctx context.Context, username, newPasswo
 	return err
 }
 
-func (p *PostgresDB) DropUser(ctx context.Context, username string, policy accessv1.CleanupPolicy) (err error) {
+func (p *DB) DropUser(ctx context.Context, username string, policy accessv1.CleanupPolicy) (err error) {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
@@ -222,7 +216,7 @@ func (p *PostgresDB) DropUser(ctx context.Context, username string, policy acces
 	return nil
 }
 
-func (p *PostgresDB) GetUsers(ctx context.Context) ([]string, error) {
+func (p *DB) GetUsers(ctx context.Context) ([]string, error) {
 	if p.conn == nil {
 		return nil, fmt.Errorf("database connection is not initialized")
 	}
@@ -244,7 +238,7 @@ func (p *PostgresDB) GetUsers(ctx context.Context) ([]string, error) {
 	return users, nil
 }
 
-func (p *PostgresDB) GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
+func (p *DB) GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
@@ -347,7 +341,7 @@ func (p *PostgresDB) GrantPrivileges(ctx context.Context, grants []accessv1.Gran
 	return nil
 }
 
-func (p *PostgresDB) RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
+func (p *DB) RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}
@@ -449,7 +443,7 @@ func (p *PostgresDB) RevokePrivileges(ctx context.Context, grants []accessv1.Gra
 	return nil
 }
 
-func (p *PostgresDB) GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error) {
+func (p *DB) GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error) {
 	if p.conn == nil {
 		return nil, fmt.Errorf("database connection is not initialized")
 	}
@@ -592,85 +586,4 @@ func (p *PostgresDB) GetGrants(ctx context.Context) (map[string][]accessv1.Grant
 	}
 
 	return returnValue, nil
-}
-
-// MockDB implements DBInterface for testing
-type MockDB struct {
-	ConnectCalled         bool
-	CreateUserCalled      bool
-	DropUserCalled        bool
-	GrantPrivilegesCalled bool
-	LastConnectionString  string
-	LastUsername          string
-	LastCreatedUsername   string
-	LastDroppedUsername   string
-	CreatedUsernames      []string
-	DroppedUsernames      []string
-	LastPassword          string
-	LastGrants            []accessv1.GrantSpec
-	ConnectError          error
-	CreateUserError       error
-	GrantPrivilegesError  error
-	Users                 []string
-	Grants                map[string][]accessv1.GrantSpec
-}
-
-func NewMockDB() *MockDB {
-	return &MockDB{}
-}
-
-func (m *MockDB) Connect(ctx context.Context, connectionString string) error {
-	m.ConnectCalled = true
-	m.LastConnectionString = connectionString
-	return m.ConnectError
-}
-
-func (m *MockDB) Close(ctx context.Context) error {
-	return nil
-}
-
-func (m *MockDB) CreateUser(ctx context.Context, username, password string) error {
-	m.CreateUserCalled = true
-	m.LastUsername = username
-	m.LastCreatedUsername = username
-	m.CreatedUsernames = append(m.CreatedUsernames, username)
-	m.LastPassword = password
-	return m.CreateUserError
-}
-
-func (m *MockDB) UpdateUserPassword(ctx context.Context, username, newPassword string) error {
-	m.LastUsername = username
-	m.LastPassword = newPassword
-	return nil
-}
-
-func (m *MockDB) DropUser(ctx context.Context, username string, cleanupPolicy accessv1.CleanupPolicy) error {
-	m.DropUserCalled = true
-	m.LastDroppedUsername = username
-	m.DroppedUsernames = append(m.DroppedUsernames, username)
-	return nil
-}
-
-func (m *MockDB) GetUsers(ctx context.Context) ([]string, error) {
-	if m.Users != nil {
-		return m.Users, nil
-	}
-	return []string{"user1", "user2"}, nil
-}
-
-func (m *MockDB) GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
-	m.GrantPrivilegesCalled = true
-	m.LastGrants = grants
-	return m.GrantPrivilegesError
-}
-
-func (m *MockDB) RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error {
-	return nil
-}
-
-func (m *MockDB) GetGrants(ctx context.Context) (map[string][]accessv1.GrantSpec, error) {
-	if m.Grants != nil {
-		return m.Grants, nil
-	}
-	return nil, nil
 }

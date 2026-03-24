@@ -48,7 +48,7 @@ spec:
                     default: false
                     description: |-
                       existingSecretNamespace enables cross-namespace references for
-                      PostgresAccess.spec.connection.existingSecretNamespace.
+                      managed access resources that use spec.connection.existingSecretNamespace.
                     type: boolean
                   postgres:
                     description: postgres contains settings specific to PostgresAccess
@@ -95,6 +95,19 @@ spec:
                         - Delete
                         - Retain
                         type: string
+                    type: object
+                  redis:
+                    description: redis contains settings specific to RedisAccess controllers.
+                    properties:
+                      excludedUsers:
+                        description: |-
+                          excludedUsers is a list of Redis ACL usernames that the controller ignores
+                          when reconciling RedisAccess resources.
+                          This prevents the operator from creating, updating, or deleting the listed users.
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
                     type: object
                 type: object
             type: object

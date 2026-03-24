@@ -39,6 +39,7 @@ rules:
   - cronjobs
   - postgresaccesses
   - rabbitmqaccesses
+  - redisaccesses
   verbs:
   - create
   - delete
@@ -54,6 +55,7 @@ rules:
   - cronjobs/finalizers
   - postgresaccesses/finalizers
   - rabbitmqaccesses/finalizers
+  - redisaccesses/finalizers
   verbs:
   - update
 - apiGroups:
@@ -63,6 +65,7 @@ rules:
   - cronjobs/status
   - postgresaccesses/status
   - rabbitmqaccesses/status
+  - redisaccesses/status
   verbs:
   - get
   - patch

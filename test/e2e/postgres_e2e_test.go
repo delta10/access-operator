@@ -65,7 +65,7 @@ spec:
 		})
 
 		By("verifying the controller logs the expected reconcile error")
-		waitForControllerLogsContain(resourceName, "failed to reconcile PostgresAccess", "no valid connection details provided")
+		waitForControllerLogsContain(resourceName, "failed to reconcile managed access resource", "no valid connection details provided")
 	})
 
 	Context("CNPG", Serial, func() {

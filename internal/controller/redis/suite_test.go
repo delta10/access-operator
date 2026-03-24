@@ -14,27 +14,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package redis
 
 import (
 	"context"
 	"path/filepath"
 	"testing"
 
+	"github.com/delta10/access-operator/internal/controller"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
-	// +kubebuilder:scaffold:imports
 )
-
-// These tests use Ginkgo (BDD-style Go testing framework). Refer to
-// http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
 var (
 	ctx       = context.Context(nil)
@@ -44,25 +40,19 @@ var (
 	k8sClient client.Client
 )
 
-func TestControllers(t *testing.T) {
+func TestRedisControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
 
-	RunSpecs(t, "Controller Suite")
+	RunSpecs(t, "Redis Controller Suite")
 }
 
 var _ = BeforeSuite(func() {
-	state, err := BootstrapEnvTestSuite(
+	state, err := controller.BootstrapEnvTestSuite(
 		GinkgoWriter,
-		filepath.Join("..", "..", "config", "crd", "bases"),
-		filepath.Join("..", "..", "bin", "k8s"),
+		filepath.Join("..", "..", "..", "config", "crd", "bases"),
+		filepath.Join("..", "..", "..", "bin", "k8s"),
 		func() error {
-			if err := accessv1.AddToScheme(scheme.Scheme); err != nil {
-				return err
-			}
-
-			// +kubebuilder:scaffold:scheme
-
-			return nil
+			return accessv1.AddToScheme(scheme.Scheme)
 		},
 	)
 	Expect(err).NotTo(HaveOccurred())
@@ -75,7 +65,7 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
-	TeardownEnvTestSuite(EnvTestSuiteState{
+	controller.TeardownEnvTestSuite(controller.EnvTestSuiteState{
 		Ctx:    ctx,
 		Cancel: cancel,
 		Env:    testEnv,

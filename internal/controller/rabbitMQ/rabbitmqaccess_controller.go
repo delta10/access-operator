@@ -14,17 +14,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package rabbitMQ
 
 import (
 	"context"
 	"fmt"
 	"maps"
 
+	"github.com/delta10/access-operator/internal/controller"
 	"github.com/go-logr/logr"
 	rabbithole "github.com/michaelklishin/rabbit-hole/v3"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
@@ -36,12 +36,12 @@ import (
 	accessv1 "github.com/delta10/access-operator/api/v1"
 )
 
-type RabbitMQUserConfig struct {
+type UserConfig struct {
 	Password    string
 	Permissions []accessv1.RabbitMQPermissionSpec
 }
 
-const rabbitMQAccessFinalizer = accessResourceFinalizer
+const rabbitMQAccessFinalizer = controller.AccessResourceFinalizer
 
 const (
 	// quick reasons for error
@@ -54,30 +54,25 @@ const (
 	rabbitMQAccessFinalizeErrorReason   = "FinalizeError"
 )
 
-func rabbitMQReconcileStatusConfig() reconcileStatusConfig[*accessv1.RabbitMQAccess] {
-	return reconcileStatusConfig[*accessv1.RabbitMQAccess]{
-		newObject: func() *accessv1.RabbitMQAccess {
+func rabbitMQReconcileStatusConfig() controller.ReconcileStatusConfig[*accessv1.RabbitMQAccess] {
+	return controller.NewStandardReconcileStatusConfig(
+		func() *accessv1.RabbitMQAccess {
 			return &accessv1.RabbitMQAccess{}
 		},
-		conditions: func(obj *accessv1.RabbitMQAccess) *[]metav1.Condition {
+		func(obj *accessv1.RabbitMQAccess) *[]metav1.Condition {
 			return &obj.Status.Conditions
 		},
-		setLastLog: func(obj *accessv1.RabbitMQAccess, message string) {
+		func(obj *accessv1.RabbitMQAccess, message string) {
 			obj.Status.LastLog = message
 		},
-		setLastReconcileState: func(obj *accessv1.RabbitMQAccess, state accessv1.ReconcileState) {
+		func(obj *accessv1.RabbitMQAccess, state accessv1.ReconcileState) {
 			obj.Status.LastReconcileState = state
 		},
-		conditionTypes: reconcileConditionTypes{
-			Ready:      ReadyConditionType,
-			Success:    SuccessConditionType,
-			InProgress: InProgressConditionType,
-		},
-	}
+	)
 }
 
-// RabbitMQAccessReconciler reconciles a RabbitMQAccess object
-type RabbitMQAccessReconciler struct {
+// AccessReconciler reconciles a RabbitMQAccess object
+type AccessReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
@@ -93,125 +88,40 @@ type RabbitMQAccessReconciler struct {
 // move the current state of the cluster closer to the desired state.
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
-func (r *RabbitMQAccessReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *AccessReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var rbq accessv1.RabbitMQAccess
-	if err := r.Get(ctx, req.NamespacedName, &rbq); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
-	}
-
-	inSync := true
-
-	finalized, err := r.finalizeRabbitMQAccess(ctx, &rbq)
-	if err != nil {
-		emitEvent(r.Recorder, &rbq, corev1.EventTypeWarning, rabbitMQAccessFinalizeErrorReason, "Finalization failed: "+err.Error())
-		statusErr := setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			rabbitMQAccessFinalizeErrorReason,
-			fmt.Sprintf("Finalization failed: %v", err),
-		)
-		if statusErr != nil {
-			log.Error(statusErr, "failed to update status after finalization failure")
-		}
-		return ctrl.Result{}, err
-	}
-	if finalized {
-		return ctrl.Result{}, nil
-	}
-
-	_, passwordReused, err := reconcileGeneratedCredentialsSecret(
-		ctx,
-		r.Client,
-		r.Scheme,
-		&rbq,
-		rbq.Spec.GeneratedSecret,
-		req.Namespace,
-		rbq.Spec.Username,
-	)
-	if err != nil {
-		log.Error(err, "failed to create/update secret", "secret", rbq.Spec.GeneratedSecret)
-		emitEvent(r.Recorder, &rbq, corev1.EventTypeWarning, SecretSyncErrorEventReason, err.Error())
-		statusErr := setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			SecretSyncErrorEventReason,
-			err.Error(),
-		)
-		if statusErr != nil {
-			log.Error(statusErr, "failed to update status after secret sync failure")
-		}
-		return ctrl.Result{}, err
-	}
-	if !passwordReused {
-		inSync = false
-	}
-
-	rbmqSync, reason, err := reconcileRabbitMQ(ctx, r, &rbq, log)
-	if err != nil {
-		emitEvent(r.Recorder, &rbq, corev1.EventTypeWarning, reason, "Failed to reconcile RabbitMQAccess: "+err.Error())
-		_ = setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			reason,
-			err.Error(),
-		)
-
-		log.Error(err, "failed to reconcile RabbitMQAccess", "name", rbq.Name)
-		return ctrl.Result{}, err
-	}
-	if !rbmqSync {
-		inSync = false
-	}
-
-	if !inSync {
-		if err := setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			rabbitMQReconcileStatusConfig(),
-			accessv1.ReconcileStateInProgress,
-			"Reconciling",
-			"RabbitMQAccess is not yet in sync",
-		); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
-	}
-
-	if err := setReconcileStatus(
-		ctx,
-		r.Client,
-		req.NamespacedName,
-		rabbitMQReconcileStatusConfig(),
-		accessv1.ReconcileStateSuccess,
-		"Ready",
-		"RabbitMQAccess is in sync",
-	); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
+	return controller.ReconcileManagedAccess(ctx, req, controller.ManagedAccessReconcileConfig[*accessv1.RabbitMQAccess]{
+		Client:       r.Client,
+		Scheme:       r.Scheme,
+		StatusConfig: rabbitMQReconcileStatusConfig(),
+		Finalize:     r.finalizeRabbitMQAccess,
+		Sync: func(ctx context.Context, rbq *accessv1.RabbitMQAccess) (bool, string, error) {
+			return reconcileRabbitMQ(ctx, r, rbq, log)
+		},
+		SecretName: func(rbq *accessv1.RabbitMQAccess) string {
+			return rbq.Spec.GeneratedSecret
+		},
+		Username: func(rbq *accessv1.RabbitMQAccess) string {
+			return rbq.Spec.Username
+		},
+		EmitEvent: func(rbq *accessv1.RabbitMQAccess, eventType, reason, message string) {
+			controller.EmitEvent(r.Recorder, rbq, eventType, reason, message)
+		},
+		FinalizeErrorReason: rabbitMQAccessFinalizeErrorReason,
+		SyncErrorEventText: func(_ *accessv1.RabbitMQAccess, _ string, err error) string {
+			return "Failed to reconcile RabbitMQAccess: " + err.Error()
+		},
+		InProgressMessage: "RabbitMQAccess is not yet in sync",
+		SuccessMessage:    "RabbitMQAccess is in sync",
+	})
 }
 
-func (r *RabbitMQAccessReconciler) finalizeRabbitMQAccess(ctx context.Context, rbq *accessv1.RabbitMQAccess) (bool, error) {
+func (r *AccessReconciler) finalizeRabbitMQAccess(ctx context.Context, rbq *accessv1.RabbitMQAccess) (bool, error) {
 	log := logf.FromContext(ctx)
 
 	if rbq.DeletionTimestamp.IsZero() {
-		if err := addAccessFinalizerIfMissing(ctx, r.Client, rbq); err != nil {
+		if err := controller.AddAccessFinalizerIfMissing(ctx, r.Client, rbq); err != nil {
 			return false, err
 		}
 		return false, nil
@@ -227,7 +137,7 @@ func (r *RabbitMQAccessReconciler) finalizeRabbitMQAccess(ctx context.Context, r
 	}
 	if _, excluded := excludedUsers[rbq.Spec.Username]; excluded {
 		log.Info("Skipping finalizer RabbitMQ cleanup for excluded user", "username", rbq.Spec.Username)
-		if err := removeAccessFinalizerIfPresent(ctx, r.Client, rbq); err != nil {
+		if err := controller.RemoveAccessFinalizerIfPresent(ctx, r.Client, rbq); err != nil {
 			return true, err
 		}
 		return true, nil
@@ -294,14 +204,14 @@ func (r *RabbitMQAccessReconciler) finalizeRabbitMQAccess(ctx context.Context, r
 		}
 	}
 
-	if err := removeAccessFinalizerIfPresent(ctx, r.Client, rbq); err != nil {
+	if err := controller.RemoveAccessFinalizerIfPresent(ctx, r.Client, rbq); err != nil {
 		return true, err
 	}
 
 	return true, nil
 }
 
-func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *accessv1.RabbitMQAccess, log logr.Logger) (bool, string, error) {
+func reconcileRabbitMQ(ctx context.Context, r *AccessReconciler, rbq *accessv1.RabbitMQAccess, log logr.Logger) (bool, string, error) {
 	insync := true
 
 	rmqc, err := r.initializeRabbitMQClientConnection(ctx, rbq)
@@ -325,15 +235,15 @@ func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *ac
 
 	excludedUsers, err := r.resolveExcludedUsers(ctx)
 	if err != nil {
-		return false, multipleControllersFoundReason, fmt.Errorf("failed to resolve excluded users: %w", err)
+		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve excluded users: %w", err)
 	}
 	excludedVhosts, err := r.resolveExcludedVhosts(ctx)
 	if err != nil {
-		return false, multipleControllersFoundReason, fmt.Errorf("failed to resolve excluded vhosts: %w", err)
+		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve excluded vhosts: %w", err)
 	}
 	staleVhostDeletionPolicy, err := r.resolveStaleVhostDeletionPolicy(ctx)
 	if err != nil {
-		return false, multipleControllersFoundReason, fmt.Errorf("failed to resolve stale vhost deletion policy: %w", err)
+		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve stale vhost deletion policy: %w", err)
 	}
 
 	usersAndVhostsInSync, reason, err := r.reconcileUsersAndVhosts(rmqc, desiredUsers, usersPermissions, excludedUsers, log)
@@ -387,7 +297,7 @@ func reconcileRabbitMQ(ctx context.Context, r *RabbitMQAccessReconciler, rbq *ac
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *RabbitMQAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *AccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&accessv1.RabbitMQAccess{}).
 		Owns(&corev1.Secret{}).
@@ -395,20 +305,20 @@ func (r *RabbitMQAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *RabbitMQAccessReconciler) getAllRabbitMQUserConfigs(ctx context.Context) (map[string]RabbitMQUserConfig, error) {
+func (r *AccessReconciler) getAllRabbitMQUserConfigs(ctx context.Context) (map[string]UserConfig, error) {
 	var rbqs accessv1.RabbitMQAccessList
 	if err := r.List(ctx, &rbqs); err != nil {
 		return nil, err
 	}
 
-	configs := make(map[string]RabbitMQUserConfig, len(rbqs.Items))
+	configs := make(map[string]UserConfig, len(rbqs.Items))
 	for i := range rbqs.Items {
 		rbq := &rbqs.Items[i]
 		if !rbq.DeletionTimestamp.IsZero() {
 			continue
 		}
 
-		password, _, err := reconcileGeneratedCredentialsSecret(
+		password, _, err := controller.ReconcileGeneratedCredentialsSecret(
 			ctx,
 			r.Client,
 			r.Scheme,
@@ -437,16 +347,16 @@ func (r *RabbitMQAccessReconciler) getAllRabbitMQUserConfigs(ctx context.Context
 	return configs, nil
 }
 
-func (r *RabbitMQAccessReconciler) getRemainingRabbitMQUserConfigs(
+func (r *AccessReconciler) getRemainingRabbitMQUserConfigs(
 	ctx context.Context,
 	excludedKey client.ObjectKey,
-) (map[string]RabbitMQUserConfig, error) {
+) (map[string]UserConfig, error) {
 	var rbqs accessv1.RabbitMQAccessList
 	if err := r.List(ctx, &rbqs); err != nil {
 		return nil, err
 	}
 
-	configs := make(map[string]RabbitMQUserConfig, len(rbqs.Items))
+	configs := make(map[string]UserConfig, len(rbqs.Items))
 	for i := range rbqs.Items {
 		rbq := &rbqs.Items[i]
 		if client.ObjectKeyFromObject(rbq) == excludedKey || !rbq.DeletionTimestamp.IsZero() {
@@ -461,7 +371,7 @@ func (r *RabbitMQAccessReconciler) getRemainingRabbitMQUserConfigs(
 	return configs, nil
 }
 
-func (r *RabbitMQAccessReconciler) getAllRabbitMQConnectionUsernames(ctx context.Context) (map[string]struct{}, error) {
+func (r *AccessReconciler) getAllRabbitMQConnectionUsernames(ctx context.Context) (map[string]struct{}, error) {
 	var rbqs accessv1.RabbitMQAccessList
 	if err := r.List(ctx, &rbqs); err != nil {
 		return nil, err
@@ -492,9 +402,9 @@ func (r *RabbitMQAccessReconciler) getAllRabbitMQConnectionUsernames(ctx context
 	return usernames, nil
 }
 
-func (r *RabbitMQAccessReconciler) reconcileUsersAndVhosts(
+func (r *AccessReconciler) reconcileUsersAndVhosts(
 	rmqc *rabbithole.Client,
-	desiredUsers map[string]RabbitMQUserConfig,
+	desiredUsers map[string]UserConfig,
 	currentPermissions map[string][]accessv1.RabbitMQPermissionSpec,
 	excludedUsers map[string]struct{},
 	log logr.Logger,
@@ -540,9 +450,9 @@ func (r *RabbitMQAccessReconciler) reconcileUsersAndVhosts(
 	return inSync, "", nil
 }
 
-func resolveRabbitMQControllerSettings(ctx context.Context, r *RabbitMQAccessReconciler) (accessv1.ControllerSettings, error) {
-	return resolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
-		emitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, multipleControllersFoundReason, message)
+func resolveRabbitMQControllerSettings(ctx context.Context, r *AccessReconciler) (accessv1.ControllerSettings, error) {
+	return controller.ResolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
+		controller.EmitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, controller.MultipleControllersFoundReason, message)
 	})
 }
 

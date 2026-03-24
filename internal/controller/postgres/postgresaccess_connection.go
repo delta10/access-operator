@@ -1,4 +1,4 @@
-package controller
+package postgres
 
 import (
 	"context"
@@ -6,10 +6,17 @@ import (
 	"strings"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
+	"github.com/delta10/access-operator/internal/controller"
 )
 
-const defaultPostgresDatabase = "postgres"
-const defaultPostgresSSLMode = "require"
+var defaultPort = int32(5432)
+var defaultDatabase = "postgres"
+var defaultSSLMode = "require"
+var connectionDefaults = accessv1.ConnectionSpec{
+	Port:     &defaultPort,
+	Database: &defaultDatabase,
+	SSLMode:  &defaultSSLMode,
+}
 
 // getConnectionString constructs the PostgreSQL connection string based on the PostgresAccess spec.
 // It supports both direct connection details and referencing an existing secret for connection information.
@@ -20,7 +27,7 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 			return "", err
 		}
 
-		connection, err := getExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, secretNamespace, &pg.Spec.Connection)
+		connection, err := controller.GetExistingSecretConnectionDetails(ctx, r.Client, *pg.Spec.Connection.ExistingSecret, secretNamespace, &pg.Spec.Connection, connectionDefaults)
 		if err != nil {
 			return "", err
 		}
@@ -29,7 +36,7 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 
 	c := pg.Spec.Connection
 	if hasDirectConnectionDetails(c) {
-		connection, err := getDirectConnectionDetails(ctx, r.Client, c, pg.Namespace)
+		connection, err := controller.GetDirectConnectionDetails(ctx, r.Client, c, pg.Namespace, connectionDefaults)
 		if err != nil {
 			return "", err
 		}
@@ -41,22 +48,22 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 }
 
 func hasDirectConnectionDetails(c accessv1.ConnectionSpec) bool {
-	return hasSharedConnectionDetails(c) && c.Database != nil && *c.Database != ""
+	return controller.HasDirectConnectionDetails(c)
 }
 
 func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {
-	secretNamespace, err := resolveConnectionSecretNamespace(
+	secretNamespace, err := controller.ResolveConnectionSecretNamespace(
 		ctx,
 		r.Client,
 		pg.Namespace,
 		pg.Spec.Connection.ExistingSecretNamespace,
 		func(controllerObj *accessv1.Controller, message string) {
-			r.emitEvent(controllerObj, "Warning", multipleControllersFoundReason, message)
+			r.emitEvent(controllerObj, "Warning", controller.MultipleControllersFoundReason, message)
 		},
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "multiple Controller resources found") {
-			r.emitEvent(pg, "Warning", multipleControllersFoundReason, err.Error())
+			r.emitEvent(pg, "Warning", controller.MultipleControllersFoundReason, err.Error())
 		}
 		return "", err
 	}
@@ -70,23 +77,10 @@ func (r *PostgresAccessReconciler) resolveExcludedUsers(ctx context.Context) (ma
 		return nil, err
 	}
 
-	return normalizeExcludedUsers(settings.PostgresSettings.ExcludedUsers), nil
+	return controller.NormalizeExcludedUsers(settings.PostgresSettings.ExcludedUsers), nil
 }
 
-func normalizeExcludedUsers(users []string) map[string]struct{} {
-	normalized := make(map[string]struct{}, len(users))
-	for _, user := range users {
-		trimmed := strings.TrimSpace(user)
-		if trimmed == "" {
-			continue
-		}
-		normalized[trimmed] = struct{}{}
-	}
-
-	return normalized
-}
-
-func formatConnectionString(connection ConnectionDetails) string {
+func formatConnectionString(connection controller.ConnectionDetails) string {
 	return fmt.Sprintf(
 		"postgresql://%s:%s@%s:%s/%s?sslmode=%s",
 		connection.Username,
@@ -96,20 +90,4 @@ func formatConnectionString(connection ConnectionDetails) string {
 		connection.Database,
 		connection.SSLMode,
 	)
-}
-
-func resolveSSLMode(sslMode *string) string {
-	if sslMode != nil && *sslMode != "" {
-		return *sslMode
-	}
-
-	return defaultPostgresSSLMode
-}
-
-func resolveSSLModeFromSecret(secretData map[string][]byte) string {
-	if existingSSLMode, ok := getSecretValue(secretData, "sslmode"); ok {
-		return existingSSLMode
-	}
-
-	return defaultPostgresSSLMode
 }

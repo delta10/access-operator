@@ -1,4 +1,4 @@
-package controller
+package rabbitMQ
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
+	"github.com/delta10/access-operator/internal/controller"
 	rabbithole "github.com/michaelklishin/rabbit-hole/v3"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -15,7 +16,9 @@ import (
 const defaultRabbitMQAMQPPort = "5672"
 const defaultRabbitMQManagementPort = "15672"
 
-func (r *RabbitMQAccessReconciler) initializeRabbitMQClientConnection(ctx context.Context, rbq *accessv1.RabbitMQAccess) (*rabbithole.Client, error) {
+var connectionDefaults = accessv1.ConnectionSpec{}
+
+func (r *AccessReconciler) initializeRabbitMQClientConnection(ctx context.Context, rbq *accessv1.RabbitMQAccess) (*rabbithole.Client, error) {
 	connection, err := r.getConnectionDetails(ctx, rbq)
 	if err != nil {
 		return nil, err
@@ -25,46 +28,47 @@ func (r *RabbitMQAccessReconciler) initializeRabbitMQClientConnection(ctx contex
 	return rabbithole.NewClient(endpoint, connection.Username, connection.Password)
 }
 
-func (r *RabbitMQAccessReconciler) getConnectionDetails(ctx context.Context, rbq *accessv1.RabbitMQAccess) (ConnectionDetails, error) {
+func (r *AccessReconciler) getConnectionDetails(ctx context.Context, rbq *accessv1.RabbitMQAccess) (controller.ConnectionDetails, error) {
 	if rbq.Spec.Connection.ExistingSecret != nil && *rbq.Spec.Connection.ExistingSecret != "" {
 		secretNamespace, err := r.resolveExistingSecretNamespace(ctx, rbq)
 		if err != nil {
-			return ConnectionDetails{}, err
+			return controller.ConnectionDetails{}, err
 		}
 
-		return getExistingSecretConnectionDetails(
+		return controller.GetExistingSecretConnectionDetails(
 			ctx,
 			r.Client,
 			*rbq.Spec.Connection.ExistingSecret,
 			secretNamespace,
 			&rbq.Spec.Connection,
+			connectionDefaults,
 		)
 	}
 
-	if hasSharedConnectionDetails(rbq.Spec.Connection) {
-		return getDirectConnectionDetails(ctx, r.Client, rbq.Spec.Connection, rbq.Namespace)
+	if controller.HasDirectConnectionDetails(rbq.Spec.Connection) {
+		return controller.GetDirectConnectionDetails(ctx, r.Client, rbq.Spec.Connection, rbq.Namespace, connectionDefaults)
 	}
 
-	return ConnectionDetails{}, fmt.Errorf("no valid connection details provided")
+	return controller.ConnectionDetails{}, fmt.Errorf("no valid connection details provided")
 }
 
 // with interface here so we can use the emit function
-func (r *RabbitMQAccessReconciler) resolveExistingSecretNamespace(
+func (r *AccessReconciler) resolveExistingSecretNamespace(
 	ctx context.Context,
 	rbq *accessv1.RabbitMQAccess,
 ) (string, error) {
-	secretNamespace, err := resolveConnectionSecretNamespace(
+	secretNamespace, err := controller.ResolveConnectionSecretNamespace(
 		ctx,
 		r.Client,
 		rbq.Namespace,
 		rbq.Spec.Connection.ExistingSecretNamespace,
 		func(controllerObj *accessv1.Controller, message string) {
-			emitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, multipleControllersFoundReason, message)
+			controller.EmitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, controller.MultipleControllersFoundReason, message)
 		},
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "multiple Controller resources found") {
-			emitEvent(r.Recorder, rbq, corev1.EventTypeWarning, multipleControllersFoundReason, err.Error())
+			controller.EmitEvent(r.Recorder, rbq, corev1.EventTypeWarning, controller.MultipleControllersFoundReason, err.Error())
 		}
 		return "", err
 	}
@@ -95,28 +99,28 @@ func rabbitMQManagementEndpoint(host, port string) string {
 	return fmt.Sprintf("http://%s:%s", host, managementPort)
 }
 
-func (r *RabbitMQAccessReconciler) resolveExcludedUsers(ctx context.Context) (map[string]struct{}, error) {
+func (r *AccessReconciler) resolveExcludedUsers(ctx context.Context) (map[string]struct{}, error) {
 	settings, err := resolveRabbitMQControllerSettings(ctx, r)
 	if err != nil {
 		return nil, err
 	}
 
-	return normalizeExcludedUsers(settings.RabbitMQSettings.ExcludedUsers), nil
+	return controller.NormalizeExcludedUsers(settings.RabbitMQSettings.ExcludedUsers), nil
 }
 
-func (r *RabbitMQAccessReconciler) resolveExcludedVhosts(ctx context.Context) (map[string]struct{}, error) {
+func (r *AccessReconciler) resolveExcludedVhosts(ctx context.Context) (map[string]struct{}, error) {
 	settings, err := resolveRabbitMQControllerSettings(ctx, r)
 	if err != nil {
 		return nil, err
 	}
 
-	excludedVhosts := normalizeExcludedUsers(settings.RabbitMQSettings.ExcludedVhosts)
+	excludedVhosts := controller.NormalizeExcludedUsers(settings.RabbitMQSettings.ExcludedVhosts)
 	excludedVhosts["/"] = struct{}{}
 
 	return excludedVhosts, nil
 }
 
-func (r *RabbitMQAccessReconciler) resolveStaleVhostDeletionPolicy(ctx context.Context) (accessv1.StaleVhostDeletionPolicy, error) {
+func (r *AccessReconciler) resolveStaleVhostDeletionPolicy(ctx context.Context) (accessv1.StaleVhostDeletionPolicy, error) {
 	settings, err := resolveRabbitMQControllerSettings(ctx, r)
 	if err != nil {
 		return "", err

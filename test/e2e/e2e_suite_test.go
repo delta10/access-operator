@@ -83,6 +83,15 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
+	By("waiting for operator CRDs to become established")
+	err = utils.WaitForCRDsEstablished(
+		"controllers.access.k8s.delta10.nl",
+		"postgresaccesses.access.k8s.delta10.nl",
+		"rabbitmqaccesses.access.k8s.delta10.nl",
+		"redisaccesses.access.k8s.delta10.nl",
+	)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to wait for operator CRDs")
+
 	By("deploying the controller-manager")
 	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 	_, err = utils.Run(cmd)

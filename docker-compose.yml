@@ -1,23 +1,35 @@
 services:
-    postgres:
-        image: postgres:18
-        container_name: pg-dev
-        environment:
-            POSTGRES_USER: postgres
-            POSTGRES_PASSWORD: postgres
-            POSTGRES_DB: testdb
-            POSTGRES_HOST_AUTH_METHOD: scram-sha-256
-        command: >
-            -c listen_addresses='*'
-            -c max_connections=200
-            -c hba_file=/etc/postgresql/pg_hba.conf
-        volumes:
-            -  ./pg_hba.conf:/etc/postgresql/pg_hba.conf
-        ports:
-            - "5432:5432"
-        networks:
-            - pg-network
+  postgres:
+    image: postgres:18
+    container_name: pg-dev
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: testdb
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    command: >
+      -c listen_addresses='*'
+      -c max_connections=200
+      -c hba_file=/etc/postgresql/pg_hba.conf
+    volumes:
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf
+    ports:
+      - "5432:5432"
+    networks:
+      - dev-network
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: redis-dev
+    command:
+      - redis-server
+      - --requirepass
+      - redis-password
+    ports:
+      - "6379:6379"
+    networks:
+      - dev-network
 
 networks:
-    pg-network:
-        driver: bridge
+  dev-network:
+    driver: bridge

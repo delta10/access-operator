@@ -1,11 +1,11 @@
-package controller
+package rabbitMQ
 
 import (
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	rabbithole "github.com/michaelklishin/rabbit-hole/v3"
 )
 
-type RabbitMQInterface interface {
+type Interface interface {
 	ListUsersAndPermissions() (map[string][]string, error)
 	CreateUser(username, password string) error
 	DeleteUser(username string) error
@@ -14,7 +14,7 @@ type RabbitMQInterface interface {
 	DeleteVhost(vhost string) error
 }
 
-func (r *RabbitMQAccessReconciler) ListUsersAndPermissions(
+func (r *AccessReconciler) ListUsersAndPermissions(
 	rmqc *rabbithole.Client,
 ) (map[string][]accessv1.RabbitMQPermissionSpec, error) {
 	usersPermissionsReturn := make(map[string][]accessv1.RabbitMQPermissionSpec)
@@ -44,7 +44,7 @@ func (r *RabbitMQAccessReconciler) ListUsersAndPermissions(
 	return usersPermissionsReturn, nil
 }
 
-func (r *RabbitMQAccessReconciler) CreateUser(rmqc *rabbithole.Client, username, password string) error {
+func (r *AccessReconciler) CreateUser(rmqc *rabbithole.Client, username, password string) error {
 	_, err := rmqc.PutUser(username, rabbithole.UserSettings{
 		Password: password,
 		Tags:     nil,
@@ -53,13 +53,13 @@ func (r *RabbitMQAccessReconciler) CreateUser(rmqc *rabbithole.Client, username,
 	return err
 }
 
-func (r *RabbitMQAccessReconciler) DeleteUser(rmqc *rabbithole.Client, username string) error {
+func (r *AccessReconciler) DeleteUser(rmqc *rabbithole.Client, username string) error {
 	_, err := rmqc.DeleteUser(username)
 
 	return err
 }
 
-func (r *RabbitMQAccessReconciler) ListVhosts(rmqc *rabbithole.Client) ([]string, error) {
+func (r *AccessReconciler) ListVhosts(rmqc *rabbithole.Client) ([]string, error) {
 	vhostsResp, err := rmqc.ListVhosts()
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func (r *RabbitMQAccessReconciler) ListVhosts(rmqc *rabbithole.Client) ([]string
 	return vhosts, nil
 }
 
-func (r *RabbitMQAccessReconciler) vhostExists(rmqc *rabbithole.Client, vhost string) (bool, error) {
+func (r *AccessReconciler) vhostExists(rmqc *rabbithole.Client, vhost string) (bool, error) {
 	vhostsResp, err := rmqc.ListVhosts()
 	if err != nil {
 		return false, err
@@ -88,23 +88,23 @@ func (r *RabbitMQAccessReconciler) vhostExists(rmqc *rabbithole.Client, vhost st
 	return false, nil
 }
 
-func (r *RabbitMQAccessReconciler) CreateVhost(rmqc *rabbithole.Client, vhost string) error {
+func (r *AccessReconciler) CreateVhost(rmqc *rabbithole.Client, vhost string) error {
 	_, err := rmqc.PutVhost(vhost, rabbithole.VhostSettings{})
 
 	return err
 }
 
-func (r *RabbitMQAccessReconciler) DeleteVhost(rmqc *rabbithole.Client, vhost string) error {
+func (r *AccessReconciler) DeleteVhost(rmqc *rabbithole.Client, vhost string) error {
 	_, err := rmqc.DeleteVhost(vhost)
 
 	return err
 }
 
-func (r *RabbitMQAccessReconciler) SetPermissions(rmqc *rabbithole.Client, username string, permissions []accessv1.RabbitMQPermissionSpec) error {
+func (r *AccessReconciler) SetPermissions(rmqc *rabbithole.Client, username string, permissions []accessv1.RabbitMQPermissionSpec) error {
 	return r.SetPermissionsExact(rmqc, username, permissions, nil)
 }
 
-func (r *RabbitMQAccessReconciler) SetPermissionsExact(
+func (r *AccessReconciler) SetPermissionsExact(
 	rmqc *rabbithole.Client,
 	username string,
 	desiredPermissions []accessv1.RabbitMQPermissionSpec,
@@ -159,7 +159,7 @@ func stalePermissionVHosts(
 
 func staleRabbitMQVhosts(
 	currentVhosts []string,
-	desiredUsers map[string]RabbitMQUserConfig,
+	desiredUsers map[string]UserConfig,
 	currentPermissions map[string][]accessv1.RabbitMQPermissionSpec,
 	excludedUsers map[string]struct{},
 	excludedVhosts map[string]struct{},

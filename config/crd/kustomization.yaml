@@ -5,6 +5,7 @@ resources:
 - bases/access.k8s.delta10.nl_controllers.yaml
 - bases/access.k8s.delta10.nl_postgresaccesses.yaml
 - bases/access.k8s.delta10.nl_rabbitmqaccesses.yaml
+- bases/access.k8s.delta10.nl_redisaccesses.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

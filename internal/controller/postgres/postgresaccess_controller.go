@@ -14,15 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package postgres
 
 import (
 	"context"
 	"fmt"
 	"slices"
 
+	"github.com/delta10/access-operator/internal/controller"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -43,28 +43,23 @@ type PostgresAccessReconciler struct {
 	Recorder events.EventRecorder
 }
 
-const postgresAccessFinalizer = accessResourceFinalizer
+const postgresAccessFinalizer = controller.AccessResourceFinalizer
 
-func postgresReconcileStatusConfig() reconcileStatusConfig[*accessv1.PostgresAccess] {
-	return reconcileStatusConfig[*accessv1.PostgresAccess]{
-		newObject: func() *accessv1.PostgresAccess {
+func postgresReconcileStatusConfig() controller.ReconcileStatusConfig[*accessv1.PostgresAccess] {
+	return controller.NewStandardReconcileStatusConfig(
+		func() *accessv1.PostgresAccess {
 			return &accessv1.PostgresAccess{}
 		},
-		conditions: func(obj *accessv1.PostgresAccess) *[]metav1.Condition {
+		func(obj *accessv1.PostgresAccess) *[]metav1.Condition {
 			return &obj.Status.Conditions
 		},
-		setLastLog: func(obj *accessv1.PostgresAccess, message string) {
+		func(obj *accessv1.PostgresAccess, message string) {
 			obj.Status.LastLog = message
 		},
-		setLastReconcileState: func(obj *accessv1.PostgresAccess, state accessv1.ReconcileState) {
+		func(obj *accessv1.PostgresAccess, state accessv1.ReconcileState) {
 			obj.Status.LastReconcileState = state
 		},
-		conditionTypes: reconcileConditionTypes{
-			Ready:      ReadyConditionType,
-			Success:    SuccessConditionType,
-			InProgress: InProgressConditionType,
-		},
-	}
+	)
 }
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -83,128 +78,31 @@ func postgresReconcileStatusConfig() reconcileStatusConfig[*accessv1.PostgresAcc
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *PostgresAccessReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-
-	log.Info("Reconciling PostgresAccess", "namespace", req.Namespace, "name", req.Name)
-
-	var pg accessv1.PostgresAccess
-	if err := r.Get(ctx, req.NamespacedName, &pg); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
-	}
-
-	inSync := true
-
-	finalized, err := r.finalizePostgresAccess(ctx, &pg)
-	if err != nil {
-		r.emitEvent(&pg, corev1.EventTypeWarning, "FinalizeFailed", fmt.Sprintf("Finalization failed: %v", err))
-		statusErr := setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			postgresReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			"FinalizeFailed",
-			fmt.Sprintf("Finalization failed: %v", err),
-		)
-		if statusErr != nil {
-			log.Error(statusErr, "failed to update status after finalization failure")
-		}
-		return ctrl.Result{}, err
-	}
-	// If the resource is finalized, we return early to avoid requeuing.
-	// The finalizer will have been removed, so no further reconciliation will occur for this resource.
-	if finalized {
-		return ctrl.Result{}, nil
-	}
-
-	// reconcile the secret that holds the connection details for this PostgresAccess CR.
-	_, passwordReused, err := reconcileGeneratedCredentialsSecret(
-		ctx,
-		r.Client,
-		r.Scheme,
-		&pg,
-		pg.Spec.GeneratedSecret,
-		req.Namespace,
-		pg.Spec.Username,
-	)
-	if err != nil {
-		log.Error(err, "failed to create/update secret", "secret", pg.Spec.GeneratedSecret)
-		r.emitEvent(&pg, corev1.EventTypeWarning, SecretSyncErrorEventReason, err.Error())
-		statusErr := setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			postgresReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			SecretSyncErrorEventReason,
-			err.Error(),
-		)
-		if statusErr != nil {
-			log.Error(statusErr, "failed to update status after secret sync failure")
-		}
-		return ctrl.Result{}, err
-	}
-	if !passwordReused {
-		inSync = false
-	}
-
-	pgSync, err := r.reconcilePostgresAccess(ctx, &pg)
-	if err != nil {
-		log.Error(err, "failed to reconcile PostgresAccess")
-		r.emitEvent(&pg, corev1.EventTypeWarning, "DatabaseSyncFailed", err.Error())
-		statusErr := setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			postgresReconcileStatusConfig(),
-			accessv1.ReconcileStateError,
-			"DatabaseSyncFailed",
-			err.Error(),
-		)
-		if statusErr != nil {
-			log.Error(statusErr, "failed to update status after database sync failure")
-		}
-		return ctrl.Result{}, err
-	}
-
-	if inSync {
-		inSync = pgSync
-	}
-
-	if inSync {
-		if err := setReconcileStatus(
-			ctx,
-			r.Client,
-			req.NamespacedName,
-			postgresReconcileStatusConfig(),
-			accessv1.ReconcileStateSuccess,
-			"Ready",
-			"PostgresAccess is in sync",
-		); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		r.emitEvent(&pg, corev1.EventTypeNormal, "ReconcileSuccess", "PostgresAccess is in sync and ready")
-
-		return ctrl.Result{RequeueAfter: syncedRequeueInterval}, nil
-	}
-
-	if err := setReconcileStatus(
-		ctx,
-		r.Client,
-		req.NamespacedName,
-		postgresReconcileStatusConfig(),
-		accessv1.ReconcileStateInProgress,
-		"Reconciling",
-		"PostgresAccess is not yet in sync",
-	); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{RequeueAfter: privilegeDriftRequeueInterval}, nil
+	return controller.ReconcileManagedAccess(ctx, req, controller.ManagedAccessReconcileConfig[*accessv1.PostgresAccess]{
+		Client:       r.Client,
+		Scheme:       r.Scheme,
+		StatusConfig: postgresReconcileStatusConfig(),
+		Finalize:     r.finalizePostgresAccess,
+		Sync: func(ctx context.Context, pg *accessv1.PostgresAccess) (bool, string, error) {
+			inSync, err := r.reconcilePostgresAccess(ctx, pg)
+			return inSync, "DatabaseSyncFailed", err
+		},
+		SecretName: func(pg *accessv1.PostgresAccess) string {
+			return pg.Spec.GeneratedSecret
+		},
+		Username: func(pg *accessv1.PostgresAccess) string {
+			return pg.Spec.Username
+		},
+		EmitEvent: func(pg *accessv1.PostgresAccess, eventType, reason, message string) {
+			r.emitEvent(pg, eventType, reason, message)
+		},
+		FinalizeErrorReason: "FinalizeFailed",
+		SyncErrorReason:     "DatabaseSyncFailed",
+		InProgressMessage:   "PostgresAccess is not yet in sync",
+		SuccessMessage:      "PostgresAccess is in sync",
+		SuccessEventReason:  "ReconcileSuccess",
+		SuccessEventMessage: "PostgresAccess is in sync and ready",
+	})
 }
 
 // reconcilePostgresAccess connects to the PostgreSQL database, retrieves current grants and users.
@@ -335,7 +233,7 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, pg *accessv1.PostgresAccess) (bool, error) {
 	log := logf.FromContext(ctx)
 	if pg.DeletionTimestamp.IsZero() {
-		if err := addAccessFinalizerIfMissing(ctx, r.Client, pg); err != nil {
+		if err := controller.AddAccessFinalizerIfMissing(ctx, r.Client, pg); err != nil {
 			return false, err
 		}
 		return false, nil
@@ -351,7 +249,7 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 	}
 	if _, excluded := excludedUsers[pg.Spec.Username]; excluded {
 		log.Info("Skipping finalizer database cleanup for excluded PostgreSQL user", "username", pg.Spec.Username)
-		if err := removeAccessFinalizerIfPresent(ctx, r.Client, pg); err != nil {
+		if err := controller.RemoveAccessFinalizerIfPresent(ctx, r.Client, pg); err != nil {
 			return true, err
 		}
 		return true, nil
@@ -400,7 +298,7 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 		}
 	}
 
-	if err := removeAccessFinalizerIfPresent(ctx, r.Client, pg); err != nil {
+	if err := controller.RemoveAccessFinalizerIfPresent(ctx, r.Client, pg); err != nil {
 		return true, err
 	}
 
@@ -417,7 +315,7 @@ func (r *PostgresAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func (r *PostgresAccessReconciler) emitEvent(object client.Object, eventType, reason, message string) {
-	emitEvent(r.Recorder, object, eventType, reason, message)
+	controller.EmitEvent(r.Recorder, object, eventType, reason, message)
 }
 
 // UserGrants represents a username and their associated grants
@@ -470,7 +368,7 @@ func getUserPassword(ctx context.Context, c client.Client, namespace, secretName
 }
 
 func resolvePostgresControllerSettings(ctx context.Context, r *PostgresAccessReconciler) (accessv1.ControllerSettings, error) {
-	return resolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
-		r.emitEvent(controllerObj, "Warning", multipleControllersFoundReason, message)
+	return controller.ResolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
+		r.emitEvent(controllerObj, "Warning", controller.MultipleControllersFoundReason, message)
 	})
 }
