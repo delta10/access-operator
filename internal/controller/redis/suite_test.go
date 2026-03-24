@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/delta10/access-operator/internal/controller"
+	"github.com/delta10/access-operator/internal/controller/testsupport"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -47,7 +47,7 @@ func TestRedisControllers(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	state, err := controller.BootstrapEnvTestSuite(
+	state, err := testsupport.BootstrapEnvTestSuite(
 		GinkgoWriter,
 		filepath.Join("..", "..", "..", "config", "crd", "bases"),
 		filepath.Join("..", "..", "..", "bin", "k8s"),
@@ -65,7 +65,7 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
-	controller.TeardownEnvTestSuite(controller.EnvTestSuiteState{
+	testsupport.TeardownEnvTestSuite(testsupport.EnvTestSuiteState{
 		Ctx:    ctx,
 		Cancel: cancel,
 		Env:    testEnv,

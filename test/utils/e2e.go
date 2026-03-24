@@ -102,8 +102,7 @@ func WaitForCRDsEstablished(crdNames ...string) error {
 		args = append(args, "crd/"+crdName)
 	}
 
-	cmd := exec.Command("kubectl", args...)
-	_, err := Run(cmd)
+	_, err := RunCommandWithTimeout(3*time.Minute, "kubectl", args...)
 	return err
 }
 

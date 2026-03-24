@@ -55,8 +55,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	SetDefaultEventuallyPollingInterval(time.Second)
 
 	By("building the manager image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
-	_, err := utils.Run(cmd)
+	_, err := utils.RunCommandWithTimeout(10*time.Minute, "make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
 
 	// TODO(user): If you want to change the e2e test vendor from Kind,
@@ -68,19 +67,16 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	setupCertManager()
 
 	By("creating manager namespace")
-	cmd = exec.Command("kubectl", "create", "ns", namespace)
-	_, err = utils.Run(cmd)
+	_, err = utils.RunCommandWithTimeout(30*time.Second, "kubectl", "create", "ns", namespace)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create namespace")
 
 	By("labeling the namespace to enforce the restricted security policy")
-	cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
+	_, err = utils.RunCommandWithTimeout(30*time.Second, "kubectl", "label", "--overwrite", "ns", namespace,
 		"pod-security.kubernetes.io/enforce=restricted")
-	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
 	By("installing CRDs")
-	cmd = exec.Command("make", "install")
-	_, err = utils.Run(cmd)
+	_, err = utils.RunCommandWithTimeout(5*time.Minute, "make", "install")
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
 	By("waiting for operator CRDs to become established")
@@ -93,8 +89,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to wait for operator CRDs")
 
 	By("deploying the controller-manager")
-	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-	_, err = utils.Run(cmd)
+	_, err = utils.RunCommandWithTimeout(5*time.Minute, "make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	return nil
 }, func(_ []byte) {

@@ -68,6 +68,8 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 GINKGO ?= go run github.com/onsi/ginkgo/v2/ginkgo
 KIND_CLUSTER ?= access-operator-test-e2e
 E2E_GINKGO_PROCS ?= 2
+E2E_GINKGO_POLL_PROGRESS_AFTER ?= 30s
+E2E_GINKGO_POLL_PROGRESS_INTERVAL ?= 30s
 RUN_ONLY ?=
 
 .PHONY: setup-test-e2e
@@ -88,11 +90,12 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Use RUN_ONLY=<context> to focus specs.
 	@status=0; \
 	run_only="$(RUN_ONLY)"; \
+	ginkgo_args="--procs=$(E2E_GINKGO_PROCS) --tags=e2e -v --poll-progress-after=$(E2E_GINKGO_POLL_PROGRESS_AFTER) --poll-progress-interval=$(E2E_GINKGO_POLL_PROGRESS_INTERVAL)"; \
 	if [ -n "$$run_only" ]; then \
 		echo "Running focused e2e specs matching: $$run_only"; \
-		KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) $(GINKGO) run --procs=$(E2E_GINKGO_PROCS) --tags=e2e -v --focus="$$run_only" ./test/e2e || status=$$?; \
+		KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) $(GINKGO) run $$ginkgo_args --focus="$$run_only" ./test/e2e || status=$$?; \
 	else \
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) $(GINKGO) run --procs=$(E2E_GINKGO_PROCS) --tags=e2e -v ./test/e2e || status=$$?; \
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) $(GINKGO) run $$ginkgo_args ./test/e2e || status=$$?; \
 	fi; \
 	$(MAKE) cleanup-test-e2e || status=$$?; \
 	exit $$status
