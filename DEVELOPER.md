@@ -38,6 +38,12 @@ make test-e2e
 Though beware it'll consume quite a bit of memory, within WSL2 it consumed 9gb during the test run, MacOS did roughly 7gb.  
 A machine with 24gb of memory is highly recommended for running the e2e tests while developing other things.
 
+If you only want to run a specific context use the following command:
+```bash
+make test-e2e CONTEXT=postgres
+```
+This will only run the tests in the `postgres` context.
+
 ### Linting
 This project uses [golangci-lint](https://golangci-lint.run/) for linting and formatting the codebase, you can run it with:
 ```bash

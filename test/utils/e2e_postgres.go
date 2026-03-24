@@ -33,6 +33,15 @@ import (
 	"github.com/delta10/access-operator/internal/controller"
 )
 
+const (
+	cnpgOperatorManifestURL   = "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.1.yaml"
+	cnpgSystemNamespace       = "cnpg-system"
+	cnpgWebhookServiceName    = "cnpg-webhook-service"
+	cnpgControllerDeployment  = "cnpg-controller-manager"
+	cnpgClusterName           = "cnpg-postgres"
+	cnpgWebhookStartupTimeout = 3 * time.Minute
+)
+
 // DatabaseConnectionDetailsForNamespace returns connection details for the provided postgres namespace.
 func DatabaseConnectionDetailsForNamespace(testNamespace string) controller.ConnectionDetails {
 	defaultClusterHost := fmt.Sprintf("postgres.%s.svc", testNamespace)
@@ -178,7 +187,7 @@ func DeletePostgresInstance(namespace string) error {
 
 func DeployCNPGInstance(namespace string) error {
 	cmd := exec.Command("kubectl", "apply", "--server-side", "-f",
-		"https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.1.yaml")
+		cnpgOperatorManifestURL)
 	_, err := Run(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to deploy CNPG operator: %w", err)
@@ -190,16 +199,22 @@ func DeployCNPGInstance(namespace string) error {
 		return fmt.Errorf("failed waiting for CNPG Cluster CRD: %w", err)
 	}
 
-	cmd = exec.Command("kubectl", "wait", "deployment/cnpg-controller-manager", "-n", "cnpg-system", "--for=condition=Available", "--timeout=3m")
+	cmd = exec.Command("kubectl", "wait", "deployment/"+cnpgControllerDeployment, "-n", cnpgSystemNamespace, "--for=condition=Available", "--timeout=3m")
 	_, err = Run(cmd)
 	if err != nil {
 		return fmt.Errorf("failed waiting for CNPG operator deployment: %w", err)
 	}
 
-	manifest := fmt.Sprintf(`apiVersion: postgresql.cnpg.io/v1
+	cmd = exec.Command("kubectl", "rollout", "status", "deployment/"+cnpgControllerDeployment, "-n", cnpgSystemNamespace, "--timeout=3m")
+	_, err = Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed waiting for CNPG operator rollout: %w", err)
+	}
+
+	clusterManifest := fmt.Sprintf(`apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: cnpg-postgres
+  name: %s
   namespace: %s
 spec:
   instances: 1
@@ -217,13 +232,17 @@ spec:
     parameters:
       shared_buffers: "256MB"
       max_connections: "100"
-`, namespace)
+`, cnpgClusterName, namespace)
 
-	if err := ApplyManifest(manifest); err != nil {
+	if err := waitForCNPGWebhookReady(clusterManifest); err != nil {
+		return fmt.Errorf("failed waiting for CNPG webhook readiness: %w", err)
+	}
+
+	if err := applyCNPGClusterManifest(clusterManifest); err != nil {
 		return fmt.Errorf("failed to apply CNPG cluster: %w", err)
 	}
 
-	cmd = exec.Command("kubectl", "wait", "cluster/cnpg-postgres", "-n", namespace, "--for=condition=Ready", "--timeout=5m")
+	cmd = exec.Command("kubectl", "wait", "cluster/"+cnpgClusterName, "-n", namespace, "--for=condition=Ready", "--timeout=5m")
 	_, err = Run(cmd)
 	if err != nil {
 		return fmt.Errorf("failed waiting for CNPG cluster to become Ready: %w", err)
@@ -246,6 +265,98 @@ spec:
 	}
 
 	return nil
+}
+
+func waitForCNPGWebhookReady(clusterManifest string) error {
+	if err := waitForCNPGWebhookEndpoints(); err != nil {
+		return err
+	}
+
+	var lastErr error
+	deadline := time.Now().Add(cnpgWebhookStartupTimeout)
+	for time.Now().Before(deadline) {
+		lastErr = ApplyManifestServerDryRun(clusterManifest)
+		if lastErr == nil {
+			return nil
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+
+	return fmt.Errorf("CNPG admission webhook never became ready: %w", lastErr)
+}
+
+func waitForCNPGWebhookEndpoints() error {
+	var lastErr error
+	deadline := time.Now().Add(cnpgWebhookStartupTimeout)
+	for time.Now().Before(deadline) {
+		cmd := exec.Command(
+			"kubectl",
+			"get",
+			"endpoints",
+			cnpgWebhookServiceName,
+			"-n",
+			cnpgSystemNamespace,
+			"-o",
+			"jsonpath={.subsets[*].addresses[*].ip}",
+		)
+
+		output, err := Run(cmd)
+		lastErr = err
+		if err == nil && strings.TrimSpace(output) != "" {
+			return nil
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("timed out waiting for webhook endpoints: %w", lastErr)
+	}
+
+	return fmt.Errorf("timed out waiting for webhook endpoints to become ready")
+}
+
+func applyCNPGClusterManifest(manifest string) error {
+	var lastErr error
+	deadline := time.Now().Add(time.Minute)
+	for time.Now().Before(deadline) {
+		lastErr = ApplyManifest(manifest)
+		if lastErr == nil {
+			return nil
+		}
+
+		if !isTransientCNPGWebhookError(lastErr) {
+			return lastErr
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+
+	return lastErr
+}
+
+func isTransientCNPGWebhookError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := err.Error()
+	transientMessages := []string{
+		"failed calling webhook",
+		"connect: connection refused",
+		"no endpoints available for service",
+		"service unavailable",
+		"context deadline exceeded",
+	}
+
+	for _, transientMessage := range transientMessages {
+		if strings.Contains(message, transientMessage) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func getPostgresExecTarget(namespace string) (string, error) {

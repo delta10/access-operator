@@ -160,6 +160,29 @@ spec:
 			utils.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
+		It("should reconcile permissions when they're changed in the config", func() {
+			resourceName := env.name("test-redis-deletion")
+			generatedSecret := env.name("test-redis-deletion-secret")
+			aclRules := []string{"~delete:*", "+get", "+set"}
+
+			By("creating a RedisAccess resource")
+			err := utils.CreateRedisAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, aclRules)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create RedisAccess resource")
+
+			By("verifying the Redis ACL user was created")
+			utils.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, true)
+			utils.WaitForRedisACLRules(env.backendNamespace, env.conn, resourceName, aclRules)
+
+			By("Changing the config to have different ACL rules")
+			newAclRules := []string{"~delete:*", "+get"}
+			err = utils.CreateRedisAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, newAclRules)
+			Expect(err).NotTo(HaveOccurred(), "Failed to update RedisAccess ACL rules")
+
+			By("verifying the Redis ACL rules are updated")
+			utils.WaitForRedisACLRules(env.backendNamespace, env.conn, resourceName, newAclRules)
+
+		})
+
 		It("should reconcile Redis ACL rules when they are manually drifted", func() {
 			resourceName := env.name("test-redis-drift")
 			generatedSecret := env.name("test-redis-drift-secret")
