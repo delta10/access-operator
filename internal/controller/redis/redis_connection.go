@@ -32,7 +32,7 @@ func (r *RedisAccessReconciler) getConnectionDetails(
 		)
 	}
 
-	if controller.HasSharedConnectionDetails(redisAccess.Spec.Connection) {
+	if controller.HasDirectConnectionDetails(redisAccess.Spec.Connection) {
 		return controller.GetDirectConnectionDetails(
 			ctx,
 			r.Client,

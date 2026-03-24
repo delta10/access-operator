@@ -304,7 +304,7 @@ func (r *RedisAccessReconciler) newACLClient(connection controller.SharedConnect
 }
 
 func (r *RedisAccessReconciler) getAllRedisUserConfigs(ctx context.Context) (map[string]UserConfig, error) {
-	var redisAccesses accessv1.RedisAccessList
+	redisAccesses := accessv1.RedisAccessList{}
 	if err := r.List(ctx, &redisAccesses); err != nil {
 		return nil, err
 	}
@@ -356,7 +356,7 @@ func (r *RedisAccessReconciler) getRemainingRedisUserConfigs(
 	ctx context.Context,
 	excludedKey client.ObjectKey,
 ) (map[string]UserConfig, error) {
-	var redisAccesses accessv1.RedisAccessList
+	redisAccesses := accessv1.RedisAccessList{}
 	if err := r.List(ctx, &redisAccesses); err != nil {
 		return nil, err
 	}
@@ -384,7 +384,7 @@ func (r *RedisAccessReconciler) getRemainingRedisUserConfigs(
 }
 
 func (r *RedisAccessReconciler) getAllRedisConnectionUsernames(ctx context.Context) (map[string]struct{}, error) {
-	var redisAccesses accessv1.RedisAccessList
+	redisAccesses := accessv1.RedisAccessList{}
 	if err := r.List(ctx, &redisAccesses); err != nil {
 		return nil, err
 	}

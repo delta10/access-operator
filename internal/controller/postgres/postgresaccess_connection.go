@@ -48,7 +48,7 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 }
 
 func hasDirectConnectionDetails(c accessv1.ConnectionSpec) bool {
-	return controller.HasSharedConnectionDetails(c)
+	return controller.HasDirectConnectionDetails(c)
 }
 
 func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(ctx context.Context, pg *accessv1.PostgresAccess) (string, error) {

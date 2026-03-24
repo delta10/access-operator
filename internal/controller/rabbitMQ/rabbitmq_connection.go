@@ -45,7 +45,7 @@ func (r *AccessReconciler) getConnectionDetails(ctx context.Context, rbq *access
 		)
 	}
 
-	if controller.HasSharedConnectionDetails(rbq.Spec.Connection) {
+	if controller.HasDirectConnectionDetails(rbq.Spec.Connection) {
 		return controller.GetDirectConnectionDetails(ctx, r.Client, rbq.Spec.Connection, rbq.Namespace, connectionDefaults)
 	}
 
