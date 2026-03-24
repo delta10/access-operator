@@ -75,11 +75,34 @@ func GetMetricsOutput(namespace, podName string) (string, error) {
 }
 
 // ApplyManifest applies the provided manifest through kubectl.
-func ApplyManifest(manifest string) error {
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
+func ApplyManifest(manifest string, args ...string) error {
+	cmdArgs := append([]string{"apply"}, args...)
+	cmdArgs = append(cmdArgs, "-f", "-")
+	cmd := exec.Command("kubectl", cmdArgs...)
 	// Raw multiline strings in Go can accidentally include leading/trailing
 	// indentation from the closing backtick line, which breaks YAML parsing.
 	cmd.Stdin = strings.NewReader(strings.TrimSpace(manifest) + "\n")
+	_, err := Run(cmd)
+	return err
+}
+
+// ApplyManifestServerDryRun validates the provided manifest through kubectl server-side dry-run.
+func ApplyManifestServerDryRun(manifest string) error {
+	return ApplyManifest(manifest, "--dry-run=server")
+}
+
+// WaitForCRDsEstablished waits until the provided CRDs are Established.
+func WaitForCRDsEstablished(crdNames ...string) error {
+	if len(crdNames) == 0 {
+		return nil
+	}
+
+	args := []string{"wait", "--for=condition=Established", "--timeout=2m"}
+	for _, crdName := range crdNames {
+		args = append(args, "crd/"+crdName)
+	}
+
+	cmd := exec.Command("kubectl", args...)
 	_, err := Run(cmd)
 	return err
 }

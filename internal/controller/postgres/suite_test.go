@@ -18,30 +18,25 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/delta10/access-operator/internal/controller"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 )
 
 var (
-	ctx       context.Context
-	cancel    context.CancelFunc
-	testEnv   *envtest.Environment
-	cfg       *rest.Config
+	ctx       = context.Context(nil)
+	cancel    = context.CancelFunc(nil)
+	testEnv   = (*envtest.Environment)(nil)
+	cfg       = (*rest.Config)(nil)
 	k8sClient client.Client
 )
 
@@ -52,56 +47,29 @@ func TestPostgresControllers(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
-
-	ctx, cancel = context.WithCancel(context.TODO())
-
-	var err error
-	err = accessv1.AddToScheme(scheme.Scheme)
+	state, err := controller.BootstrapEnvTestSuite(
+		GinkgoWriter,
+		filepath.Join("..", "..", "..", "config", "crd", "bases"),
+		filepath.Join("..", "..", "..", "bin", "k8s"),
+		func() error {
+			return accessv1.AddToScheme(scheme.Scheme)
+		},
+	)
 	Expect(err).NotTo(HaveOccurred())
 
-	By("bootstrapping test environment")
-	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
-		ErrorIfCRDPathMissing: true,
-	}
-
-	if getFirstFoundEnvTestBinaryDir() != "" {
-		testEnv.BinaryAssetsDirectory = getFirstFoundEnvTestBinaryDir()
-	}
-
-	cfg, err = testEnv.Start()
-	Expect(err).NotTo(HaveOccurred())
-	Expect(cfg).NotTo(BeNil())
-
-	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(k8sClient).NotTo(BeNil())
+	ctx = state.Ctx
+	cancel = state.Cancel
+	testEnv = state.Env
+	cfg = state.Config
+	k8sClient = state.Client
 })
 
 var _ = AfterSuite(func() {
-	By("tearing down the test environment")
-	cancel()
-	Eventually(func() error {
-		return testEnv.Stop()
-	}, time.Minute, time.Second).Should(Succeed())
+	controller.TeardownEnvTestSuite(controller.EnvTestSuiteState{
+		Ctx:    ctx,
+		Cancel: cancel,
+		Env:    testEnv,
+		Config: cfg,
+		Client: k8sClient,
+	})
 })
-
-func getFirstFoundEnvTestBinaryDir() string {
-	basePath := filepath.Join("..", "..", "..", "bin", "k8s")
-	entries, err := os.ReadDir(basePath)
-	if err != nil {
-		logf.Log.Error(err, "Failed to read directory", "path", basePath)
-		return ""
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			return filepath.Join(basePath, entry.Name())
-		}
-	}
-	return ""
-}
-
-func newFakeClientWithScheme(objs ...client.Object) (client.Client, *runtime.Scheme) {
-	return controller.NewFakeClientWithScheme(objs...)
-}
