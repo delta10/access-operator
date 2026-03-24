@@ -68,7 +68,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 GINKGO ?= go run github.com/onsi/ginkgo/v2/ginkgo
 KIND_CLUSTER ?= access-operator-test-e2e
 E2E_GINKGO_PROCS ?= 2
-E2E_GINKGO_POLL_PROGRESS_AFTER ?= 30s
+E2E_GINKGO_POLL_PROGRESS_AFTER ?= 3m
 E2E_GINKGO_POLL_PROGRESS_INTERVAL ?= 30s
 RUN_ONLY ?=
 
