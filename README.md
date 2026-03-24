@@ -78,7 +78,7 @@ spec:
 ```
 
 #### RabbitMQ
-After creating the Postgres operator make the following yaml file and apply it to your cluster:
+After creating Postgres make the following yaml file and apply it to your cluster:
 ```yaml
 apiVersion: v1
 kind: Service
@@ -126,7 +126,7 @@ spec:
 ```
 
 #### Redis
-After creating the RabbitMQ operator make the following yaml file and apply it to your cluster:
+After creating RabbitMQ make the following yaml file and apply it to your cluster:
 ```yaml
 apiVersion: v1
 kind: Service
@@ -171,9 +171,19 @@ spec:
 ### Applying the sample CRs
 After creating the test resources, you can apply the sample CRs to create users and permissions for those services. 
 If you use the used the test resources above, you can apply the sample CRs using the following command:
+Postgres:
 ```bash
 kubectl apply -f config/samples/access_v1_postgresaccess.yaml
 ```
+RabbitMQ:
+```bash
+kubectl apply -f config/samples/access_v1_rabbitmqaccess.yaml
+```
+Redis:
+```bash
+kubectl apply -f config/samples/access_v1_redisaccess.yaml
+```
+
 
 # Creating custom resources
 
