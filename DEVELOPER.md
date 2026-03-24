@@ -1,6 +1,6 @@
 # Access operator developer/contributor guide
 
-This project uses [Kubebuilder](https://kubebuilder.io/) to implement a Kubernetes operator that manages access to Postgres and RabbitMQ.
+This project uses [Kubebuilder](https://kubebuilder.io/) to implement a Kubernetes operator that manages access to Postgres, Redis and RabbitMQ.
 
 ## Setup
 First make sure you have [Kubebuilder](https://book.kubebuilder.io/quick-start.html#installation) installed on your machine. Follow the instructions on the Kubebuilder website to set it up.
@@ -40,7 +40,7 @@ A machine with 24gb of memory is highly recommended for running the e2e tests wh
 
 If you only want to run a specific context use the following command:
 ```bash
-make test-e2e CONTEXT=postgres
+make test-e2e RUN_ONLY=postgres
 ```
 This will only run the tests in the `postgres` context.
 
