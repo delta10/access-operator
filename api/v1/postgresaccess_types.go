@@ -49,7 +49,6 @@ type SecretKeySelector struct {
 }
 
 // ConnectionSpec defines connection information for PostgreSQL
-// +kubebuilder:validation:XValidation:rule="!has(self.existingSecretNamespace) || has(self.existingSecret)",message="existingSecretNamespace can only be set when existingSecret is set"
 type ConnectionSpec struct {
 	// existingSecret references an existing secret with connection details
 	// The secret must contain keys: host, port, dbname, username, password

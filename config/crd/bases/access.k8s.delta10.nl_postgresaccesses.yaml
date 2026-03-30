@@ -162,10 +162,6 @@ spec:
                     - message: either value or secretRef must be specified
                       rule: has(self.value) || has(self.secretRef)
                 type: object
-                x-kubernetes-validations:
-                - message: existingSecretNamespace can only be set when existingSecret
-                    is set
-                  rule: '!has(self.existingSecretNamespace) || has(self.existingSecret)'
               generatedSecret:
                 description: generatedSecret is the name of the secret where generated
                   credentials will be stored
