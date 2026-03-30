@@ -36,7 +36,11 @@ func (r *PostgresAccessReconciler) getConnectionString(ctx context.Context, pg *
 
 	c := pg.Spec.Connection
 	if hasDirectConnectionDetails(c) {
-		connection, err := controller.GetDirectConnectionDetails(ctx, r.Client, c, pg.Namespace, connectionDefaults)
+        secretNamespace, err := r.resolveExistingSecretNamespace(ctx, pg)
+        if err != nil {
+            return "", err
+        }
+		connection, err := controller.GetDirectConnectionDetails(ctx, r.Client, c, secretNamespace, connectionDefaults)
 		if err != nil {
 			return "", err
 		}
