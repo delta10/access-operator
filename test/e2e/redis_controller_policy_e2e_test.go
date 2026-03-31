@@ -4,13 +4,12 @@
 package e2e
 
 import (
-	"fmt"
-	"strings"
+    "fmt"
+    "strings"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
-	"github.com/delta10/access-operator/test/utils"
+    utils2 "github.com/delta10/access-operator/test/e2e/utils"
+    . "github.com/onsi/ginkgo/v2"
+    . "github.com/onsi/gomega"
 )
 
 var _ = Describe("Redis", func() {
@@ -37,11 +36,11 @@ var _ = Describe("Redis", func() {
 			aclRules := []string{"~shared:*", "+get"}
 
 			By("creating the connection secret in another namespace")
-			secretName, err := utils.CreateRedisConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := utils2.CreateRedisConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a RedisAccess that references the shared secret namespace")
-			err = utils.CreateRedisAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, aclRules)
+			err = utils2.CreateRedisAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, aclRules)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RedisAccess")
 
 			By("verifying reconcile is denied with cross-namespace policy disabled")
@@ -52,7 +51,7 @@ var _ = Describe("Redis", func() {
 			})
 
 			By("verifying the requested Redis ACL user was not created")
-			utils.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, false)
+			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, false)
 		})
 
 		It("should deny cross-namespace existingSecret when singleton Controller setting is false", func() {
@@ -70,11 +69,11 @@ var _ = Describe("Redis", func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with false policy")
 
 			By("creating the connection secret in another namespace")
-			secretName, err := utils.CreateRedisConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := utils2.CreateRedisConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a RedisAccess that references the shared secret namespace")
-			err = utils.CreateRedisAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, aclRules)
+			err = utils2.CreateRedisAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, aclRules)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RedisAccess")
 
 			By("verifying reconcile is denied because singleton Controller policy is false")
@@ -83,7 +82,7 @@ var _ = Describe("Redis", func() {
 			})
 
 			By("verifying the requested Redis ACL user was not created")
-			utils.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, false)
+			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, false)
 		})
 
 		It("should create a RedisAccess resource using an existing connection secret from another namespace", func() {
@@ -101,19 +100,19 @@ var _ = Describe("Redis", func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to enable cross-namespace references via Controller CR")
 
 			By("creating the connection secret in the shared namespace")
-			secretName, err := utils.CreateRedisConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := utils2.CreateRedisConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a RedisAccess resource in the workload namespace that references the shared secret")
-			err = utils.CreateRedisAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, aclRules)
+			err = utils2.CreateRedisAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, aclRules)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RedisAccess resource with cross-namespace secret reference")
 
 			By("waiting for the generated secret to be created")
-			utils.WaitForSecretField(env.namespace, generatedSecretName, "username")
+			utils2.WaitForSecretField(env.namespace, generatedSecretName, "username")
 
 			By("verifying the Redis ACL user and rules were created")
-			utils.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, true)
-			utils.WaitForRedisACLRules(env.backendNamespace, env.conn, resourceName, aclRules)
+			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, true)
+			utils2.WaitForRedisACLRules(env.backendNamespace, env.conn, resourceName, aclRules)
 		})
 
 		It("should preserve excluded Redis ACL users from singleton Controller settings", func() {
@@ -134,7 +133,7 @@ var _ = Describe("Redis", func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create Redis exclusion Controller")
 
 			By("creating an unmanaged Redis ACL user that should be preserved")
-			_, err = utils.RunRedisCLI(
+			_, err = utils2.RunRedisCLI(
 				env.backendNamespace,
 				env.conn,
 				"ACL", "SETUSER", excludedUsername,
@@ -143,14 +142,14 @@ var _ = Describe("Redis", func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create excluded Redis ACL user")
 
 			By("creating a RedisAccess resource to trigger reconciliation")
-			err = utils.CreateRedisAccessWithDirectConnection(managedUsername, env.namespace, generatedSecret, env.conn, managedACLRules)
+			err = utils2.CreateRedisAccessWithDirectConnection(managedUsername, env.namespace, generatedSecret, env.conn, managedACLRules)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RedisAccess resource")
 
 			By("waiting for the managed Redis ACL user to exist")
-			utils.WaitForRedisUserState(env.backendNamespace, env.conn, managedUsername, true)
+			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, managedUsername, true)
 
 			By("verifying the excluded unmanaged Redis user is not removed")
-			utils.WaitForRedisUserState(env.backendNamespace, env.conn, excludedUsername, true)
+			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, excludedUsername, true)
 		})
 	})
 })

@@ -4,18 +4,17 @@
 package e2e
 
 import (
-	"fmt"
-	"os/exec"
-	"strconv"
-	"sync"
-	"sync/atomic"
-	"time"
+    "fmt"
+    "os/exec"
+    "strconv"
+    "sync"
+    "sync/atomic"
+    "time"
 
-	"github.com/delta10/access-operator/internal/controller"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
-	"github.com/delta10/access-operator/test/utils"
+    "github.com/delta10/access-operator/internal/controller"
+    utils2 "github.com/delta10/access-operator/test/e2e/utils"
+    . "github.com/onsi/ginkgo/v2"
+    . "github.com/onsi/gomega"
 )
 
 type sharedBackend struct {
@@ -70,11 +69,11 @@ metadata:
   name: %s
 `, name)
 
-	Expect(utils.ApplyManifest(manifest)).To(Succeed(), "Failed to create namespace %s", name)
+	Expect(utils2.ApplyManifest(manifest)).To(Succeed(), "Failed to create namespace %s", name)
 
 	Eventually(func(g Gomega) {
 		cmd := exec.Command("kubectl", "get", "ns", name, "-o", "jsonpath={.status.phase}")
-		output, err := utils.Run(cmd)
+		output, err := utils2.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to get namespace %s", name)
 		g.Expect(output).To(Equal("Active"))
 	}, 30*time.Second, time.Second).Should(Succeed())
@@ -88,13 +87,13 @@ func createTestNamespace(prefix string) string {
 
 func deleteNamespace(name string) {
 	cmd := exec.Command("kubectl", "delete", "ns", name, "--ignore-not-found", "--wait=false")
-	_, _ = utils.Run(cmd)
+	_, _ = utils2.Run(cmd)
 }
 
 func waitForNamespaceDeleted(name string) {
 	Eventually(func(g Gomega) {
 		cmd := exec.Command("kubectl", "get", "ns", name, "-o", "name", "--ignore-not-found")
-		output, err := utils.Run(cmd)
+		output, err := utils2.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to check namespace %s", name)
 		g.Expect(output).To(BeEmpty())
 	}, 2*time.Minute, 2*time.Second).Should(Succeed())
@@ -102,7 +101,7 @@ func waitForNamespaceDeleted(name string) {
 
 func clearAllControllers() {
 	cmd := exec.Command("kubectl", "delete", "controller", "--all", "-A", "--ignore-not-found", "--wait=false")
-	_, _ = utils.Run(cmd)
+	_, _ = utils2.Run(cmd)
 	waitForNoControllers()
 }
 
@@ -136,9 +135,9 @@ func ensurePostgresWorkerBackend() (string, controller.ConnectionDetails) {
 		&postgresBackendOnce,
 		&postgresBackend,
 		"postgres-backend",
-		utils.DatabaseConnectionDetailsForNamespace,
+        utils2.DatabaseConnectionDetailsForNamespace,
 		func(backendNamespace string, conn controller.ConnectionDetails) {
-			Expect(utils.DeployPostgresInstance(backendNamespace, conn)).To(Succeed(),
+			Expect(utils2.DeployPostgresInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared PostgreSQL backend")
 
 			cmd := exec.Command(
@@ -150,16 +149,16 @@ func ensurePostgresWorkerBackend() (string, controller.ConnectionDetails) {
 				backendNamespace,
 				"--timeout=2m",
 			)
-			_, err := utils.Run(cmd)
+			_, err := utils2.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "PostgreSQL backend deployment should become available")
 
 			Eventually(func(g Gomega) {
-				output, queryErr := utils.RunPostgresQuery(backendNamespace, conn, "SELECT 1;")
+				output, queryErr := utils2.RunPostgresQuery(backendNamespace, conn, "SELECT 1;")
 				g.Expect(queryErr).NotTo(HaveOccurred(), "Shared PostgreSQL backend should accept connections")
 				g.Expect(output).To(Equal("1"))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-			_, err = utils.RunPostgresQuery(
+			_, err = utils2.RunPostgresQuery(
 				backendNamespace,
 				conn,
 				"CREATE TABLE IF NOT EXISTS public.access_operator_test(id SERIAL PRIMARY KEY, value TEXT);",
@@ -174,11 +173,11 @@ func ensureRabbitMQWorkerBackend() (string, controller.ConnectionDetails) {
 		&rabbitMQBackendOnce,
 		&rabbitMQBackend,
 		"rabbitmq-backend",
-		utils.RabbitMQConnectionDetailsForNamespace,
+        utils2.RabbitMQConnectionDetailsForNamespace,
 		func(backendNamespace string, conn controller.ConnectionDetails) {
-			Expect(utils.DeployRabbitMQInstance(backendNamespace, conn)).To(Succeed(),
+			Expect(utils2.DeployRabbitMQInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared RabbitMQ backend")
-			utils.WaitForRabbitMQReady(backendNamespace)
+			utils2.WaitForRabbitMQReady(backendNamespace)
 		},
 	)
 }
@@ -188,11 +187,11 @@ func ensureRedisWorkerBackend() (string, controller.ConnectionDetails) {
 		&redisBackendOnce,
 		&redisBackend,
 		"redis-backend",
-		utils.RedisConnectionDetailsForNamespace,
+        utils2.RedisConnectionDetailsForNamespace,
 		func(backendNamespace string, conn controller.ConnectionDetails) {
-			Expect(utils.DeployRedisInstance(backendNamespace, conn)).To(Succeed(),
+			Expect(utils2.DeployRedisInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared Redis backend")
-			utils.WaitForRedisReady(backendNamespace, conn)
+			utils2.WaitForRedisReady(backendNamespace, conn)
 		},
 	)
 }

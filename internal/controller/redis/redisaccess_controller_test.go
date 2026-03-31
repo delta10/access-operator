@@ -25,6 +25,7 @@ import (
 	"sync"
 
 	"github.com/delta10/access-operator/internal/controller"
+	"github.com/delta10/access-operator/test"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -204,7 +205,7 @@ var _ = Describe("RedisAccess Controller", func() {
 
 		It("should build Redis connection details from an existing secret", func() {
 			secretName := testRedisSecretName
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := test.NewFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"},
 					Data: map[string][]byte{
@@ -238,7 +239,7 @@ var _ = Describe("RedisAccess Controller", func() {
 			secretName := testRedisSecretName
 			secretNamespace := "shared-redis"
 
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := test.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "controller", Namespace: "system"},
 					Spec: accessv1.ControllerSpec{
@@ -276,7 +277,7 @@ var _ = Describe("RedisAccess Controller", func() {
 			secretName := "redis-connection-secret"
 			secretNamespace := "shared-redis"
 
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := test.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "controller-a", Namespace: "system"},
 					Spec: accessv1.ControllerSpec{
@@ -317,7 +318,7 @@ var _ = Describe("RedisAccess Controller", func() {
 		})
 
 		It("should normalize excluded usernames from singleton Controller settings", func() {
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := test.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
 					Spec: accessv1.ControllerSpec{
@@ -356,7 +357,7 @@ var _ = Describe("RedisAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(redisAccess)
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(redisAccess)
 			eventRecorder := events.NewFakeRecorder(5)
 			reconciler := &RedisAccessReconciler{
 				Client:       fakeClient,
@@ -380,7 +381,7 @@ var _ = Describe("RedisAccess Controller", func() {
 			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateError))
 			Expect(updated.Status.LastLog).To(ContainSubstring("no valid connection details provided"))
 
-			event := controller.ReceiveEvents(eventRecorder.Events, 1)
+			event := test.ReceiveEvents(eventRecorder.Events, 1)
 			Expect(event).To(ContainSubstring(redisAccessConnectionErrorReason))
 		})
 
@@ -420,7 +421,7 @@ var _ = Describe("RedisAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(
 				redisAccess,
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "system"},
@@ -489,7 +490,7 @@ var _ = Describe("RedisAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(deleting, other)
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(deleting, other)
 			reconciler := &RedisAccessReconciler{
 				Client:       fakeClient,
 				Scheme:       fakeScheme,
@@ -545,7 +546,7 @@ var _ = Describe("RedisAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(deleting, other)
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(deleting, other)
 			reconciler := &RedisAccessReconciler{
 				Client:       fakeClient,
 				Scheme:       fakeScheme,
