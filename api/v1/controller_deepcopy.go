@@ -84,6 +84,8 @@ func (in *ControllerList) DeepCopyObject() runtime.Object {
 func (in *ControllerSettings) DeepCopyInto(out *ControllerSettings) {
 	*out = *in
 	in.PostgresSettings.DeepCopyInto(&out.PostgresSettings)
+	in.RabbitMQSettings.DeepCopyInto(&out.RabbitMQSettings)
+	in.RedisSettings.DeepCopyInto(&out.RedisSettings)
 }
 
 // DeepCopy returns a deep copy of this object.
@@ -109,6 +111,11 @@ func (in *PostgresControllerSettings) DeepCopyInto(out *PostgresControllerSettin
 		in, out := &in.ExcludedUsers, &out.ExcludedUsers
 		*out = make([]string, len(*in))
 		copy(*out, *in)
+	}
+	if in.StaleUserDeletionPolicy != nil {
+		in, out := &in.StaleUserDeletionPolicy, &out.StaleUserDeletionPolicy
+		*out = new(PostgresCleanupPolicy)
+		**out = **in
 	}
 }
 

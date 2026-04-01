@@ -63,6 +63,19 @@ spec:
                           type: string
                         type: array
                         x-kubernetes-list-type: set
+                      staleUserDeletionPolicy:
+                        default: Restrict
+                        description: |-
+                          staleUserDeletionPolicy controls whether the controller deletes PostgreSQL
+                          roles that are no longer referenced by any managed PostgresAccess.
+                          Restrict retains stale roles, while None only permits deletion during
+                          finalization of the specific PostgresAccess being removed.
+                        enum:
+                        - Cascade
+                        - Restrict
+                        - Orphan
+                        - None
+                        type: string
                     type: object
                   rabbitmq:
                     description: rabbitmq contains settings specific to RabbitMQAccess
@@ -86,6 +99,16 @@ spec:
                           type: string
                         type: array
                         x-kubernetes-list-type: set
+                      staleUserDeletionPolicy:
+                        default: Restrict
+                        description: |-
+                          staleUserDeletionPolicy controls whether the controller deletes RabbitMQ
+                          users that are no longer referenced by any managed RabbitMQAccess.
+                          Restrict retains stale users instead of deleting them.
+                        enum:
+                        - Delete
+                        - Restrict
+                        type: string
                       staleVhostDeletionPolicy:
                         default: Retain
                         description: |-
@@ -108,6 +131,16 @@ spec:
                           type: string
                         type: array
                         x-kubernetes-list-type: set
+                      staleUserDeletionPolicy:
+                        default: Restrict
+                        description: |-
+                          staleUserDeletionPolicy controls whether the controller deletes Redis ACL
+                          users that are no longer referenced by any managed RedisAccess.
+                          Restrict retains stale users instead of deleting them.
+                        enum:
+                        - Delete
+                        - Restrict
+                        type: string
                     type: object
                 type: object
             type: object

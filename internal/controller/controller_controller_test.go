@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 
+	"github.com/delta10/access-operator/test"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -40,7 +41,7 @@ var _ = Describe("Controller Controller", func() {
 		controllerAKey := types.NamespacedName{Name: "controller-a", Namespace: "system"}
 		controllerBKey := types.NamespacedName{Name: "controller-b", Namespace: "default"}
 
-		fakeClient, fakeScheme := NewFakeClientWithScheme(
+		fakeClient, fakeScheme := test.NewFakeClientWithScheme(
 			&accessv1.Controller{
 				ObjectMeta: metav1.ObjectMeta{Name: controllerAKey.Name, Namespace: controllerAKey.Namespace},
 			},
@@ -80,7 +81,7 @@ var _ = Describe("Controller Controller", func() {
 			Expect(readyCondition.Reason).To(Equal(MultipleControllersFoundReason))
 		}
 
-		allEvents := ReceiveEvents(eventRecorder.Events, 3)
+		allEvents := test.ReceiveEvents(eventRecorder.Events, 3)
 		Expect(allEvents).To(ContainSubstring(MultipleControllersFoundReason))
 		Expect(allEvents).To(ContainSubstring("controller-manager deployment: access-operator-system/access-operator-controller-manager"))
 	})
@@ -91,7 +92,7 @@ var _ = Describe("Controller Controller", func() {
 			Name:      defaultManagerDeploymentName,
 			Namespace: defaultManagerDeploymentNamespace,
 		}
-		fakeClient, fakeScheme := NewFakeClientWithScheme(
+		fakeClient, fakeScheme := test.NewFakeClientWithScheme(
 			&accessv1.Controller{
 				ObjectMeta: metav1.ObjectMeta{Name: controllerKey.Name, Namespace: controllerKey.Namespace},
 				Spec: accessv1.ControllerSpec{
@@ -163,7 +164,7 @@ var _ = Describe("Controller Controller", func() {
 			Name:      "access-operator-controller-manager",
 			Namespace: "access-operator-system",
 		}
-		fakeClient, fakeScheme := NewFakeClientWithScheme(
+		fakeClient, fakeScheme := test.NewFakeClientWithScheme(
 			&accessv1.Controller{
 				ObjectMeta: metav1.ObjectMeta{Name: controllerKey.Name, Namespace: controllerKey.Namespace},
 				Spec: accessv1.ControllerSpec{
@@ -203,7 +204,7 @@ var _ = Describe("Controller Controller", func() {
 		Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 		Expect(readyCondition.Reason).To(Equal(invalidControllerNamespace))
 
-		event := ReceiveEvents(eventRecorder.Events, 1)
+		event := test.ReceiveEvents(eventRecorder.Events, 1)
 		Expect(event).To(ContainSubstring(invalidControllerNamespace))
 	})
 })

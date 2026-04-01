@@ -158,6 +158,14 @@ func (r *RedisAccessReconciler) finalizeRedisAccess(ctx context.Context, redisAc
 		log.Info("Skipping finalizer Redis user deletion because another RedisAccess still manages it", "username", redisAccess.Spec.Username)
 		return true, controller.RemoveAccessFinalizerIfPresent(ctx, r.Client, redisAccess)
 	}
+	staleUserDeletionPolicy, err := r.resolveStaleUserDeletionPolicy(ctx)
+	if err != nil {
+		return true, fmt.Errorf("failed to resolve Redis stale user deletion policy during finalization: %w", err)
+	}
+	if staleUserDeletionPolicy != accessv1.StaleUserDeletionPolicyDelete {
+		log.Info("Skipping finalizer Redis user deletion because stale user deletion policy is Restrict", "username", redisAccess.Spec.Username)
+		return true, controller.RemoveAccessFinalizerIfPresent(ctx, r.Client, redisAccess)
+	}
 
 	connection, err := r.getConnectionDetails(ctx, redisAccess)
 	if err != nil {
@@ -221,6 +229,10 @@ func (r *RedisAccessReconciler) reconcileRedisAccess(
 	if err != nil {
 		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve excluded users: %w", err)
 	}
+	staleUserDeletionPolicy, err := r.resolveStaleUserDeletionPolicy(ctx)
+	if err != nil {
+		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve stale user deletion policy: %w", err)
+	}
 
 	currentUsers, err := aclClient.ListUsers(ctx)
 	if err != nil {
@@ -261,25 +273,27 @@ func (r *RedisAccessReconciler) reconcileRedisAccess(
 		}
 	}
 
-	for _, username := range currentUsers {
-		if _, desired := desiredUsers[username]; desired {
-			continue
-		}
-		if _, excluded := excludedUsers[username]; excluded {
-			log.Info("Skipping excluded Redis user cleanup", "username", username)
-			continue
-		}
-		if _, protected := connectionUsers[username]; protected {
-			log.Info("Skipping Redis user cleanup because it is used for Redis connections", "username", username)
-			continue
-		}
+	if staleUserDeletionPolicy == accessv1.StaleUserDeletionPolicyDelete {
+		for _, username := range currentUsers {
+			if _, desired := desiredUsers[username]; desired {
+				continue
+			}
+			if _, excluded := excludedUsers[username]; excluded {
+				log.Info("Skipping excluded Redis user cleanup", "username", username)
+				continue
+			}
+			if _, protected := connectionUsers[username]; protected {
+				log.Info("Skipping Redis user cleanup because it is used for Redis connections", "username", username)
+				continue
+			}
 
-		deleted, err := aclClient.DeleteUser(ctx, username)
-		if err != nil {
-			return false, redisAccessDeleteErrorReason, fmt.Errorf("failed to delete Redis user %s: %w", username, err)
-		}
-		if deleted > 0 {
-			inSync = false
+			deleted, err := aclClient.DeleteUser(ctx, username)
+			if err != nil {
+				return false, redisAccessDeleteErrorReason, fmt.Errorf("failed to delete Redis user %s: %w", username, err)
+			}
+			if deleted > 0 {
+				inSync = false
+			}
 		}
 	}
 

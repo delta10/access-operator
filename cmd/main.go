@@ -22,7 +22,7 @@ import (
 	"os"
 
 	"github.com/delta10/access-operator/internal/controller/postgres"
-	"github.com/delta10/access-operator/internal/controller/rabbitMQ"
+	"github.com/delta10/access-operator/internal/controller/rabbitmq"
 	rediscontroller "github.com/delta10/access-operator/internal/controller/redis"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -199,7 +199,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "PostgresAccess")
 		os.Exit(1)
 	}
-	if err := (&rabbitMQ.AccessReconciler{
+	if err := (&rabbitmq.AccessReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("rabbitmqaccess-controller"),

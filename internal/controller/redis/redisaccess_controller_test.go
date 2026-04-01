@@ -25,6 +25,7 @@ import (
 	"sync"
 
 	"github.com/delta10/access-operator/internal/controller"
+	"github.com/delta10/access-operator/test"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -204,7 +205,7 @@ var _ = Describe("RedisAccess Controller", func() {
 
 		It("should build Redis connection details from an existing secret", func() {
 			secretName := testRedisSecretName
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := test.NewFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"},
 					Data: map[string][]byte{
@@ -238,7 +239,7 @@ var _ = Describe("RedisAccess Controller", func() {
 			secretName := testRedisSecretName
 			secretNamespace := "shared-redis"
 
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := test.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "controller", Namespace: "system"},
 					Spec: accessv1.ControllerSpec{
@@ -276,7 +277,7 @@ var _ = Describe("RedisAccess Controller", func() {
 			secretName := "redis-connection-secret"
 			secretNamespace := "shared-redis"
 
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := test.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "controller-a", Namespace: "system"},
 					Spec: accessv1.ControllerSpec{
@@ -317,7 +318,7 @@ var _ = Describe("RedisAccess Controller", func() {
 		})
 
 		It("should normalize excluded usernames from singleton Controller settings", func() {
-			fakeClient, _ := controller.NewFakeClientWithScheme(
+			fakeClient, _ := test.NewFakeClientWithScheme(
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
 					Spec: accessv1.ControllerSpec{
@@ -338,6 +339,34 @@ var _ = Describe("RedisAccess Controller", func() {
 			Expect(excludedUsers).To(HaveKey("ops-user"))
 		})
 
+		It("should default stale user deletion policy to Restrict", func() {
+			reconciler := &RedisAccessReconciler{}
+			policy, err := reconciler.resolveStaleUserDeletionPolicy(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(policy).To(Equal(accessv1.StaleUserDeletionPolicyRestrict))
+		})
+
+		It("should resolve stale user deletion policy from singleton Controller settings", func() {
+			deletePolicy := accessv1.StaleUserDeletionPolicyDelete
+			fakeClient, _ := test.NewFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{
+							RedisSettings: accessv1.RedisControllerSettings{
+								StaleUserDeletionPolicy: &deletePolicy,
+							},
+						},
+					},
+				},
+			)
+
+			reconciler := &RedisAccessReconciler{Client: fakeClient}
+			policy, err := reconciler.resolveStaleUserDeletionPolicy(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(policy).To(Equal(accessv1.StaleUserDeletionPolicyDelete))
+		})
+
 		It("should reject reserved ACL directives in user rules", func() {
 			Expect(validateACLRules([]string{"~cache:*", "+get"})).To(Succeed())
 			Expect(validateACLRules([]string{"on"})).To(MatchError(ContainSubstring("reserved")))
@@ -356,7 +385,7 @@ var _ = Describe("RedisAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(redisAccess)
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(redisAccess)
 			eventRecorder := events.NewFakeRecorder(5)
 			reconciler := &RedisAccessReconciler{
 				Client:       fakeClient,
@@ -380,7 +409,7 @@ var _ = Describe("RedisAccess Controller", func() {
 			Expect(updated.Status.LastReconcileState).To(Equal(accessv1.ReconcileStateError))
 			Expect(updated.Status.LastLog).To(ContainSubstring("no valid connection details provided"))
 
-			event := controller.ReceiveEvents(eventRecorder.Events, 1)
+			event := test.ReceiveEvents(eventRecorder.Events, 1)
 			Expect(event).To(ContainSubstring(redisAccessConnectionErrorReason))
 		})
 
@@ -420,7 +449,7 @@ var _ = Describe("RedisAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(
 				redisAccess,
 				&accessv1.Controller{
 					ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "system"},
@@ -489,7 +518,7 @@ var _ = Describe("RedisAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(deleting, other)
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(deleting, other)
 			reconciler := &RedisAccessReconciler{
 				Client:       fakeClient,
 				Scheme:       fakeScheme,
@@ -545,7 +574,7 @@ var _ = Describe("RedisAccess Controller", func() {
 				},
 			}
 
-			fakeClient, fakeScheme := controller.NewFakeClientWithScheme(deleting, other)
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(deleting, other)
 			reconciler := &RedisAccessReconciler{
 				Client:       fakeClient,
 				Scheme:       fakeScheme,
@@ -556,6 +585,101 @@ var _ = Describe("RedisAccess Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(finalized).To(BeTrue())
 			Expect(mockState.deleteCalls()).To(BeEmpty())
+		})
+
+		It("should skip finalizer user deletion when stale user deletion policy is Restrict", func() {
+			now := metav1.Now()
+			host := testRedisHost
+			port := int32(6379)
+			adminUsername := testRedisAdminUsername
+			adminPassword := testRedisAdminPassword
+			mockState := newMockACLState()
+			Expect(mockState.SetUser(context.Background(), "stale-user", "reset", "on", ">secret", "~cache:*", "+get")).To(Succeed())
+
+			redisAccess := &accessv1.RedisAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "deleting",
+					Namespace:         "default",
+					DeletionTimestamp: &now,
+					Finalizers:        []string{redisAccessFinalizer},
+				},
+				Spec: accessv1.RedisAccessSpec{
+					GeneratedSecret: "deleting-secret",
+					Username:        "stale-user",
+					Connection: accessv1.ConnectionSpec{
+						Host:     &host,
+						Port:     &port,
+						Username: &accessv1.SecretKeySelector{Value: &adminUsername},
+						Password: &accessv1.SecretKeySelector{Value: &adminPassword},
+					},
+					ACLRules: []string{"~cache:*", "+get"},
+				},
+			}
+
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(redisAccess)
+			reconciler := &RedisAccessReconciler{
+				Client:       fakeClient,
+				Scheme:       fakeScheme,
+				NewACLClient: newMockACLFactory(mockState),
+			}
+
+			finalized, err := reconciler.finalizeRedisAccess(context.Background(), redisAccess)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalized).To(BeTrue())
+			Expect(mockState.deleteCalls()).To(BeEmpty())
+		})
+
+		It("should delete finalizer users when stale user deletion policy is Delete", func() {
+			now := metav1.Now()
+			host := testRedisHost
+			port := int32(6379)
+			adminUsername := testRedisAdminUsername
+			adminPassword := testRedisAdminPassword
+			deletePolicy := accessv1.StaleUserDeletionPolicyDelete
+			mockState := newMockACLState()
+			Expect(mockState.SetUser(context.Background(), "stale-user", "reset", "on", ">secret", "~cache:*", "+get")).To(Succeed())
+
+			redisAccess := &accessv1.RedisAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "deleting",
+					Namespace:         "default",
+					DeletionTimestamp: &now,
+					Finalizers:        []string{redisAccessFinalizer},
+				},
+				Spec: accessv1.RedisAccessSpec{
+					GeneratedSecret: "deleting-secret",
+					Username:        "stale-user",
+					Connection: accessv1.ConnectionSpec{
+						Host:     &host,
+						Port:     &port,
+						Username: &accessv1.SecretKeySelector{Value: &adminUsername},
+						Password: &accessv1.SecretKeySelector{Value: &adminPassword},
+					},
+					ACLRules: []string{"~cache:*", "+get"},
+				},
+			}
+			controllerSettings := &accessv1.Controller{
+				ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "system"},
+				Spec: accessv1.ControllerSpec{
+					Settings: accessv1.ControllerSettings{
+						RedisSettings: accessv1.RedisControllerSettings{
+							StaleUserDeletionPolicy: &deletePolicy,
+						},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(redisAccess, controllerSettings)
+			reconciler := &RedisAccessReconciler{
+				Client:       fakeClient,
+				Scheme:       fakeScheme,
+				NewACLClient: newMockACLFactory(mockState),
+			}
+
+			finalized, err := reconciler.finalizeRedisAccess(context.Background(), redisAccess)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalized).To(BeTrue())
+			Expect(mockState.deleteCalls()).To(Equal([]string{"stale-user"}))
 		})
 	})
 })
