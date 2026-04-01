@@ -68,11 +68,13 @@ spec:
                         description: |-
                           staleUserDeletionPolicy controls whether the controller deletes PostgreSQL
                           roles that are no longer referenced by any managed PostgresAccess.
-                          Restrict retains stale roles instead of deleting them.
+                          Restrict retains stale roles, while None only permits deletion during
+                          finalization of the specific PostgresAccess being removed.
                         enum:
                         - Cascade
                         - Restrict
                         - Orphan
+                        - None
                         type: string
                     type: object
                   rabbitmq:

@@ -236,4 +236,4 @@ spec:
          - default
 ```
 
-You can also control stale-user cleanup per backend from the same singleton `Controller` resource. The safe default is `Restrict`, which retains users that are no longer referenced by any managed access resource. For PostgreSQL, the controller-scoped policy uses `Cascade`, `Restrict`, or `Orphan`; Redis and RabbitMQ use `Delete` or `Restrict`.
+You can also control stale-user cleanup per backend from the same singleton `Controller` resource. The safe default is `Restrict`, which retains users that are no longer referenced by any managed access resource. For PostgreSQL, the controller-scoped policy uses `Cascade`, `Restrict`, `Orphan`, or `None`. `None` disables stale-user cleanup during steady-state reconciliation but still allows the specific `PostgresAccess` being deleted to finalize its own role. Redis and RabbitMQ use `Delete` or `Restrict`.

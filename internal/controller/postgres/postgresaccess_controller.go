@@ -219,7 +219,7 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	}
 
 	// remove users that are not handled by any PostgresAccess CR anymore
-	if staleUserDeletionPolicy != accessv1.CleanupPolicyRestrict {
+	if shouldDeleteStalePostgresUsers(staleUserDeletionPolicy) {
 		for _, user := range users {
 			if !usersHandled[user] {
 				err = r.DB.DropUser(ctx, user, staleUserDeletionPolicy)
@@ -292,10 +292,10 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 		return true, err
 	}
 
-	if staleUserDeletionPolicy != accessv1.CleanupPolicyRestrict {
+	if finalizationPolicy, shouldDelete := postgresFinalizationCleanupPolicy(staleUserDeletionPolicy); shouldDelete {
 		for _, user := range users {
 			if pg.Spec.Username == user {
-				err = r.DB.DropUser(ctx, user, staleUserDeletionPolicy)
+				err = r.DB.DropUser(ctx, user, finalizationPolicy)
 				if err != nil {
 					log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
 					continue
@@ -303,7 +303,7 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 			}
 		}
 	} else {
-		log.Info("Skipping finalizer PostgreSQL user deletion because stale user deletion policy is Restrict", "username", pg.Spec.Username)
+		log.Info("Skipping finalizer PostgreSQL user deletion because stale user deletion policy disables it", "username", pg.Spec.Username)
 	}
 
 	if err := controller.RemoveAccessFinalizerIfPresent(ctx, r.Client, pg); err != nil {
@@ -320,6 +320,25 @@ func (r *PostgresAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Named("postgresaccess").
 		Owns(&corev1.Secret{}).
 		Complete(r)
+}
+
+func shouldDeleteStalePostgresUsers(policy accessv1.PostgresCleanupPolicy) bool {
+	return policy != accessv1.CleanupPolicyRestrict && policy != accessv1.CleanupPolicyNone
+}
+
+func postgresFinalizationCleanupPolicy(
+	policy accessv1.PostgresCleanupPolicy,
+) (accessv1.PostgresCleanupPolicy, bool) {
+	switch policy {
+	case accessv1.CleanupPolicyCascade, accessv1.CleanupPolicyOrphan:
+		return policy, true
+	case accessv1.CleanupPolicyNone:
+		// None disables background cleanup but still allows deleting the
+		// specific managed role during finalization using safe Restrict semantics.
+		return accessv1.CleanupPolicyRestrict, true
+	default:
+		return "", false
+	}
 }
 
 func (r *PostgresAccessReconciler) emitEvent(object client.Object, eventType, reason, message string) {

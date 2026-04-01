@@ -19,6 +19,8 @@ spec:
          - postgres
        # Default is Restrict.
        # Controls whether stale PostgreSQL roles are deleted or retained.
+       # None disables stale-user cleanup outside of finalization for the
+       # specific PostgresAccess being deleted.
        staleUserDeletionPolicy: Restrict
     # Configure RabbitMQ-specific controller behavior.
     rabbitmq:

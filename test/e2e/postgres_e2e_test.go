@@ -836,6 +836,48 @@ data:
 			utils2.WaitForTableMissing(env.backendNamespace, env.conn, ownedTable)
 		})
 
+		It("should delete the managed role during finalization when stale user deletion policy is None", func() {
+			resourceName := env.name("test-none-finalizer-delete")
+			generatedSecret := env.name("test-none-finalizer-delete-secret")
+			controllerName := env.name("postgres-none-policy")
+
+			By("creating a singleton Controller with staleUserDeletionPolicy None")
+			err := createControllerResource(controllerName, namespace, `postgres:
+  staleUserDeletionPolicy: None`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with None policy")
+			DeferCleanup(func() {
+				deleteControllerResource(controllerName, namespace)
+			})
+
+			By("creating a PostgresAccess resource")
+			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+			err = utils2.CreateResourceFromSecretReference(
+				resourceName,
+				env.namespace,
+				generatedSecret,
+				secretName,
+				accessv1.GrantSpec{
+					Database:   env.conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				},
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with None controller policy")
+
+			By("waiting for the managed role to exist")
+			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+
+			By("deleting the PostgresAccess resource")
+			err = utils2.DeletePostgresAccess(resourceName, env.namespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
+
+			By("verifying the managed role is deleted during finalization")
+			utils2.WaitForResourceDeleted("postgresaccess", resourceName, env.namespace)
+			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
+			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
+		})
+
 		It("should reject PostgresAccess manifests that still use spec.cleanupPolicy", func() {
 			resourceName := env.name("test-cleanup-policy-schema-rejection")
 			generatedSecret := env.name("test-cleanup-policy-schema-rejection-secret")

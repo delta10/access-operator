@@ -206,6 +206,9 @@ func (p *DB) DropUser(ctx context.Context, username string, policy accessv1.Post
 			return fmt.Errorf("drop owned (privileges): %w", err)
 		}
 
+	case accessv1.CleanupPolicyNone:
+		return fmt.Errorf("cannot drop user %q with cleanup policy None", username)
+
 	default:
 		return fmt.Errorf("unknown cleanup policy: %s", policy)
 	}
