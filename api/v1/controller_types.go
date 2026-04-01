@@ -21,6 +21,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// StaleUserDeletionPolicy defines how the controller handles managed users
+// that are no longer referenced by any managed access resource.
+// +kubebuilder:validation:Enum=Delete;Restrict
+type StaleUserDeletionPolicy string
+
+const (
+	// StaleUserDeletionPolicyDelete removes unreferenced managed users.
+	StaleUserDeletionPolicyDelete StaleUserDeletionPolicy = "Delete"
+	// StaleUserDeletionPolicyRestrict retains unreferenced managed users.
+	StaleUserDeletionPolicyRestrict StaleUserDeletionPolicy = "Restrict"
+)
+
 // StaleVhostDeletionPolicy defines how the controller handles RabbitMQ vhosts
 // that are no longer referenced by any managed RabbitMQAccess resource.
 // +kubebuilder:validation:Enum=Delete;Retain
@@ -53,6 +65,13 @@ type RabbitMQControllerSettings struct {
 	// +optional
 	// +kubebuilder:default="Retain"
 	StaleVhostDeletionPolicy *StaleVhostDeletionPolicy `json:"staleVhostDeletionPolicy,omitempty"`
+
+	// staleUserDeletionPolicy controls whether the controller deletes RabbitMQ
+	// users that are no longer referenced by any managed RabbitMQAccess.
+	// Restrict retains stale users instead of deleting them.
+	// +optional
+	// +kubebuilder:default="Restrict"
+	StaleUserDeletionPolicy *StaleUserDeletionPolicy `json:"staleUserDeletionPolicy,omitempty"`
 }
 
 type PostgresControllerSettings struct {
@@ -62,6 +81,13 @@ type PostgresControllerSettings struct {
 	// +listType=set
 	// +optional
 	ExcludedUsers []string `json:"excludedUsers,omitempty"`
+
+	// staleUserDeletionPolicy controls whether the controller deletes PostgreSQL
+	// roles that are no longer referenced by any managed PostgresAccess.
+	// Restrict retains stale roles instead of deleting them.
+	// +optional
+	// +kubebuilder:default="Restrict"
+	StaleUserDeletionPolicy *PostgresCleanupPolicy `json:"staleUserDeletionPolicy,omitempty"`
 }
 
 type RedisControllerSettings struct {
@@ -71,6 +97,13 @@ type RedisControllerSettings struct {
 	// +listType=set
 	// +optional
 	ExcludedUsers []string `json:"excludedUsers,omitempty"`
+
+	// staleUserDeletionPolicy controls whether the controller deletes Redis ACL
+	// users that are no longer referenced by any managed RedisAccess.
+	// Restrict retains stale users instead of deleting them.
+	// +optional
+	// +kubebuilder:default="Restrict"
+	StaleUserDeletionPolicy *StaleUserDeletionPolicy `json:"staleUserDeletionPolicy,omitempty"`
 }
 
 // ControllerSettings defines operator-wide behavior toggles.

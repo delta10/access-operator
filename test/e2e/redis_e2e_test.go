@@ -137,7 +137,7 @@ spec:
 			utils2.WaitForRedisACLRules(env.backendNamespace, env.conn, resourceName, aclRules)
 		})
 
-		It("should delete the Redis ACL user and generated secret when the RedisAccess resource is deleted", func() {
+		It("should retain the Redis ACL user and delete the generated secret when the RedisAccess resource is deleted by default", func() {
 			resourceName := env.name("test-redis-deletion")
 			generatedSecret := env.name("test-redis-deletion-secret")
 			aclRules := []string{"~delete:*", "+get", "+set"}
@@ -154,9 +154,9 @@ spec:
 			err = utils2.DeleteRedisAccess(resourceName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete RedisAccess resource")
 
-			By("verifying finalization removed the RedisAccess, Redis user, and generated secret")
+			By("verifying finalization removed the RedisAccess, retained the Redis user, and deleted the generated secret")
 			utils2.WaitForResourceDeleted("redisaccess", resourceName, env.namespace)
-			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, false)
+			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, true)
 			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 

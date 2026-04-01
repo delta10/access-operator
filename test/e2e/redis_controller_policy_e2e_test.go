@@ -4,12 +4,13 @@
 package e2e
 
 import (
-    "fmt"
-    "strings"
+	"fmt"
+	"strings"
 
-    utils2 "github.com/delta10/access-operator/test/e2e/utils"
-    . "github.com/onsi/ginkgo/v2"
-    . "github.com/onsi/gomega"
+	accessv1 "github.com/delta10/access-operator/api/v1"
+	utils2 "github.com/delta10/access-operator/test/e2e/utils"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Redis", func() {
@@ -150,6 +151,57 @@ var _ = Describe("Redis", func() {
 
 			By("verifying the excluded unmanaged Redis user is not removed")
 			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, excludedUsername, true)
+		})
+
+		It("should retain stale Redis users when stale user deletion policy is Restrict", func() {
+			resourceName := env.name("test-redis-restrict-retain")
+			generatedSecret := env.name("test-redis-restrict-retain-secret")
+			aclRules := []string{"~retain:*", "+get"}
+
+			By("creating a RedisAccess resource")
+			err := utils2.CreateRedisAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, aclRules)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create RedisAccess resource")
+
+			By("waiting for the Redis ACL user to exist")
+			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, true)
+
+			By("deleting the RedisAccess resource")
+			err = utils2.DeleteRedisAccess(resourceName, env.namespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete RedisAccess resource")
+
+			By("verifying the Redis user is retained by the default Restrict policy")
+			utils2.WaitForResourceDeleted("redisaccess", resourceName, env.namespace)
+			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, true)
+			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
+		})
+
+		It("should delete stale Redis users when stale user deletion policy is Delete", func() {
+			resourceName := env.name("test-redis-delete-stale-user")
+			generatedSecret := env.name("test-redis-delete-stale-user-secret")
+			controllerName := env.name("redis-delete-users")
+			deletePolicy := accessv1.StaleUserDeletionPolicyDelete
+			aclRules := []string{"~delete:*", "+get"}
+
+			By("creating a singleton Controller with staleUserDeletionPolicy Delete")
+			err := createControllerResource(controllerName, namespace, fmt.Sprintf(`redis:
+  staleUserDeletionPolicy: %s`, deletePolicy))
+			Expect(err).NotTo(HaveOccurred(), "Failed to create Redis controller policy")
+
+			By("creating a RedisAccess resource")
+			err = utils2.CreateRedisAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, aclRules)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create RedisAccess resource")
+
+			By("waiting for the Redis ACL user to exist")
+			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, true)
+
+			By("deleting the RedisAccess resource")
+			err = utils2.DeleteRedisAccess(resourceName, env.namespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete RedisAccess resource")
+
+			By("verifying the Redis user is deleted by controller policy")
+			utils2.WaitForResourceDeleted("redisaccess", resourceName, env.namespace)
+			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, false)
+			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 	})
 })

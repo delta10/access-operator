@@ -20,15 +20,15 @@ limitations under the License.
 package e2e
 
 import (
-    b64 "encoding/base64"
-    "fmt"
-    "os/exec"
+	b64 "encoding/base64"
+	"fmt"
+	"os/exec"
 
-    utils2 "github.com/delta10/access-operator/test/e2e/utils"
-    . "github.com/onsi/ginkgo/v2"
-    . "github.com/onsi/gomega"
+	utils2 "github.com/delta10/access-operator/test/e2e/utils"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
-    accessv1 "github.com/delta10/access-operator/api/v1"
+	accessv1 "github.com/delta10/access-operator/api/v1"
 )
 
 var _ = Describe("Postgres", func() {
@@ -92,7 +92,6 @@ spec:
 				testNamespace,
 				generatedSecret,
 				"cnpg-postgres-app",
-				nil,
 				accessv1.GrantSpec{
 					Database:   conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -157,7 +156,6 @@ spec:
 				env.namespace,
 				generatedSecret,
 				secretName,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -211,7 +209,6 @@ spec:
 				env.namespace,
 				generatedSecret,
 				secretName,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT"},
@@ -228,7 +225,6 @@ spec:
 				env.namespace,
 				generatedSecret,
 				secretName,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT", "INSERT"},
@@ -253,7 +249,6 @@ spec:
 				env.namespace,
 				generatedSecret,
 				secretName,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -279,7 +274,7 @@ spec:
 			utils2.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
 		})
 
-		It("should delete the database user and secrets when the PostgresAccess resource is deleted", func() {
+		It("should retain the database user and delete the generated secret when the PostgresAccess resource is deleted by default", func() {
 			resourceName := env.name("test-deletion")
 			generatedSecret := env.name("test-postgres-credentials-secret-ref")
 
@@ -292,7 +287,6 @@ spec:
 				env.namespace,
 				generatedSecret,
 				secretName,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -310,35 +304,42 @@ spec:
 			By("verifying finalization removed the PostgresAccess resource")
 			utils2.WaitForResourceDeleted("postgresaccess", resourceName, env.namespace)
 
-			By("verifying that the database user is deleted")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
+			By("verifying that the database user is retained by default policy")
+			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
 
 			By("verifying that the generated secret is deleted")
 			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
-		It("should reassign owned objects to the database owner when cleanupPolicy is Orphan", func() {
+		It("should reassign owned objects to the database owner when stale user deletion policy is Orphan", Serial, func() {
 			managedUsername := env.name("test-orphan-cleanup")
 			generatedSecret := env.name("test-orphan-cleanup-credentials")
 			ownedTable := env.name("orphan-policy-owned-table")
+			controllerName := env.name("postgres-orphan-policy")
 
-			By("creating a PostgresAccess resource with cleanupPolicy Orphan")
+			By("creating a singleton Controller with staleUserDeletionPolicy Orphan")
+			err := createControllerResource(controllerName, namespace, `postgres:
+  staleUserDeletionPolicy: Orphan`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with Orphan policy")
+			DeferCleanup(func() {
+				deleteControllerResource(controllerName, namespace)
+			})
+
+			By("creating a PostgresAccess resource")
 			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			orphanPolicy := accessv1.CleanupPolicyOrphan
 			err = utils2.CreateResourceFromSecretReference(
 				managedUsername,
 				env.namespace,
 				generatedSecret,
 				secretName,
-				&orphanPolicy,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "USAGE", "CREATE"},
 				},
 			)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess with cleanupPolicy Orphan")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess with Orphan controller policy")
 
 			By("waiting for the generated secret to be created and reading the managed password")
 			managedPassword := utils2.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
@@ -384,7 +385,6 @@ spec:
 				env.namespace,
 				generatedSecret,
 				secretName,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -428,7 +428,6 @@ data:
 				env.namespace,
 				generatedSecret,
 				secretName,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -482,7 +481,6 @@ data:
 				generatedSecret,
 				secretName,
 				connectionSecretNamespace,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -528,7 +526,6 @@ data:
 				generatedSecret,
 				secretName,
 				connectionSecretNamespace,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -572,7 +569,6 @@ data:
 				generatedSecret,
 				secretName,
 				connectionSecretNamespace,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -614,7 +610,6 @@ data:
 				generatedSecret,
 				secretName,
 				connectionSecretNamespace,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -675,7 +670,6 @@ data:
 				generatedSecret,
 				secretName,
 				connectionSecretNamespace,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -740,7 +734,6 @@ data:
 				env.namespace,
 				generatedSecret,
 				secretName,
-				nil,
 				accessv1.GrantSpec{
 					Database:   env.conn.Database,
 					Privileges: []string{"CONNECT", "SELECT"},
@@ -753,6 +746,123 @@ data:
 
 			By("verifying the excluded unmanaged role is not removed")
 			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, excludedUsername, true)
+		})
+
+		It("should retain a stale PostgreSQL role when stale user deletion policy is Restrict", func() {
+			resourceName := env.name("test-restrict-retain-role")
+			generatedSecret := env.name("test-restrict-retain-role-secret")
+
+			By("creating a PostgresAccess resource")
+			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+			err = utils2.CreateResourceFromSecretReference(
+				resourceName,
+				env.namespace,
+				generatedSecret,
+				secretName,
+				accessv1.GrantSpec{
+					Database:   env.conn.Database,
+					Privileges: []string{"CONNECT", "SELECT"},
+				},
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
+
+			By("waiting for the managed role to exist")
+			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+
+			By("deleting the PostgresAccess resource")
+			err = utils2.DeletePostgresAccess(resourceName, env.namespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
+
+			By("verifying the managed role is retained by the default Restrict policy")
+			utils2.WaitForResourceDeleted("postgresaccess", resourceName, env.namespace)
+			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
+		})
+
+		It("should drop owned objects when stale user deletion policy is Cascade", func() {
+			managedUsername := env.name("test-cascade-cleanup")
+			generatedSecret := env.name("test-cascade-cleanup-credentials")
+			ownedTable := env.name("cascade-policy-owned-table")
+			controllerName := env.name("postgres-cascade-policy")
+
+			By("creating a singleton Controller with staleUserDeletionPolicy Cascade")
+			err := createControllerResource(controllerName, namespace, `postgres:
+  staleUserDeletionPolicy: Cascade`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with Cascade policy")
+			DeferCleanup(func() {
+				deleteControllerResource(controllerName, namespace)
+			})
+
+			By("creating a PostgresAccess resource")
+			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+			err = utils2.CreateResourceFromSecretReference(
+				managedUsername,
+				env.namespace,
+				generatedSecret,
+				secretName,
+				accessv1.GrantSpec{
+					Database:   env.conn.Database,
+					Privileges: []string{"CONNECT", "USAGE", "CREATE"},
+				},
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess with Cascade controller policy")
+
+			By("waiting for the generated secret and managed role")
+			managedPassword := utils2.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
+			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, true)
+
+			By("creating an object owned by the managed user")
+			managedConn := env.conn
+			managedConn.Username = managedUsername
+			managedConn.Password = managedPassword
+			_, err = utils2.RunPostgresQuery(
+				env.backendNamespace,
+				managedConn,
+				fmt.Sprintf(`CREATE TABLE public.%q (id SERIAL PRIMARY KEY, value TEXT);`, ownedTable),
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create an owned object as the managed user")
+
+			By("deleting the PostgresAccess resource")
+			err = utils2.DeletePostgresAccess(managedUsername, env.namespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
+
+			By("verifying the managed role and owned table are removed")
+			utils2.WaitForResourceDeleted("postgresaccess", managedUsername, env.namespace)
+			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, false)
+			utils2.WaitForTableMissing(env.backendNamespace, env.conn, ownedTable)
+		})
+
+		It("should reject PostgresAccess manifests that still use spec.cleanupPolicy", func() {
+			resourceName := env.name("test-cleanup-policy-schema-rejection")
+			generatedSecret := env.name("test-cleanup-policy-schema-rejection-secret")
+
+			By("creating the connection secret referenced by the invalid manifest")
+			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
+
+			invalidManifest := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
+kind: PostgresAccess
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  generatedSecret: %s
+  username: %s
+  cleanupPolicy: Orphan
+  connection:
+    existingSecret: %s
+  grants:
+    - database: %s
+      privileges:
+        - CONNECT
+`, resourceName, env.namespace, generatedSecret, resourceName, secretName, env.conn.Database)
+
+			err = utils2.ApplyManifestServerDryRun(invalidManifest)
+			Expect(err).To(HaveOccurred(), "PostgresAccess manifests using spec.cleanupPolicy should be rejected by the CRD schema")
 		})
 	})
 })

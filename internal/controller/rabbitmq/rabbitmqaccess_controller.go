@@ -162,10 +162,16 @@ func (r *AccessReconciler) finalizeRabbitMQAccess(ctx context.Context, rbq *acce
 	if err != nil {
 		return true, fmt.Errorf("failed to list remaining RabbitMQAccess resources during finalization: %w", err)
 	}
+	staleUserDeletionPolicy, err := r.resolveStaleUserDeletionPolicy(ctx)
+	if err != nil {
+		return true, fmt.Errorf("failed to resolve stale RabbitMQ user deletion policy during finalization: %w", err)
+	}
 
 	if _, inUseByConnection := connectionUsers[rbq.Spec.Username]; !inUseByConnection {
 		if _, stillDesired := remainingUsers[rbq.Spec.Username]; !stillDesired {
-			if _, exists := usersPermissions[rbq.Spec.Username]; exists {
+			if staleUserDeletionPolicy != accessv1.StaleUserDeletionPolicyDelete {
+				log.Info("Skipping finalizer RabbitMQ user deletion because stale user deletion policy is Restrict", "username", rbq.Spec.Username)
+			} else if _, exists := usersPermissions[rbq.Spec.Username]; exists {
 				if err := r.DeleteUser(rmqc, rbq.Spec.Username); err != nil {
 					return true, fmt.Errorf("failed to delete RabbitMQ user %s during finalization: %w", rbq.Spec.Username, err)
 				}
@@ -241,6 +247,10 @@ func reconcileRabbitMQ(ctx context.Context, r *AccessReconciler, rbq *accessv1.R
 	if err != nil {
 		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve excluded vhosts: %w", err)
 	}
+	staleUserDeletionPolicy, err := r.resolveStaleUserDeletionPolicy(ctx)
+	if err != nil {
+		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve stale user deletion policy: %w", err)
+	}
 	staleVhostDeletionPolicy, err := r.resolveStaleVhostDeletionPolicy(ctx)
 	if err != nil {
 		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve stale vhost deletion policy: %w", err)
@@ -267,11 +277,13 @@ func reconcileRabbitMQ(ctx context.Context, r *AccessReconciler, rbq *accessv1.R
 	}
 
 	// delete users that are not referenced by any CR
-	for username := range unhandledUsers {
-		if err := r.DeleteUser(rmqc, username); err != nil {
-			return false, rabbitMQAccessDeleteErrorReason, fmt.Errorf("failed to delete user %s: %w", username, err)
+	if staleUserDeletionPolicy == accessv1.StaleUserDeletionPolicyDelete {
+		for username := range unhandledUsers {
+			if err := r.DeleteUser(rmqc, username); err != nil {
+				return false, rabbitMQAccessDeleteErrorReason, fmt.Errorf("failed to delete user %s: %w", username, err)
+			}
+			insync = false
 		}
-		insync = false
 	}
 
 	currentVhosts, err := r.ListVhosts(rmqc)

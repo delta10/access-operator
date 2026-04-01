@@ -132,3 +132,20 @@ func (r *AccessReconciler) resolveStaleVhostDeletionPolicy(ctx context.Context) 
 
 	return *settings.RabbitMQSettings.StaleVhostDeletionPolicy, nil
 }
+
+func (r *AccessReconciler) resolveStaleUserDeletionPolicy(ctx context.Context) (accessv1.StaleUserDeletionPolicy, error) {
+	if r.Client == nil {
+		return accessv1.StaleUserDeletionPolicyRestrict, nil
+	}
+
+	settings, err := resolveRabbitMQControllerSettings(ctx, r)
+	if err != nil {
+		return "", err
+	}
+
+	if settings.RabbitMQSettings.StaleUserDeletionPolicy == nil {
+		return accessv1.StaleUserDeletionPolicyRestrict, nil
+	}
+
+	return *settings.RabbitMQSettings.StaleUserDeletionPolicy, nil
+}

@@ -77,6 +77,23 @@ func (r *RedisAccessReconciler) resolveExcludedUsers(ctx context.Context) (map[s
 	return controller.NormalizeExcludedUsers(settings.RedisSettings.ExcludedUsers), nil
 }
 
+func (r *RedisAccessReconciler) resolveStaleUserDeletionPolicy(ctx context.Context) (accessv1.StaleUserDeletionPolicy, error) {
+	if r.Client == nil {
+		return accessv1.StaleUserDeletionPolicyRestrict, nil
+	}
+
+	settings, err := resolveRedisControllerSettings(ctx, r)
+	if err != nil {
+		return "", err
+	}
+
+	if settings.RedisSettings.StaleUserDeletionPolicy == nil {
+		return accessv1.StaleUserDeletionPolicyRestrict, nil
+	}
+
+	return *settings.RedisSettings.StaleUserDeletionPolicy, nil
+}
+
 func resolveRedisControllerSettings(ctx context.Context, r *RedisAccessReconciler) (accessv1.ControllerSettings, error) {
 	return controller.ResolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
 		controller.EmitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, controller.MultipleControllersFoundReason, message)

@@ -153,7 +153,7 @@ spec:
 			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
 		})
 
-		It("should delete the RabbitMQ user and generated secret when the RabbitMQAccess resource is deleted", func() {
+		It("should retain the RabbitMQ user and vhost and delete the generated secret when the RabbitMQAccess resource is deleted by default", func() {
 			resourceName := env.name("test-rabbitmq-deletion")
 			generatedSecret := env.name("test-rabbitmq-deletion-secret")
 			vhost := env.vhost("app-delete")
@@ -174,9 +174,10 @@ spec:
 			err = utils2.DeleteRabbitMQAccess(resourceName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete RabbitMQAccess resource")
 
-			By("verifying finalization removed the RabbitMQAccess, user, and generated secret")
+			By("verifying finalization removed the RabbitMQAccess, retained the user and vhost, and deleted the generated secret")
 			utils2.WaitForResourceDeleted("rabbitmqaccess", resourceName, env.namespace)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
+			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
+			utils2.WaitForRabbitMQVhostState(env.backendNamespace, vhost, true)
 			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
@@ -288,7 +289,7 @@ spec:
 			}
 
 			By("enabling stale RabbitMQ vhost deletion through singleton Controller settings")
-			err := createRabbitMQController(controllerName, &deletePolicy, nil)
+			err := createRabbitMQController(controllerName, nil, &deletePolicy, nil)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ controller settings")
 			DeferCleanup(func() {
 				deleteControllerResource(controllerName, namespace)
@@ -312,9 +313,9 @@ spec:
 			err = utils2.DeleteRabbitMQAccess(staleName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
 
-			By("verifying finalization deletes the stale user and its vhost while the keeper remains")
+			By("verifying finalization retains the stale user but deletes its vhost while the keeper remains")
 			utils2.WaitForResourceDeleted("rabbitmqaccess", staleName, env.namespace)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, false)
+			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
 			utils2.WaitForRabbitMQVhostState(env.backendNamespace, staleVhost, false)
 			utils2.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
 			utils2.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
@@ -362,9 +363,9 @@ spec:
 			err = utils2.DeleteRabbitMQAccess(staleName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
 
-			By("verifying finalization deletes the stale user but retains its vhost by policy")
+			By("verifying finalization retains the stale user and its vhost by default policy")
 			utils2.WaitForResourceDeleted("rabbitmqaccess", staleName, env.namespace)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, false)
+			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
 			utils2.WaitForRabbitMQVhostState(env.backendNamespace, staleVhost, true)
 			utils2.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
 			utils2.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
@@ -385,7 +386,7 @@ spec:
 			}
 
 			By("enabling stale RabbitMQ vhost deletion while excluding the protected vhost")
-			err := createRabbitMQController(controllerName, &deletePolicy, []string{protectedVhost})
+			err := createRabbitMQController(controllerName, nil, &deletePolicy, []string{protectedVhost})
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ controller settings")
 			DeferCleanup(func() {
 				deleteControllerResource(controllerName, namespace)
@@ -421,12 +422,45 @@ spec:
 			err = utils2.DeleteRabbitMQAccess(staleName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
 
-			By("verifying finalization deletes the stale user but retains the excluded vhost")
+			By("verifying finalization retains the stale user and the excluded vhost")
 			utils2.WaitForResourceDeleted("rabbitmqaccess", staleName, env.namespace)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, false)
+			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
 			utils2.WaitForRabbitMQVhostState(env.backendNamespace, protectedVhost, true)
 			utils2.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
 			utils2.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
+		})
+
+		It("should delete stale RabbitMQ users when stale user deletion policy is Delete", func() {
+			controllerName := env.name("rabbitmq-user-cleanup-delete")
+			resourceName := env.name("test-rabbitmq-user-cleanup")
+			generatedSecret := env.name("test-rabbitmq-user-cleanup-secret")
+			staleUserDeletePolicy := accessv1.StaleUserDeletionPolicyDelete
+			permissions := []accessv1.RabbitMQPermissionSpec{
+				{VHost: env.vhost("delete-user"), Configure: ".*", Write: ".*", Read: ".*"},
+			}
+
+			By("creating a singleton Controller with staleUserDeletionPolicy Delete")
+			err := createRabbitMQController(controllerName, &staleUserDeletePolicy, nil, nil)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ controller settings")
+			DeferCleanup(func() {
+				deleteControllerResource(controllerName, namespace)
+			})
+
+			By("creating a RabbitMQAccess resource")
+			err = utils2.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource")
+
+			By("waiting for the RabbitMQ user to exist")
+			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
+
+			By("deleting the RabbitMQAccess resource")
+			err = utils2.DeleteRabbitMQAccess(resourceName, env.namespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete RabbitMQAccess resource")
+
+			By("verifying the RabbitMQ user is deleted by controller policy")
+			utils2.WaitForResourceDeleted("rabbitmqaccess", resourceName, env.namespace)
+			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
+			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
 		It("should deny cross-namespace existingSecret when no Controller resource exists", func() {
@@ -646,21 +680,25 @@ spec:
 
 func createRabbitMQController(
 	name string,
-	policy *accessv1.StaleVhostDeletionPolicy,
+	staleUserPolicy *accessv1.StaleUserDeletionPolicy,
+	staleVhostPolicy *accessv1.StaleVhostDeletionPolicy,
 	excludedVhosts []string,
 ) error {
 	var settings strings.Builder
 
-	if policy != nil || len(excludedVhosts) > 0 {
+	if staleUserPolicy != nil || staleVhostPolicy != nil || len(excludedVhosts) > 0 {
 		settings.WriteString("rabbitmq:\n")
+		if staleUserPolicy != nil {
+			settings.WriteString(fmt.Sprintf("  staleUserDeletionPolicy: %s\n", *staleUserPolicy))
+		}
 		if len(excludedVhosts) > 0 {
 			settings.WriteString("  excludedVhosts:\n")
 			for _, vhost := range excludedVhosts {
 				settings.WriteString(fmt.Sprintf("    - %s\n", vhost))
 			}
 		}
-		if policy != nil {
-			settings.WriteString(fmt.Sprintf("  staleVhostDeletionPolicy: %s\n", *policy))
+		if staleVhostPolicy != nil {
+			settings.WriteString(fmt.Sprintf("  staleVhostDeletionPolicy: %s\n", *staleVhostPolicy))
 		}
 	}
 

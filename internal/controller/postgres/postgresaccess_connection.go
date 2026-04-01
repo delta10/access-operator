@@ -84,6 +84,23 @@ func (r *PostgresAccessReconciler) resolveExcludedUsers(ctx context.Context) (ma
 	return controller.NormalizeExcludedUsers(settings.PostgresSettings.ExcludedUsers), nil
 }
 
+func (r *PostgresAccessReconciler) resolveStaleUserDeletionPolicy(ctx context.Context) (accessv1.PostgresCleanupPolicy, error) {
+	if r.Client == nil {
+		return accessv1.CleanupPolicyRestrict, nil
+	}
+
+	settings, err := resolvePostgresControllerSettings(ctx, r)
+	if err != nil {
+		return "", err
+	}
+
+	if settings.PostgresSettings.StaleUserDeletionPolicy == nil {
+		return accessv1.CleanupPolicyRestrict, nil
+	}
+
+	return *settings.PostgresSettings.StaleUserDeletionPolicy, nil
+}
+
 func formatConnectionString(connection controller.ConnectionDetails) string {
 	return fmt.Sprintf(
 		"postgresql://%s:%s@%s:%s/%s?sslmode=%s",

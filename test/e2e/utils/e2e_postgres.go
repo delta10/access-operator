@@ -547,7 +547,6 @@ func CreateResourceFromSecretReference(
 	namespace,
 	generatedSecretName,
 	connSecret string,
-	cleanupPolicy *accessv1.CleanupPolicy,
 	grants accessv1.GrantSpec,
 ) error {
 	return createResourceFromSecretReference(
@@ -556,7 +555,6 @@ func CreateResourceFromSecretReference(
 		generatedSecretName,
 		connSecret,
 		nil,
-		cleanupPolicy,
 		grants,
 	)
 }
@@ -568,7 +566,6 @@ func CreateResourceFromSecretReferenceWithNamespace(
 	generatedSecretName,
 	connSecret,
 	connSecretNamespace string,
-	cleanupPolicy *accessv1.CleanupPolicy,
 	grants accessv1.GrantSpec,
 ) error {
 	return createResourceFromSecretReference(
@@ -577,7 +574,6 @@ func CreateResourceFromSecretReferenceWithNamespace(
 		generatedSecretName,
 		connSecret,
 		&connSecretNamespace,
-		cleanupPolicy,
 		grants,
 	)
 }
@@ -588,14 +584,8 @@ func createResourceFromSecretReference(
 	generatedSecretName,
 	connSecret string,
 	connSecretNamespace *string,
-	cleanupPolicy *accessv1.CleanupPolicy,
 	grants accessv1.GrantSpec,
 ) error {
-	cleanupPolicyYAML := ""
-	if cleanupPolicy != nil && *cleanupPolicy != "" {
-		cleanupPolicyYAML = fmt.Sprintf("  cleanupPolicy: %s\n", *cleanupPolicy)
-	}
-
 	existingSecretNamespaceYAML := ""
 	if connSecretNamespace != nil && strings.TrimSpace(*connSecretNamespace) != "" {
 		existingSecretNamespaceYAML = fmt.Sprintf("    existingSecretNamespace: %s\n", strings.TrimSpace(*connSecretNamespace))
@@ -612,12 +602,11 @@ spec:
   connection:
     existingSecret: %s
 %s
-%s
   grants:
     - database: %s
       privileges:
 %s
-`, username, namespace, generatedSecretName, username, connSecret, existingSecretNamespaceYAML, cleanupPolicyYAML, grants.Database, formatStringListYAML(grants.Privileges, "        "))
+`, username, namespace, generatedSecretName, username, connSecret, existingSecretNamespaceYAML, grants.Database, formatStringListYAML(grants.Privileges, "        "))
 
 	return ApplyManifest(pgAccessYAML)
 }
@@ -676,6 +665,19 @@ func WaitForTableOwner(namespace string, connection controller.ConnectionDetails
 		)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to query table owner")
 		g.Expect(output).To(Equal(expectedOwner))
+	}, 2*time.Minute, 5*time.Second).Should(Succeed())
+}
+
+// WaitForTableMissing waits until the specified table no longer exists.
+func WaitForTableMissing(namespace string, connection controller.ConnectionDetails, table string) {
+	Eventually(func(g Gomega) {
+		output, err := RunPostgresQuery(
+			namespace,
+			connection,
+			fmt.Sprintf("SELECT to_regclass('public.%q') IS NULL;", table),
+		)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to query table existence")
+		g.Expect(output).To(Equal("t"))
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 }
 

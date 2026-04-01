@@ -17,3 +17,16 @@ spec:
     postgres:
        excludedUsers:
          - postgres
+       # Default is Restrict.
+       # Controls whether stale PostgreSQL roles are deleted or retained.
+       staleUserDeletionPolicy: Restrict
+    # Configure RabbitMQ-specific controller behavior.
+    rabbitmq:
+       # Default is Restrict.
+       staleUserDeletionPolicy: Restrict
+       # Default is Retain.
+       staleVhostDeletionPolicy: Retain
+    # Configure Redis-specific controller behavior.
+    redis:
+       # Default is Restrict.
+       staleUserDeletionPolicy: Restrict

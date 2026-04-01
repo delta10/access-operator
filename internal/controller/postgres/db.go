@@ -32,7 +32,7 @@ type DBInterface interface {
 	Close(ctx context.Context) error
 	CreateUser(ctx context.Context, username, password string) error
 	UpdateUserPassword(ctx context.Context, username, newPassword string) error
-	DropUser(ctx context.Context, username string, cleanupPolicy accessv1.CleanupPolicy) error
+	DropUser(ctx context.Context, username string, cleanupPolicy accessv1.PostgresCleanupPolicy) error
 	GetUsers(ctx context.Context) ([]string, error)
 	GrantPrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error
 	RevokePrivileges(ctx context.Context, grants []accessv1.GrantSpec, username string) error
@@ -101,7 +101,7 @@ func (p *DB) UpdateUserPassword(ctx context.Context, username, newPassword strin
 	return err
 }
 
-func (p *DB) DropUser(ctx context.Context, username string, policy accessv1.CleanupPolicy) (err error) {
+func (p *DB) DropUser(ctx context.Context, username string, policy accessv1.PostgresCleanupPolicy) (err error) {
 	if p.conn == nil {
 		return fmt.Errorf("database connection is not initialized")
 	}

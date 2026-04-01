@@ -96,6 +96,37 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			Expect(excludedUsers).To(HaveKey("admin"))
 			Expect(excludedUsers).To(HaveKey("ops-user"))
 		})
+
+		It("should default stale user deletion policy to Restrict", func() {
+			reconciler := &AccessReconciler{}
+			policy, err := reconciler.resolveStaleUserDeletionPolicy(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(policy).To(Equal(accessv1.StaleUserDeletionPolicyRestrict))
+		})
+
+		It("should resolve stale user deletion policy from singleton Controller settings", func() {
+			deletePolicy := accessv1.StaleUserDeletionPolicyDelete
+			fakeClient, _ := test.NewFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "cluster-settings",
+						Namespace: "access-operator-system",
+					},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{
+							RabbitMQSettings: accessv1.RabbitMQControllerSettings{
+								StaleUserDeletionPolicy: &deletePolicy,
+							},
+						},
+					},
+				},
+			)
+
+			reconciler := &AccessReconciler{Client: fakeClient}
+			policy, err := reconciler.resolveStaleUserDeletionPolicy(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(policy).To(Equal(accessv1.StaleUserDeletionPolicyDelete))
+		})
 	})
 
 	Context("When resolving excluded RabbitMQ vhosts", func() {

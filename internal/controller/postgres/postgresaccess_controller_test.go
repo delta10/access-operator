@@ -534,6 +534,34 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(excludedUsers).To(HaveKey("app-user"))
 		})
 
+		It("should default stale user deletion policy to Restrict", func() {
+			reconciler := &PostgresAccessReconciler{}
+			policy, err := reconciler.resolveStaleUserDeletionPolicy(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(policy).To(Equal(accessv1.CleanupPolicyRestrict))
+		})
+
+		It("should resolve stale user deletion policy from singleton Controller settings", func() {
+			orphanPolicy := accessv1.CleanupPolicyOrphan
+			fakeClient, _ := test.NewFakeClientWithScheme(
+				&accessv1.Controller{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
+					Spec: accessv1.ControllerSpec{
+						Settings: accessv1.ControllerSettings{
+							PostgresSettings: accessv1.PostgresControllerSettings{
+								StaleUserDeletionPolicy: &orphanPolicy,
+							},
+						},
+					},
+				},
+			)
+
+			reconciler := &PostgresAccessReconciler{Client: fakeClient}
+			policy, err := reconciler.resolveStaleUserDeletionPolicy(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(policy).To(Equal(accessv1.CleanupPolicyOrphan))
+		})
+
 		It("should hard fail cross-namespace existingSecret when multiple Controller resources exist", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
 				&accessv1.Controller{
@@ -1118,6 +1146,189 @@ var _ = Describe("PostgresAccess Controller", func() {
 			finalizedResource := &accessv1.PostgresAccess{}
 			err = finalizerClient.Get(context.Background(), client.ObjectKeyFromObject(pg), finalizedResource)
 			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		})
+
+		It("should retain stale PostgreSQL users during reconciliation when stale user deletion policy is Restrict", func() {
+			const managedUsername = "managed-user"
+			host := localHost
+			port := int32(5432)
+			username := managedUsername
+
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{Name: "retain-stale-user", Namespace: "default"},
+				Spec: accessv1.PostgresAccessSpec{
+					GeneratedSecret: "retain-stale-user-secret",
+					Username:        managedUsername,
+					Connection: accessv1.ConnectionSpec{
+						Host:     &host,
+						Port:     &port,
+						Database: &database,
+						Username: &accessv1.SecretKeySelector{Value: &username},
+						Password: &accessv1.SecretKeySelector{Value: &password},
+					},
+					Grants: []accessv1.GrantSpec{
+						{Database: database, Privileges: []string{"CONNECT", "SELECT"}},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(pg)
+			mockDB := NewMockDB()
+			mockDB.Users = []string{managedUsername, "stale-user"}
+			reconciler := &PostgresAccessReconciler{
+				Client: fakeClient,
+				Scheme: fakeScheme,
+				DB:     mockDB,
+			}
+
+			_, err := reconciler.reconcilePostgresAccess(context.Background(), pg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockDB.DroppedUsernames).To(BeEmpty())
+		})
+
+		It("should drop stale PostgreSQL users during reconciliation when stale user deletion policy is Orphan", func() {
+			const managedUsername = "managed-user"
+			host := localHost
+			port := int32(5432)
+			username := managedUsername
+			orphanPolicy := accessv1.CleanupPolicyOrphan
+
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{Name: "delete-stale-user", Namespace: "default"},
+				Spec: accessv1.PostgresAccessSpec{
+					GeneratedSecret: "delete-stale-user-secret",
+					Username:        managedUsername,
+					Connection: accessv1.ConnectionSpec{
+						Host:     &host,
+						Port:     &port,
+						Database: &database,
+						Username: &accessv1.SecretKeySelector{Value: &username},
+						Password: &accessv1.SecretKeySelector{Value: &password},
+					},
+					Grants: []accessv1.GrantSpec{
+						{Database: database, Privileges: []string{"CONNECT", "SELECT"}},
+					},
+				},
+			}
+			controllerSettings := &accessv1.Controller{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
+				Spec: accessv1.ControllerSpec{
+					Settings: accessv1.ControllerSettings{
+						PostgresSettings: accessv1.PostgresControllerSettings{
+							StaleUserDeletionPolicy: &orphanPolicy,
+						},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(pg, controllerSettings)
+			mockDB := NewMockDB()
+			mockDB.Users = []string{managedUsername, "stale-user"}
+			reconciler := &PostgresAccessReconciler{
+				Client: fakeClient,
+				Scheme: fakeScheme,
+				DB:     mockDB,
+			}
+
+			_, err := reconciler.reconcilePostgresAccess(context.Background(), pg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mockDB.DroppedUsernames).To(ContainElement("stale-user"))
+			Expect(mockDB.LastDropCleanupPolicy).To(Equal(accessv1.CleanupPolicyOrphan))
+		})
+
+		It("should retain PostgreSQL users during finalization when stale user deletion policy is Restrict", func() {
+			now := metav1.NewTime(time.Now())
+			host := localHost
+			port := int32(5432)
+			username := "managed-user"
+
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "retain-user-finalizer",
+					Namespace:         "default",
+					Finalizers:        []string{postgresAccessFinalizer},
+					DeletionTimestamp: &now,
+				},
+				Spec: accessv1.PostgresAccessSpec{
+					GeneratedSecret: "retain-user-finalizer-secret",
+					Username:        username,
+					Connection: accessv1.ConnectionSpec{
+						Host:     &host,
+						Port:     &port,
+						Database: &database,
+						Username: &accessv1.SecretKeySelector{Value: &username},
+						Password: &accessv1.SecretKeySelector{Value: &password},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(pg)
+			mockDB := NewMockDB()
+			mockDB.Users = []string{username}
+			reconciler := &PostgresAccessReconciler{
+				Client: fakeClient,
+				Scheme: fakeScheme,
+				DB:     mockDB,
+			}
+
+			finalized, err := reconciler.finalizePostgresAccess(context.Background(), pg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalized).To(BeTrue())
+			Expect(mockDB.DropUserCalled).To(BeFalse())
+		})
+
+		It("should drop PostgreSQL users during finalization when stale user deletion policy is Cascade", func() {
+			now := metav1.NewTime(time.Now())
+			host := localHost
+			port := int32(5432)
+			username := "managed-user"
+			cascadePolicy := accessv1.CleanupPolicyCascade
+
+			pg := &accessv1.PostgresAccess{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "drop-user-finalizer",
+					Namespace:         "default",
+					Finalizers:        []string{postgresAccessFinalizer},
+					DeletionTimestamp: &now,
+				},
+				Spec: accessv1.PostgresAccessSpec{
+					GeneratedSecret: "drop-user-finalizer-secret",
+					Username:        username,
+					Connection: accessv1.ConnectionSpec{
+						Host:     &host,
+						Port:     &port,
+						Database: &database,
+						Username: &accessv1.SecretKeySelector{Value: &username},
+						Password: &accessv1.SecretKeySelector{Value: &password},
+					},
+				},
+			}
+			controllerSettings := &accessv1.Controller{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
+				Spec: accessv1.ControllerSpec{
+					Settings: accessv1.ControllerSettings{
+						PostgresSettings: accessv1.PostgresControllerSettings{
+							StaleUserDeletionPolicy: &cascadePolicy,
+						},
+					},
+				},
+			}
+
+			fakeClient, fakeScheme := test.NewFakeClientWithScheme(pg, controllerSettings)
+			mockDB := NewMockDB()
+			mockDB.Users = []string{username}
+			reconciler := &PostgresAccessReconciler{
+				Client: fakeClient,
+				Scheme: fakeScheme,
+				DB:     mockDB,
+			}
+
+			finalized, err := reconciler.finalizePostgresAccess(context.Background(), pg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalized).To(BeTrue())
+			Expect(mockDB.DropUserCalled).To(BeTrue())
+			Expect(mockDB.LastDroppedUsername).To(Equal(username))
+			Expect(mockDB.LastDropCleanupPolicy).To(Equal(accessv1.CleanupPolicyCascade))
 		})
 	})
 })

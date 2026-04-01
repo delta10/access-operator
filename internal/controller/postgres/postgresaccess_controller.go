@@ -152,6 +152,10 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	if err != nil {
 		return false, err
 	}
+	staleUserDeletionPolicy, err := r.resolveStaleUserDeletionPolicy(ctx)
+	if err != nil {
+		return false, err
+	}
 
 	usersHandled := make(map[string]bool)
 	for username := range excludedUsers {
@@ -215,14 +219,15 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	}
 
 	// remove users that are not handled by any PostgresAccess CR anymore
-	// Use Restrict policy as the safe default for orphaned users
-	for _, user := range users {
-		if !usersHandled[user] {
-			err = r.DB.DropUser(ctx, user, accessv1.CleanupPolicyRestrict)
-			if err != nil {
-				log.Error(err, "failed to drop user in PostgreSQL", "username", user)
-				inSync = false
-				continue
+	if staleUserDeletionPolicy != accessv1.CleanupPolicyRestrict {
+		for _, user := range users {
+			if !usersHandled[user] {
+				err = r.DB.DropUser(ctx, user, staleUserDeletionPolicy)
+				if err != nil {
+					log.Error(err, "failed to drop user in PostgreSQL", "username", user)
+					inSync = false
+					continue
+				}
 			}
 		}
 	}
@@ -282,20 +287,23 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 		return true, err
 	}
 
-	// Determine cleanup policy, default to Restrict if not specified
-	cleanupPolicy := accessv1.CleanupPolicyRestrict
-	if pg.Spec.CleanupPolicy != nil {
-		cleanupPolicy = *pg.Spec.CleanupPolicy
+	staleUserDeletionPolicy, err := r.resolveStaleUserDeletionPolicy(ctx)
+	if err != nil {
+		return true, err
 	}
 
-	for _, user := range users {
-		if pg.Spec.Username == user {
-			err = r.DB.DropUser(ctx, user, cleanupPolicy)
-			if err != nil {
-				log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
-				continue
+	if staleUserDeletionPolicy != accessv1.CleanupPolicyRestrict {
+		for _, user := range users {
+			if pg.Spec.Username == user {
+				err = r.DB.DropUser(ctx, user, staleUserDeletionPolicy)
+				if err != nil {
+					log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
+					continue
+				}
 			}
 		}
+	} else {
+		log.Info("Skipping finalizer PostgreSQL user deletion because stale user deletion policy is Restrict", "username", pg.Spec.Username)
 	}
 
 	if err := controller.RemoveAccessFinalizerIfPresent(ctx, r.Client, pg); err != nil {
