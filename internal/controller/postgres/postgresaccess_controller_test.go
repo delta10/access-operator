@@ -525,10 +525,10 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(policy).To(Equal(accessv1.CleanupPolicyOrphan))
 		})
 
-		It("should treat None as no stale-user deletion during reconciliation and Restrict during finalization", func() {
-			Expect(shouldDeleteStalePostgresUsers(accessv1.CleanupPolicyNone)).To(BeFalse())
+		It("should treat Retain as no stale-user deletion during reconciliation and Restrict during finalization", func() {
+			Expect(shouldDeleteStalePostgresUsers(accessv1.CleanupPolicyRetain)).To(BeFalse())
 
-			finalizationPolicy, shouldDelete := postgresFinalizationCleanupPolicy(accessv1.CleanupPolicyNone)
+			finalizationPolicy, shouldDelete := postgresFinalizationCleanupPolicy(accessv1.CleanupPolicyRetain)
 			Expect(shouldDelete).To(BeTrue())
 			Expect(finalizationPolicy).To(Equal(accessv1.CleanupPolicyRestrict))
 		})
@@ -1140,17 +1140,17 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(mockDB.LastDropCleanupPolicy).To(Equal(accessv1.CleanupPolicyOrphan))
 		})
 
-		It("should retain stale PostgreSQL users during reconciliation when stale user deletion policy is None", func() {
+		It("should retain stale PostgreSQL users during reconciliation when stale user deletion policy is Retain", func() {
 			const managedUsername = "managed-user"
 			host := localHost
 			port := int32(5432)
 			username := managedUsername
-			nonePolicy := accessv1.CleanupPolicyNone
+			retainPolicy := accessv1.CleanupPolicyRetain
 
 			pg := &accessv1.PostgresAccess{
-				ObjectMeta: metav1.ObjectMeta{Name: "retain-stale-user-none", Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: "retain-stale-user-retain", Namespace: "default"},
 				Spec: accessv1.PostgresAccessSpec{
-					GeneratedSecret: "retain-stale-user-none-secret",
+					GeneratedSecret: "retain-stale-user-retain-secret",
 					Username:        managedUsername,
 					Connection: accessv1.ConnectionSpec{
 						Host:     &host,
@@ -1166,7 +1166,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			}
 			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
 				PostgresSettings: accessv1.PostgresControllerSettings{
-					StaleUserDeletionPolicy: &nonePolicy,
+					StaleUserDeletionPolicy: &retainPolicy,
 				},
 			})
 
@@ -1275,22 +1275,22 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(mockDB.LastDropCleanupPolicy).To(Equal(accessv1.CleanupPolicyCascade))
 		})
 
-		It("should drop PostgreSQL users during finalization when stale user deletion policy is None", func() {
+		It("should drop PostgreSQL users during finalization when stale user deletion policy is Retain", func() {
 			now := metav1.NewTime(time.Now())
 			host := localHost
 			port := int32(5432)
 			username := "managed-user"
-			nonePolicy := accessv1.CleanupPolicyNone
+			retainPolicy := accessv1.CleanupPolicyRetain
 
 			pg := &accessv1.PostgresAccess{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:              "drop-user-finalizer-none",
+					Name:              "drop-user-finalizer-retain",
 					Namespace:         "default",
 					Finalizers:        []string{postgresAccessFinalizer},
 					DeletionTimestamp: &now,
 				},
 				Spec: accessv1.PostgresAccessSpec{
-					GeneratedSecret: "drop-user-finalizer-none-secret",
+					GeneratedSecret: "drop-user-finalizer-retain-secret",
 					Username:        username,
 					Connection: accessv1.ConnectionSpec{
 						Host:     &host,
@@ -1303,7 +1303,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			}
 			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
 				PostgresSettings: accessv1.PostgresControllerSettings{
-					StaleUserDeletionPolicy: &nonePolicy,
+					StaleUserDeletionPolicy: &retainPolicy,
 				},
 			})
 

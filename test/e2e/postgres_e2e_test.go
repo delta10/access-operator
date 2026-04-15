@@ -661,6 +661,9 @@ data:
 			)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
 
+			By("waiting for the generated secret to be created")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
+
 			By("verifying the managed role is created")
 			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, true)
 
@@ -687,6 +690,9 @@ data:
 				},
 			)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
+
+			By("waiting for the generated secret to be created")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
 
 			By("waiting for the managed role to exist")
 			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
@@ -754,13 +760,13 @@ data:
 			e2eutils.WaitForTableMissing(env.backendNamespace, env.conn, ownedTable)
 		})
 
-		It("should delete the managed role during finalization when stale user deletion policy is None", func() {
-			resourceName := env.name("test-none-finalizer-delete")
-			generatedSecret := env.name("test-none-finalizer-delete-secret")
-			By("creating a settings ConfigMap with staleUserDeletionPolicy None")
+		It("should delete the managed role during finalization when stale user deletion policy is Retain", func() {
+			resourceName := env.name("test-retain-finalizer-delete")
+			generatedSecret := env.name("test-retain-finalizer-delete-secret")
+			By("creating a settings ConfigMap with staleUserDeletionPolicy Retain")
 			err := createControllerSettingsConfigMap(namespace, `postgres:
-  staleUserDeletionPolicy: None`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap with None policy")
+  staleUserDeletionPolicy: Retain`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap with Retain policy")
 			DeferCleanup(func() {
 				deleteControllerSettingsConfigMap(namespace)
 			})
@@ -779,7 +785,10 @@ data:
 					Privileges: []string{"CONNECT", "SELECT"},
 				},
 			)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with None controller policy")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with Retain controller policy")
+
+			By("waiting for the generated secret to be created")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
 
 			By("waiting for the managed role to exist")
 			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)

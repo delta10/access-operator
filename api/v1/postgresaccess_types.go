@@ -101,7 +101,7 @@ type ConnectionSpec struct {
 }
 
 // PostgresCleanupPolicy specifies how the controller handles PostgreSQL role deletion.
-// +kubebuilder:validation:Enum=Cascade;Restrict;Orphan;None
+// +kubebuilder:validation:Enum=Cascade;Restrict;Orphan;Retain
 type PostgresCleanupPolicy string
 
 const (
@@ -111,9 +111,9 @@ const (
 	CleanupPolicyRestrict PostgresCleanupPolicy = "Restrict"
 	// CleanupPolicyOrphan reassigns owned objects to the current database owner before dropping.
 	CleanupPolicyOrphan PostgresCleanupPolicy = "Orphan"
-	// CleanupPolicyNone retains stale roles during steady-state reconciliation and
+	// CleanupPolicyRetain retains stale roles during steady-state reconciliation and
 	// only allows deletion during finalization of the specific PostgresAccess.
-	CleanupPolicyNone PostgresCleanupPolicy = "None"
+	CleanupPolicyRetain PostgresCleanupPolicy = "Retain"
 )
 
 // GrantSpec defines database grants to be applied

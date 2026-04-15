@@ -350,7 +350,7 @@ func (r *PostgresAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func shouldDeleteStalePostgresUsers(policy accessv1.PostgresCleanupPolicy) bool {
-	return policy != accessv1.CleanupPolicyRestrict && policy != accessv1.CleanupPolicyNone
+	return policy != accessv1.CleanupPolicyRestrict && policy != accessv1.CleanupPolicyRetain
 }
 
 func postgresFinalizationCleanupPolicy(
@@ -359,8 +359,8 @@ func postgresFinalizationCleanupPolicy(
 	switch policy {
 	case accessv1.CleanupPolicyCascade, accessv1.CleanupPolicyOrphan:
 		return policy, true
-	case accessv1.CleanupPolicyNone:
-		// None disables background cleanup but still allows deleting the
+	case accessv1.CleanupPolicyRetain:
+		// Retain disables background cleanup but still allows deleting the
 		// specific managed role during finalization using safe Restrict semantics.
 		return accessv1.CleanupPolicyRestrict, true
 	default:

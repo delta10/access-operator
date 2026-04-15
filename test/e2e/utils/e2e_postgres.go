@@ -618,26 +618,24 @@ func WaitForDatabaseUserState(
 	username string,
 	shouldExist bool,
 ) {
-	expected := "f"
-	if shouldExist {
-		expected = "t"
-	}
-
 	Eventually(func(g Gomega) {
-		output, err := RunPostgresQuery(
-			namespace,
-			connection,
-			fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = '%s');", username),
-		)
-		g.Expect(err).NotTo(HaveOccurred(), "Failed to check if user exists")
-		g.Expect(output).To(Equal(expected))
-
 		allUsersOutput, err := RunPostgresQuery(
 			namespace,
 			connection,
 			"SELECT rolname FROM pg_roles;",
 		)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to list all users")
+
+		users := strings.Fields(allUsersOutput)
+		userExists := false
+		for _, user := range users {
+			if user == username {
+				userExists = true
+				break
+			}
+		}
+
+		g.Expect(userExists).To(Equal(shouldExist), "Expected role %q existence to be %t. Current database users: %s", username, shouldExist, allUsersOutput)
 		fmt.Printf("Current database users: %s\n", allUsersOutput)
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 }

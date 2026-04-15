@@ -79,7 +79,7 @@ type PostgresControllerSettings struct {
 
 	// staleUserDeletionPolicy controls whether the controller deletes PostgreSQL
 	// roles that are no longer referenced by any managed PostgresAccess.
-	// Restrict retains stale roles, while None only permits deletion during
+	// Restrict retains stale roles, while Retain only permits deletion during
 	// finalization of the specific PostgresAccess being removed.
 	// +optional
 	// +kubebuilder:default="Restrict"
