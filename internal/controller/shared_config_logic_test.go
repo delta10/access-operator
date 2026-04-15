@@ -20,7 +20,7 @@ import (
 var _ = Describe("Shared config logic", func() {
 	Context("ResolveControllerSettings", func() {
 		It("should return zero settings when ConfigMap does not exist", func() {
-			fakeClient, _ := newFakeClientWithScheme()
+			fakeClient := newFakeClientWithScheme()
 
 			settings, err := ResolveControllerSettings(context.Background(), fakeClient)
 			Expect(err).NotTo(HaveOccurred())
@@ -28,7 +28,7 @@ var _ = Describe("Shared config logic", func() {
 		})
 
 		It("should parse settings from spec.settings", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient := newFakeClientWithScheme(
 				newControllerSettingsConfigMap("system", accessv1.ControllerSettings{
 					ExistingSecretNamespace: true,
 					PostgresSettings: accessv1.PostgresControllerSettings{
@@ -44,7 +44,7 @@ var _ = Describe("Shared config logic", func() {
 		})
 
 		It("should parse settings from root settings field for backward compatibility", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient := newFakeClientWithScheme(
 				newControllerSettingsConfigMapWithRawData("system", `
 settings:
   existingSecretNamespace: true
@@ -61,7 +61,7 @@ settings:
 		})
 
 		It("should ignore ConfigMap outside operator namespace", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient := newFakeClientWithScheme(
 				newControllerSettingsConfigMap("tenant-a", accessv1.ControllerSettings{
 					ExistingSecretNamespace: true,
 				}),
@@ -73,7 +73,7 @@ settings:
 		})
 
 		It("should return parse error for malformed ConfigMap data", func() {
-			fakeClient, _ := newFakeClientWithScheme(
+			fakeClient := newFakeClientWithScheme(
 				&corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      ControllerSettingsConfigMapName,
@@ -104,7 +104,7 @@ settings:
 	})
 })
 
-func newFakeClientWithScheme(objs ...client.Object) (client.Client, *runtime.Scheme) {
+func newFakeClientWithScheme(objs ...client.Object) client.Client {
 	testScheme := runtime.NewScheme()
 	Expect(accessv1.AddToScheme(testScheme)).To(Succeed())
 	Expect(corev1.AddToScheme(testScheme)).To(Succeed())
@@ -116,7 +116,7 @@ func newFakeClientWithScheme(objs ...client.Object) (client.Client, *runtime.Sch
 		WithObjects(objs...).
 		Build()
 
-	return fakeClient, testScheme
+	return fakeClient
 }
 
 func newControllerSettingsConfigMap(namespace string, settings accessv1.ControllerSettings) *corev1.ConfigMap {

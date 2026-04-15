@@ -24,7 +24,7 @@ import (
 	"os/exec"
 	"strings"
 
-	utils2 "github.com/delta10/access-operator/test/e2e/utils"
+	e2eutils "github.com/delta10/access-operator/test/e2e/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -65,7 +65,7 @@ spec:
       read: ".*"
 `, resourceName, env.namespace, generatedSecretName, resourceName, vhost)
 
-			err := utils2.ApplyManifest(invalidResource)
+			err := e2eutils.ApplyManifest(invalidResource)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create invalid RabbitMQAccess resource")
 
 			By("verifying the RabbitMQAccess status reports the reconcile failure")
@@ -87,22 +87,22 @@ spec:
 			}
 
 			By("creating a RabbitMQAccess resource")
-			err := utils2.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
+			err := e2eutils.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource with connection details")
 
 			By("waiting for the generated secret to be created")
-			utils2.WaitForSecretField(env.namespace, generatedSecret, "username")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
 
 			By("verifying the RabbitMQ user and vhost were created")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, vhost, true)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, vhost, true)
 
 			By("verifying the permissions were granted")
-			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
+			e2eutils.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
 
 			By("verifying the generated credentials can authenticate")
-			password := utils2.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
-			utils2.WaitForRabbitMQAuthenticationSuccess(env.backendNamespace, resourceName, password)
+			password := e2eutils.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
+			e2eutils.WaitForRabbitMQAuthenticationSuccess(env.backendNamespace, resourceName, password)
 		})
 
 		It("should create a RabbitMQAccess resource with direct host/port and secret-referenced credentials", func() {
@@ -114,19 +114,19 @@ spec:
 			}
 
 			By("creating a secret with the connection details")
-			secretName, err := utils2.CreateRabbitMQConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateRabbitMQConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ connection secret")
 
 			By("creating a RabbitMQAccess resource referencing the username/password secret and providing host/port directly")
-			err = utils2.CreateRabbitMQAccessWithConnectionSecretRef(resourceName, env.namespace, generatedSecret, env.conn, secretName, permissions)
+			err = e2eutils.CreateRabbitMQAccessWithConnectionSecretRef(resourceName, env.namespace, generatedSecret, env.conn, secretName, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource with secret references")
 
 			By("waiting for the generated secret to be created")
-			utils2.WaitForSecretField(env.namespace, generatedSecret, "username")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
 
 			By("verifying the RabbitMQ user and permissions were created")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
-			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
+			e2eutils.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
 		})
 
 		It("should create a RabbitMQAccess resource using an existing connection secret in the same namespace", func() {
@@ -138,19 +138,19 @@ spec:
 			}
 
 			By("creating a secret with the connection details")
-			secretName, err := utils2.CreateRabbitMQConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateRabbitMQConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ connection secret")
 
 			By("creating a RabbitMQAccess resource referencing the connection secret")
-			err = utils2.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecret, secretName, nil, permissions)
+			err = e2eutils.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecret, secretName, nil, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource with existingSecret")
 
 			By("waiting for the generated secret to be created")
-			utils2.WaitForSecretField(env.namespace, generatedSecret, "username")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
 
 			By("verifying the RabbitMQ user and permissions were created")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
-			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
+			e2eutils.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
 		})
 
 		It("should retain the RabbitMQ user and vhost and delete the generated secret when the RabbitMQAccess resource is deleted by default", func() {
@@ -162,23 +162,23 @@ spec:
 			}
 
 			By("creating a RabbitMQAccess resource")
-			err := utils2.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
+			err := e2eutils.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource")
 
 			By("waiting for the generated secret, user, and permissions to exist")
-			utils2.WaitForSecretField(env.namespace, generatedSecret, "username")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
-			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
+			e2eutils.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
 
 			By("deleting the RabbitMQAccess resource")
-			err = utils2.DeleteRabbitMQAccess(resourceName, env.namespace)
+			err = e2eutils.DeleteRabbitMQAccess(resourceName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete RabbitMQAccess resource")
 
 			By("verifying finalization removed the RabbitMQAccess, retained the user and vhost, and deleted the generated secret")
-			utils2.WaitForResourceDeleted("rabbitmqaccess", resourceName, env.namespace)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, vhost, true)
-			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
+			e2eutils.WaitForResourceDeleted("rabbitmqaccess", resourceName, env.namespace)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, vhost, true)
+			e2eutils.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
 		It("should reconcile permissions when they're changed in the config", func() {
@@ -193,18 +193,18 @@ spec:
 			}
 
 			By("creating a RabbitMQAccess resource with certain permissions")
-			err := utils2.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, initialPermissions)
+			err := e2eutils.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, initialPermissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource")
 
 			By("waiting for the initial permissions to be granted")
-			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, initialPermissions)
+			e2eutils.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, initialPermissions)
 
 			By("updating the RabbitMQAccess resource to include new permissions")
-			err = utils2.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, updatedPermissions)
+			err = e2eutils.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, updatedPermissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to update RabbitMQAccess resource")
 
 			By("verifying that the new permissions are granted")
-			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, updatedPermissions)
+			e2eutils.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, updatedPermissions)
 		})
 
 		It("should reconcile the permissions of a RabbitMQAccess resource when they are manually revoked", func() {
@@ -216,21 +216,21 @@ spec:
 			}
 
 			By("creating a RabbitMQAccess resource")
-			err := utils2.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
+			err := e2eutils.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource")
 
 			By("waiting for the permissions to be granted")
-			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
+			e2eutils.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
 
 			By("revoking the permissions from the RabbitMQ user")
-			_, err = utils2.RunRabbitMQctl(env.backendNamespace, "clear_permissions", "-p", vhost, resourceName)
+			_, err = e2eutils.RunRabbitMQctl(env.backendNamespace, "clear_permissions", "-p", vhost, resourceName)
 			Expect(err).NotTo(HaveOccurred(), "Failed to clear RabbitMQ permissions")
 
-			err = utils2.TriggerReconciliation("rabbitmqaccess", resourceName, env.namespace)
+			err = e2eutils.TriggerReconciliation("rabbitmqaccess", resourceName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation after clearing permissions")
 
 			By("verifying that the controller reconciles and restores the permissions")
-			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
+			e2eutils.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
 		})
 
 		It("should update the RabbitMQ user's password when the secret's password is rolled via deletion", func() {
@@ -242,22 +242,22 @@ spec:
 			}
 
 			By("creating a RabbitMQAccess resource")
-			err := utils2.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
+			err := e2eutils.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource")
 
 			By("waiting for the generated secret and initial authentication")
-			oldPassword := utils2.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
-			utils2.WaitForRabbitMQAuthenticationSuccess(env.backendNamespace, resourceName, oldPassword)
+			oldPassword := e2eutils.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
+			e2eutils.WaitForRabbitMQAuthenticationSuccess(env.backendNamespace, resourceName, oldPassword)
 
 			By("deleting the generated secret to trigger password rotation")
 			cmd := exec.Command("kubectl", "delete", "secret", generatedSecret, "-n", env.namespace)
-			_, err = utils2.Run(cmd)
+			_, err = e2eutils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete generated secret")
 
 			By("verifying that the RabbitMQ user's password is rotated and the new password authenticates")
-			newPassword := utils2.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
+			newPassword := e2eutils.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
 			Expect(newPassword).NotTo(Equal(oldPassword))
-			utils2.WaitForRabbitMQAuthenticationSuccess(env.backendNamespace, resourceName, newPassword)
+			e2eutils.WaitForRabbitMQAuthenticationSuccess(env.backendNamespace, resourceName, newPassword)
 		})
 	})
 
@@ -295,29 +295,29 @@ spec:
 			})
 
 			By("creating a keeper RabbitMQAccess resource")
-			err = utils2.CreateRabbitMQAccessWithDirectConnection(keeperName, env.namespace, env.name("keeper-secret"), env.conn, keeperPermissions)
+			err = e2eutils.CreateRabbitMQAccessWithDirectConnection(keeperName, env.namespace, env.name("keeper-secret"), env.conn, keeperPermissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create keeper RabbitMQAccess resource")
 
 			By("creating a second RabbitMQAccess resource that owns an orphanable vhost")
-			err = utils2.CreateRabbitMQAccessWithDirectConnection(staleName, env.namespace, env.name("stale-secret"), env.conn, stalePermissions)
+			err = e2eutils.CreateRabbitMQAccessWithDirectConnection(staleName, env.namespace, env.name("stale-secret"), env.conn, stalePermissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create stale RabbitMQAccess resource")
 
 			By("waiting for both RabbitMQ users and vhosts to exist")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, staleVhost, true)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, staleVhost, true)
 
 			By("deleting the stale RabbitMQAccess resource")
-			err = utils2.DeleteRabbitMQAccess(staleName, env.namespace)
+			err = e2eutils.DeleteRabbitMQAccess(staleName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
 
 			By("verifying finalization retains the stale user but deletes its vhost while the keeper remains")
-			utils2.WaitForResourceDeleted("rabbitmqaccess", staleName, env.namespace)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, staleVhost, false)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
+			e2eutils.WaitForResourceDeleted("rabbitmqaccess", staleName, env.namespace)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, staleVhost, false)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
 		})
 
 		It("should retain orphaned RabbitMQ vhosts when stale vhost deletion is not enabled", func() {
@@ -333,7 +333,7 @@ spec:
 			}
 
 			By("creating a keeper RabbitMQAccess resource")
-			err := utils2.CreateRabbitMQAccessWithDirectConnection(
+			err := e2eutils.CreateRabbitMQAccessWithDirectConnection(
 				keeperName,
 				env.namespace,
 				env.name("keeper-secret"),
@@ -343,7 +343,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create keeper RabbitMQAccess resource")
 
 			By("creating a second RabbitMQAccess resource whose vhost should be retained")
-			err = utils2.CreateRabbitMQAccessWithDirectConnection(
+			err = e2eutils.CreateRabbitMQAccessWithDirectConnection(
 				staleName,
 				env.namespace,
 				env.name("stale-secret"),
@@ -353,21 +353,21 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create stale RabbitMQAccess resource")
 
 			By("waiting for both RabbitMQ users and vhosts to exist")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, staleVhost, true)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, staleVhost, true)
 
 			By("deleting the stale RabbitMQAccess resource")
-			err = utils2.DeleteRabbitMQAccess(staleName, env.namespace)
+			err = e2eutils.DeleteRabbitMQAccess(staleName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
 
 			By("verifying finalization retains the stale user and its vhost by default policy")
-			utils2.WaitForResourceDeleted("rabbitmqaccess", staleName, env.namespace)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, staleVhost, true)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
+			e2eutils.WaitForResourceDeleted("rabbitmqaccess", staleName, env.namespace)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, staleVhost, true)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
 		})
 
 		It("should preserve excluded RabbitMQ vhosts when stale vhost deletion is enabled", func() {
@@ -391,7 +391,7 @@ spec:
 			})
 
 			By("creating a keeper RabbitMQAccess resource")
-			err = utils2.CreateRabbitMQAccessWithDirectConnection(
+			err = e2eutils.CreateRabbitMQAccessWithDirectConnection(
 				keeperName,
 				env.namespace,
 				env.name("keeper-secret"),
@@ -401,7 +401,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create keeper RabbitMQAccess resource")
 
 			By("creating a second RabbitMQAccess resource that uses the excluded vhost")
-			err = utils2.CreateRabbitMQAccessWithDirectConnection(
+			err = e2eutils.CreateRabbitMQAccessWithDirectConnection(
 				staleName,
 				env.namespace,
 				env.name("stale-secret"),
@@ -411,21 +411,21 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create stale RabbitMQAccess resource")
 
 			By("waiting for both RabbitMQ users and vhosts to exist")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, protectedVhost, true)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, protectedVhost, true)
 
 			By("deleting the stale RabbitMQAccess resource")
-			err = utils2.DeleteRabbitMQAccess(staleName, env.namespace)
+			err = e2eutils.DeleteRabbitMQAccess(staleName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete stale RabbitMQAccess resource")
 
 			By("verifying finalization retains the stale user and the excluded vhost")
-			utils2.WaitForResourceDeleted("rabbitmqaccess", staleName, env.namespace)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, protectedVhost, true)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
-			utils2.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
+			e2eutils.WaitForResourceDeleted("rabbitmqaccess", staleName, env.namespace)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, staleName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, protectedVhost, true)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, keeperName, true)
+			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
 		})
 
 		It("should delete stale RabbitMQ users when stale user deletion policy is Delete", func() {
@@ -444,20 +444,20 @@ spec:
 			})
 
 			By("creating a RabbitMQAccess resource")
-			err = utils2.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
+			err = e2eutils.CreateRabbitMQAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource")
 
 			By("waiting for the RabbitMQ user to exist")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
 
 			By("deleting the RabbitMQAccess resource")
-			err = utils2.DeleteRabbitMQAccess(resourceName, env.namespace)
+			err = e2eutils.DeleteRabbitMQAccess(resourceName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete RabbitMQAccess resource")
 
 			By("verifying the RabbitMQ user is deleted by controller policy")
-			utils2.WaitForResourceDeleted("rabbitmqaccess", resourceName, env.namespace)
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
-			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
+			e2eutils.WaitForResourceDeleted("rabbitmqaccess", resourceName, env.namespace)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
+			e2eutils.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
 		It("should deny cross-namespace existingSecret when no settings ConfigMap exists", func() {
@@ -472,11 +472,11 @@ spec:
 			}
 
 			By("creating the connection secret in another namespace")
-			secretName, err := utils2.CreateRabbitMQConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := e2eutils.CreateRabbitMQConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a RabbitMQAccess that references the shared secret namespace")
-			err = utils2.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, permissions)
+			err = e2eutils.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RabbitMQAccess")
 
 			By("verifying reconcile is denied with cross-namespace policy disabled")
@@ -487,7 +487,7 @@ spec:
 			})
 
 			By("verifying the requested RabbitMQ user was not created")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
 		})
 
 		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", func() {
@@ -509,11 +509,11 @@ spec:
 			})
 
 			By("creating the connection secret in another namespace")
-			secretName, err := utils2.CreateRabbitMQConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := e2eutils.CreateRabbitMQConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a RabbitMQAccess that references the shared secret namespace")
-			err = utils2.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, permissions)
+			err = e2eutils.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RabbitMQAccess")
 
 			By("verifying reconcile is denied because settings ConfigMap policy is false")
@@ -522,7 +522,7 @@ spec:
 			})
 
 			By("verifying the requested RabbitMQ user was not created")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
 		})
 
 		It("should create a RabbitMQAccess resource using an existing connection secret from another namespace", func() {
@@ -544,11 +544,11 @@ spec:
 			})
 
 			By("creating the connection secret in the shared namespace")
-			secretName, err := utils2.CreateRabbitMQConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := e2eutils.CreateRabbitMQConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a RabbitMQAccess resource in the workload namespace that references the shared secret")
-			err = utils2.CreateRabbitMQAccessFromSecretReference(
+			err = e2eutils.CreateRabbitMQAccessFromSecretReference(
 				resourceName,
 				env.namespace,
 				generatedSecretName,
@@ -559,11 +559,11 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQAccess resource with cross-namespace secret reference")
 
 			By("waiting for the generated secret to be created")
-			utils2.WaitForSecretField(env.namespace, generatedSecretName, "username")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecretName, "username")
 
 			By("verifying the RabbitMQ user and permissions were created")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
-			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, true)
+			e2eutils.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
 		})
 
 		It("should deny cross-namespace existingSecret when settings ConfigMap is outside the operator namespace", func() {
@@ -585,11 +585,11 @@ spec:
 			})
 
 			By("creating the connection secret in another namespace")
-			secretName, err := utils2.CreateRabbitMQConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := e2eutils.CreateRabbitMQConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a RabbitMQAccess that references the shared secret namespace")
-			err = utils2.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, permissions)
+			err = e2eutils.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RabbitMQAccess")
 
 			By("verifying reconcile is denied because settings ConfigMap outside operator namespace is ignored")
@@ -600,7 +600,7 @@ spec:
 			})
 
 			By("verifying the requested RabbitMQ user was not created")
-			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
+			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
 		})
 
 	})

@@ -24,7 +24,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	utils2 "github.com/delta10/access-operator/test/e2e/utils"
+	e2eutils "github.com/delta10/access-operator/test/e2e/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -55,7 +55,7 @@ spec:
         - CONNECT
 		`, resourceName, env.namespace, generatedSecretName, resourceName)
 
-		err := utils2.ApplyManifest(invalidResource)
+		err := e2eutils.ApplyManifest(invalidResource)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create invalid PostgresAccess resource")
 
 		By("verifying the PostgresAccess status reports the reconcile failure")
@@ -76,18 +76,18 @@ spec:
 			})
 
 			By("deploying a PGSQL instance for testing")
-			err := utils2.DeployCNPGInstance(testNamespace)
+			err := e2eutils.DeployCNPGInstance(testNamespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to deploy PGSQL instance")
 
 			By("waiting for CNPG to accept SQL connections")
-			conn := utils2.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-app")
-			utils2.WaitForAuthenticationSuccess(testNamespace, conn, conn.Username, conn.Password)
+			conn := e2eutils.GetCNPGConnectionDetailsFromSecret(testNamespace, "cnpg-postgres-app")
+			e2eutils.WaitForAuthenticationSuccess(testNamespace, conn, conn.Username, conn.Password)
 
 			resourceName := fmt.Sprintf("test-username-%s", uniqueSuffix())
 			generatedSecret := fmt.Sprintf("test-postgres-credentials-%s", uniqueSuffix())
 
 			By("creating a PostgresAccess resource referencing the connection secret")
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				resourceName,
 				testNamespace,
 				generatedSecret,
@@ -100,10 +100,10 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
 			By("waiting for the generated secret to be created")
-			utils2.WaitForSecretField(testNamespace, generatedSecret, "username")
+			e2eutils.WaitForSecretField(testNamespace, generatedSecret, "username")
 
 			By("verifying the database user was created")
-			utils2.WaitForDatabaseUserState(testNamespace, conn, resourceName, true)
+			e2eutils.WaitForDatabaseUserState(testNamespace, conn, resourceName, true)
 		})
 	})
 
@@ -123,7 +123,7 @@ spec:
 			generatedSecret := env.name("test-postgres-credentials")
 
 			By("creating a PostgresAccess resource")
-			err := utils2.CreatePostgresAccessWithDirectConnection(
+			err := e2eutils.CreatePostgresAccessWithDirectConnection(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -133,13 +133,13 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with connection details")
 
 			By("waiting for the generated secret to be created")
-			utils2.WaitForSecretField(env.namespace, generatedSecret, "username")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
 
 			By("verifying the database user was created")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
 
 			By("verifying the privileges were granted")
-			utils2.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
+			e2eutils.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
 		})
 
 		It("should create a PostgresAccess resource with connectivity as a secret reference and create a database user accordingly", func() {
@@ -147,11 +147,11 @@ spec:
 			generatedSecret := env.name("test-postgres-credentials-secret-ref")
 
 			By("creating a secret with the connection details")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
 			By("creating a PostgresAccess resource referencing the connection secret")
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -164,10 +164,10 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
 			By("waiting for the generated secret to be created")
-			utils2.WaitForSecretField(env.namespace, generatedSecret, "username")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
 
 			By("verifying the database user was created")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
 		})
 
 		It("should create a database user when connection is provided via direct connection details but user and pass via secret reference", func() {
@@ -175,11 +175,11 @@ spec:
 			generatedSecret := env.name("test-user-pass-secret")
 
 			By("creating a secret with the username and password")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
 			By("creating a PostgresAccess resource referencing the username/password secret and providing connection details directly")
-			err = utils2.CreatePostgresAccessWithConnectionSecretRef(
+			err = e2eutils.CreatePostgresAccessWithConnectionSecretRef(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -190,10 +190,10 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference for username/password")
 
 			By("waiting for the generated secret to be created")
-			utils2.WaitForSecretField(env.namespace, generatedSecret, "username")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
 
 			By("verifying the database user was created")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
 		})
 
 		It("should reconcile privileges when they're changed in the config", func() {
@@ -201,10 +201,10 @@ spec:
 			generatedSecret := env.name("test-postgres-credentials-secret-ref")
 
 			By("creating a PostgresAccess resource with certain privileges")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -217,10 +217,10 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
 			By("waiting for the initial privileges to be granted")
-			utils2.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT"})
+			e2eutils.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT"})
 
 			By("updating the PostgresAccess resource to include additional privileges")
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -233,7 +233,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to update PostgresAccess resource with new privileges")
 
 			By("verifying that the new privileges are granted")
-			utils2.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT", "INSERT"})
+			e2eutils.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT", "INSERT"})
 		})
 
 		It("should reconcile the privileges of a PostgresAccess resource when they are manually revoked in the database", func() {
@@ -241,10 +241,10 @@ spec:
 			generatedSecret := env.name("test-postgres-credentials-secret-ref")
 
 			By("creating a PostgresAccess resource")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -257,21 +257,21 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
 			By("waiting for the privileges to be granted")
-			utils2.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
+			e2eutils.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
 
 			By("revoking the SELECT privilege from the database user")
-			_, err = utils2.RunPostgresQuery(
+			_, err = e2eutils.RunPostgresQuery(
 				env.backendNamespace,
 				env.conn,
 				fmt.Sprintf(`REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM "%s";`, resourceName),
 			)
 			Expect(err).NotTo(HaveOccurred(), "Failed to revoke SELECT privilege")
 
-			err = utils2.TriggerReconciliation("postgresaccess", resourceName, env.namespace)
+			err = e2eutils.TriggerReconciliation("postgresaccess", resourceName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to trigger reconciliation after revoking privileges")
 
 			By("verifying that the controller reconciles and restores the revoked privilege")
-			utils2.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
+			e2eutils.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
 		})
 
 		It("should retain the database user and delete the generated secret when the PostgresAccess resource is deleted by default", func() {
@@ -279,10 +279,10 @@ spec:
 			generatedSecret := env.name("test-postgres-credentials-secret-ref")
 
 			By("creating a PostgresAccess resource")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -295,20 +295,20 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
 			By("waiting for the privileges to be granted")
-			utils2.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
+			e2eutils.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
 
 			By("deleting the PostgresAccess resource")
-			err = utils2.DeletePostgresAccess(resourceName, env.namespace)
+			err = e2eutils.DeletePostgresAccess(resourceName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
 
 			By("verifying finalization removed the PostgresAccess resource")
-			utils2.WaitForResourceDeleted("postgresaccess", resourceName, env.namespace)
+			e2eutils.WaitForResourceDeleted("postgresaccess", resourceName, env.namespace)
 
 			By("verifying that the database user is retained by default policy")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
 
 			By("verifying that the generated secret is deleted")
-			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
+			e2eutils.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
 		It("should reassign owned objects to the database owner when stale user deletion policy is Orphan", Serial, func() {
@@ -324,10 +324,10 @@ spec:
 			})
 
 			By("creating a PostgresAccess resource")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				managedUsername,
 				env.namespace,
 				generatedSecret,
@@ -340,16 +340,16 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess with Orphan controller policy")
 
 			By("waiting for the generated secret to be created and reading the managed password")
-			managedPassword := utils2.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
+			managedPassword := e2eutils.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
 
 			By("waiting for the managed user to be created")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, true)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, true)
 
 			By("creating an object owned by the managed user")
 			managedConn := env.conn
 			managedConn.Username = managedUsername
 			managedConn.Password = managedPassword
-			_, err = utils2.RunPostgresQuery(
+			_, err = e2eutils.RunPostgresQuery(
 				env.backendNamespace,
 				managedConn,
 				fmt.Sprintf(`CREATE TABLE public.%q (id SERIAL PRIMARY KEY, value TEXT);`, ownedTable),
@@ -357,17 +357,17 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create an owned object as the managed user")
 
 			By("verifying the object is initially owned by the managed user")
-			utils2.WaitForTableOwner(env.backendNamespace, env.conn, ownedTable, managedUsername)
+			e2eutils.WaitForTableOwner(env.backendNamespace, env.conn, ownedTable, managedUsername)
 
 			By("deleting the PostgresAccess resource")
-			err = utils2.DeletePostgresAccess(managedUsername, env.namespace)
+			err = e2eutils.DeletePostgresAccess(managedUsername, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
 
 			By("verifying that the managed role is deleted")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, false)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, false)
 
 			By("verifying ownership is reassigned to the current database owner")
-			utils2.WaitForTableOwner(env.backendNamespace, env.conn, ownedTable, env.conn.Username)
+			e2eutils.WaitForTableOwner(env.backendNamespace, env.conn, ownedTable, env.conn.Username)
 		})
 
 		It("should update the database user's password when the PostgresAccess resource is updated with a new password", func() {
@@ -375,10 +375,10 @@ spec:
 			generatedSecret := env.name("test-postgres-credentials-secret-ref")
 
 			By("creating a PostgresAccess resource")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -391,7 +391,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
 			By("waiting for the privileges to be granted")
-			utils2.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
+			e2eutils.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
 
 			By("updating the PostgresAccess generated secret with a new password")
 			newPassword := "new-secure-password"
@@ -406,11 +406,11 @@ data:
   password: %s
 `, generatedSecret, env.namespace, b64.StdEncoding.EncodeToString([]byte(resourceName)), b64.StdEncoding.EncodeToString([]byte(newPassword)))
 
-			err = utils2.ApplyManifest(updatedSecretYAML)
+			err = e2eutils.ApplyManifest(updatedSecretYAML)
 			Expect(err).NotTo(HaveOccurred(), "Failed to update generated secret with new password")
 
 			By("verifying that the database user's password is updated and the user can authenticate with the new password")
-			utils2.WaitForAuthenticationSuccess(env.backendNamespace, env.conn, resourceName, newPassword)
+			e2eutils.WaitForAuthenticationSuccess(env.backendNamespace, env.conn, resourceName, newPassword)
 		})
 
 		It("should update the database user's password the secret's password is rolled via deletion", func() {
@@ -418,10 +418,10 @@ data:
 			generatedSecret := env.name("test-postgres-credentials-secret-ref")
 
 			By("creating a PostgresAccess resource")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -434,16 +434,16 @@ data:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with secret reference")
 
 			By("waiting for the privileges to be granted")
-			utils2.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
+			e2eutils.WaitForPrivilegesGranted(env.backendNamespace, env.conn, resourceName, []string{"CONNECT", "SELECT"})
 
 			By("deleting the secret to trigger password rotation")
 			cmd := exec.Command("kubectl", "delete", "secret", generatedSecret, "-n", env.namespace)
-			_, err = utils2.Run(cmd)
+			_, err = e2eutils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete generated secret")
 
 			By("verifying that the database user's password is updated and the user can authenticate with the new password")
-			newPassword := utils2.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
-			utils2.WaitForAuthenticationSuccess(env.backendNamespace, env.conn, resourceName, newPassword)
+			newPassword := e2eutils.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
+			e2eutils.WaitForAuthenticationSuccess(env.backendNamespace, env.conn, resourceName, newPassword)
 		})
 	})
 
@@ -469,11 +469,11 @@ data:
 			})
 
 			By("creating the connection secret in another namespace")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a PostgresAccess that references the shared secret namespace")
-			err = utils2.CreateResourceFromSecretReferenceWithNamespace(
+			err = e2eutils.CreateResourceFromSecretReferenceWithNamespace(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -494,7 +494,7 @@ data:
 			})
 
 			By("verifying the requested database user was not created")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
 		})
 
 		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", func() {
@@ -513,11 +513,11 @@ data:
 			})
 
 			By("creating the connection secret in another namespace")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a PostgresAccess that references the shared secret namespace")
-			err = utils2.CreateResourceFromSecretReferenceWithNamespace(
+			err = e2eutils.CreateResourceFromSecretReferenceWithNamespace(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -536,7 +536,7 @@ data:
 			})
 
 			By("verifying the requested database user was not created")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
 		})
 
 		It("should create a PostgresAccess resource using an existing connection secret from another namespace", func() {
@@ -555,11 +555,11 @@ data:
 			})
 
 			By("creating the connection secret in the shared namespace")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a PostgresAccess resource in the workload namespace that references the shared secret")
-			err = utils2.CreateResourceFromSecretReferenceWithNamespace(
+			err = e2eutils.CreateResourceFromSecretReferenceWithNamespace(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -573,10 +573,10 @@ data:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with cross-namespace secret reference")
 
 			By("waiting for the generated secret to be created")
-			utils2.WaitForSecretField(env.namespace, generatedSecret, "username")
+			e2eutils.WaitForSecretField(env.namespace, generatedSecret, "username")
 
 			By("verifying the database user was created")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
 		})
 
 		It("should deny cross-namespace existingSecret when settings ConfigMap is outside the operator namespace", func() {
@@ -595,11 +595,11 @@ data:
 			})
 
 			By("creating the connection secret in another namespace")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a PostgresAccess that references the shared secret namespace")
-			err = utils2.CreateResourceFromSecretReferenceWithNamespace(
+			err = e2eutils.CreateResourceFromSecretReferenceWithNamespace(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -620,7 +620,7 @@ data:
 			})
 
 			By("verifying the requested database user was not created")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
 		})
 
 		It("should preserve excluded PostgreSQL users from settings ConfigMap", func() {
@@ -638,7 +638,7 @@ data:
 			})
 
 			By("creating an unmanaged PostgreSQL role that should be preserved")
-			_, err = utils2.RunPostgresQuery(
+			_, err = e2eutils.RunPostgresQuery(
 				env.backendNamespace,
 				env.conn,
 				fmt.Sprintf(`CREATE ROLE "%s" WITH LOGIN PASSWORD 'keep-me';`, excludedUsername),
@@ -646,10 +646,10 @@ data:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create excluded PostgreSQL role")
 
 			By("creating a PostgresAccess resource to trigger reconciliation")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				managedUsername,
 				env.namespace,
 				generatedSecret,
@@ -662,10 +662,10 @@ data:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
 
 			By("verifying the managed role is created")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, true)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, true)
 
 			By("verifying the excluded unmanaged role is not removed")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, excludedUsername, true)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, excludedUsername, true)
 		})
 
 		It("should retain a stale PostgreSQL role when stale user deletion policy is Restrict", func() {
@@ -673,10 +673,10 @@ data:
 			generatedSecret := env.name("test-restrict-retain-role-secret")
 
 			By("creating a PostgresAccess resource")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -689,16 +689,16 @@ data:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource")
 
 			By("waiting for the managed role to exist")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
 
 			By("deleting the PostgresAccess resource")
-			err = utils2.DeletePostgresAccess(resourceName, env.namespace)
+			err = e2eutils.DeletePostgresAccess(resourceName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
 
 			By("verifying the managed role is retained by the default Restrict policy")
-			utils2.WaitForResourceDeleted("postgresaccess", resourceName, env.namespace)
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
-			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
+			e2eutils.WaitForResourceDeleted("postgresaccess", resourceName, env.namespace)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+			e2eutils.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
 		It("should drop owned objects when stale user deletion policy is Cascade", func() {
@@ -714,10 +714,10 @@ data:
 			})
 
 			By("creating a PostgresAccess resource")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				managedUsername,
 				env.namespace,
 				generatedSecret,
@@ -730,14 +730,14 @@ data:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess with Cascade controller policy")
 
 			By("waiting for the generated secret and managed role")
-			managedPassword := utils2.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, true)
+			managedPassword := e2eutils.WaitForDecodedSecretField(env.namespace, generatedSecret, "password")
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, true)
 
 			By("creating an object owned by the managed user")
 			managedConn := env.conn
 			managedConn.Username = managedUsername
 			managedConn.Password = managedPassword
-			_, err = utils2.RunPostgresQuery(
+			_, err = e2eutils.RunPostgresQuery(
 				env.backendNamespace,
 				managedConn,
 				fmt.Sprintf(`CREATE TABLE public.%q (id SERIAL PRIMARY KEY, value TEXT);`, ownedTable),
@@ -745,13 +745,13 @@ data:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create an owned object as the managed user")
 
 			By("deleting the PostgresAccess resource")
-			err = utils2.DeletePostgresAccess(managedUsername, env.namespace)
+			err = e2eutils.DeletePostgresAccess(managedUsername, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
 
 			By("verifying the managed role and owned table are removed")
-			utils2.WaitForResourceDeleted("postgresaccess", managedUsername, env.namespace)
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, false)
-			utils2.WaitForTableMissing(env.backendNamespace, env.conn, ownedTable)
+			e2eutils.WaitForResourceDeleted("postgresaccess", managedUsername, env.namespace)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, managedUsername, false)
+			e2eutils.WaitForTableMissing(env.backendNamespace, env.conn, ownedTable)
 		})
 
 		It("should delete the managed role during finalization when stale user deletion policy is None", func() {
@@ -766,10 +766,10 @@ data:
 			})
 
 			By("creating a PostgresAccess resource")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
-			err = utils2.CreateResourceFromSecretReference(
+			err = e2eutils.CreateResourceFromSecretReference(
 				resourceName,
 				env.namespace,
 				generatedSecret,
@@ -782,16 +782,16 @@ data:
 			Expect(err).NotTo(HaveOccurred(), "Failed to create PostgresAccess resource with None controller policy")
 
 			By("waiting for the managed role to exist")
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
 
 			By("deleting the PostgresAccess resource")
-			err = utils2.DeletePostgresAccess(resourceName, env.namespace)
+			err = e2eutils.DeletePostgresAccess(resourceName, env.namespace)
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete PostgresAccess resource")
 
 			By("verifying the managed role is deleted during finalization")
-			utils2.WaitForResourceDeleted("postgresaccess", resourceName, env.namespace)
-			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
-			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
+			e2eutils.WaitForResourceDeleted("postgresaccess", resourceName, env.namespace)
+			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
+			e2eutils.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
 		It("should reject PostgresAccess manifests that still use spec.cleanupPolicy", func() {
@@ -799,7 +799,7 @@ data:
 			generatedSecret := env.name("test-cleanup-policy-schema-rejection-secret")
 
 			By("creating the connection secret referenced by the invalid manifest")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
+			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(env.namespace, env.conn)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret")
 
 			invalidManifest := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
@@ -819,7 +819,7 @@ spec:
         - CONNECT
 `, resourceName, env.namespace, generatedSecret, resourceName, secretName, env.conn.Database)
 
-			err = utils2.ApplyManifestServerDryRun(invalidManifest)
+			err = e2eutils.ApplyManifestServerDryRun(invalidManifest)
 			Expect(err).To(HaveOccurred(), "PostgresAccess manifests using spec.cleanupPolicy should be rejected by the CRD schema")
 		})
 	})
