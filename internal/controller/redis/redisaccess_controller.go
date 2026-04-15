@@ -30,9 +30,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 )
@@ -83,10 +87,10 @@ func redisReconcileStatusConfig() controller.ReconcileStatusConfig[*accessv1.Red
 }
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=redisaccesses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=redisaccesses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=redisaccesses/finalizers,verbs=update
-// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=controllers,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
@@ -227,11 +231,11 @@ func (r *RedisAccessReconciler) reconcileRedisAccess(
 
 	excludedUsers, err := r.resolveExcludedUsers(ctx)
 	if err != nil {
-		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve excluded users: %w", err)
+		return false, redisAccessListCRsErrorReason, fmt.Errorf("failed to resolve excluded users: %w", err)
 	}
 	staleUserDeletionPolicy, err := r.resolveStaleUserDeletionPolicy(ctx)
 	if err != nil {
-		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve stale user deletion policy: %w", err)
+		return false, redisAccessListCRsErrorReason, fmt.Errorf("failed to resolve stale user deletion policy: %w", err)
 	}
 
 	currentUsers, err := aclClient.ListUsers(ctx)
@@ -305,6 +309,29 @@ func (r *RedisAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&accessv1.RedisAccess{}).
 		Owns(&corev1.Secret{}).
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+				if !controller.IsControllerSettingsConfigMap(obj) {
+					return nil
+				}
+
+				var accesses accessv1.RedisAccessList
+				if err := r.List(ctx, &accesses); err != nil {
+					return nil
+				}
+
+				requests := make([]reconcile.Request, 0, len(accesses.Items))
+				for i := range accesses.Items {
+					requests = append(requests, reconcile.Request{
+						NamespacedName: client.ObjectKeyFromObject(&accesses.Items[i]),
+					})
+				}
+
+				return requests
+			}),
+			builder.WithPredicates(predicate.NewPredicateFuncs(controller.IsControllerSettingsConfigMap)),
+		).
 		Named("redisaccess").
 		Complete(r)
 }

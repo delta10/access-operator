@@ -14,12 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// +kubebuilder:object:generate=true
 package v1
-
-import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-)
 
 // StaleUserDeletionPolicy defines how the controller handles managed users
 // that are no longer referenced by any managed access resource.
@@ -128,54 +123,9 @@ type ControllerSettings struct {
 	RedisSettings RedisControllerSettings `json:"redis,omitempty"`
 }
 
-// ControllerSpec defines the desired state of Controller.
+// ControllerSpec defines config document structure for operator settings.
 type ControllerSpec struct {
 	// settings contains operator-wide settings.
 	// +optional
 	Settings ControllerSettings `json:"settings,omitempty"`
-}
-
-// ControllerStatus defines the observed state of Controller.
-type ControllerStatus struct {
-	// conditions represent the current state of this Controller resource.
-	// +listType=map
-	// +listMapKey=type
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
-// +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-// +kubebuilder:resource:path=controllers,scope=Namespaced,singular=controller,shortName=actrl
-
-// Controller is the Schema for the controllers API.
-type Controller struct {
-	metav1.TypeMeta `json:",inline"`
-
-	// metadata is a standard object metadata.
-	// +optional
-	metav1.ObjectMeta `json:"metadata,omitzero"`
-
-	// spec defines the desired state of Controller.
-	// +optional
-	Spec ControllerSpec `json:"spec,omitzero"`
-
-	// status defines the observed state of Controller.
-	// +optional
-	Status ControllerStatus `json:"status,omitzero"`
-}
-
-// +kubebuilder:object:root=true
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-// ControllerList contains a list of Controller.
-type ControllerList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitzero"`
-	Items           []Controller `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&Controller{}, &ControllerList{})
 }

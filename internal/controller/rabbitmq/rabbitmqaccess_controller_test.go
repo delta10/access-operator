@@ -72,21 +72,13 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 	})
 
 	Context("When resolving excluded RabbitMQ users", func() {
-		It("should normalize excluded usernames from singleton Controller settings", func() {
+		It("should normalize excluded usernames from settings ConfigMap", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "cluster-settings",
-						Namespace: "access-operator-system",
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					RabbitMQSettings: accessv1.RabbitMQControllerSettings{
+						ExcludedUsers: []string{" admin ", "", "ops-user", "admin"},
 					},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							RabbitMQSettings: accessv1.RabbitMQControllerSettings{
-								ExcludedUsers: []string{" admin ", "", "ops-user", "admin"},
-							},
-						},
-					},
-				},
+				}),
 			)
 
 			reconciler := &AccessReconciler{Client: fakeClient}
@@ -104,22 +96,14 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			Expect(policy).To(Equal(accessv1.StaleUserDeletionPolicyRestrict))
 		})
 
-		It("should resolve stale user deletion policy from singleton Controller settings", func() {
+		It("should resolve stale user deletion policy from settings ConfigMap", func() {
 			deletePolicy := accessv1.StaleUserDeletionPolicyDelete
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "cluster-settings",
-						Namespace: "access-operator-system",
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					RabbitMQSettings: accessv1.RabbitMQControllerSettings{
+						StaleUserDeletionPolicy: &deletePolicy,
 					},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							RabbitMQSettings: accessv1.RabbitMQControllerSettings{
-								StaleUserDeletionPolicy: &deletePolicy,
-							},
-						},
-					},
-				},
+				}),
 			)
 
 			reconciler := &AccessReconciler{Client: fakeClient}
@@ -132,19 +116,11 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 	Context("When resolving excluded RabbitMQ vhosts", func() {
 		It("should normalize excluded vhosts and always retain the default vhost", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "cluster-settings",
-						Namespace: "access-operator-system",
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					RabbitMQSettings: accessv1.RabbitMQControllerSettings{
+						ExcludedVhosts: []string{" /shared ", "", "/team-a", "/shared"},
 					},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							RabbitMQSettings: accessv1.RabbitMQControllerSettings{
-								ExcludedVhosts: []string{" /shared ", "", "/team-a", "/shared"},
-							},
-						},
-					},
-				},
+				}),
 			)
 
 			reconciler := &AccessReconciler{Client: fakeClient}
@@ -271,71 +247,14 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 			Expect(client.Password).To(Equal("secret"))
 		})
 
-		It("should hard fail cross-namespace existingSecret when multiple Controller resources exist", func() {
+		It("should reject cross-namespace existingSecret when settings ConfigMap is outside the operator namespace", func() {
 			secretName := testRabbitMQSecret
 			secretNamespace := "shared-rabbitmq"
 
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "controller-a", Namespace: "system"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
-					},
-				},
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "controller-b", Namespace: "default"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
-					},
-				},
-				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      secretName,
-						Namespace: secretNamespace,
-					},
-					Data: map[string][]byte{
-						"host":     []byte("rabbitmq"),
-						"port":     []byte(strconv.Itoa(5672)),
-						"username": []byte("admin"),
-						"password": []byte("secret"),
-					},
-				},
-			)
-
-			eventRecorder := events.NewFakeRecorder(10)
-			reconciler := &AccessReconciler{
-				Client:   fakeClient,
-				Recorder: eventRecorder,
-			}
-			rbq := &accessv1.RabbitMQAccess{
-				ObjectMeta: metav1.ObjectMeta{Name: "tenant-access", Namespace: "tenant-a"},
-				Spec: accessv1.RabbitMQAccessSpec{
-					Connection: accessv1.ConnectionSpec{
-						ExistingSecret:          &secretName,
-						ExistingSecretNamespace: &secretNamespace,
-					},
-				},
-			}
-
-			_, err := reconciler.getConnectionDetails(context.Background(), rbq)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("multiple Controller resources found"))
-
-			allEvents := test.ReceiveEvents(eventRecorder.Events, 3)
-			Expect(allEvents).To(ContainSubstring(controller.MultipleControllersFoundReason))
-		})
-
-		It("should reject cross-namespace existingSecret when singleton Controller is outside the operator namespace", func() {
-			secretName := testRabbitMQSecret
-			secretNamespace := "shared-rabbitmq"
-
-			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "tenant-a"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
-					},
-				},
+				test.NewControllerSettingsConfigMap("tenant-a", accessv1.ControllerSettings{
+					ExistingSecretNamespace: true,
+				}),
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -363,7 +282,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 
 			_, err := reconciler.getConnectionDetails(context.Background(), rbq)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring(`must be created in the operator namespace "system"`))
+			Expect(err.Error()).To(ContainSubstring("cross-namespace connection secret references are disabled"))
 		})
 	})
 
@@ -512,19 +431,11 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 				},
 			}
 
-			controllerSettings := &accessv1.Controller{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "cluster-settings",
-					Namespace: "system",
+			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				RabbitMQSettings: accessv1.RabbitMQControllerSettings{
+					ExcludedUsers: []string{"excluded-user"},
 				},
-				Spec: accessv1.ControllerSpec{
-					Settings: accessv1.ControllerSettings{
-						RabbitMQSettings: accessv1.RabbitMQControllerSettings{
-							ExcludedUsers: []string{"excluded-user"},
-						},
-					},
-				},
-			}
+			})
 
 			fakeClient, fakeScheme := test.NewFakeClientWithScheme(rbq, controllerSettings)
 			reconciler := &AccessReconciler{

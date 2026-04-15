@@ -20,15 +20,15 @@ limitations under the License.
 package e2e
 
 import (
-    "fmt"
-    "os/exec"
-    "strings"
+	"fmt"
+	"os/exec"
+	"strings"
 
-    utils2 "github.com/delta10/access-operator/test/e2e/utils"
-    . "github.com/onsi/ginkgo/v2"
-    . "github.com/onsi/gomega"
+	utils2 "github.com/delta10/access-operator/test/e2e/utils"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
-    accessv1 "github.com/delta10/access-operator/api/v1"
+	accessv1 "github.com/delta10/access-operator/api/v1"
 )
 
 var _ = Describe("RabbitMQ", func() {
@@ -261,21 +261,20 @@ spec:
 		})
 	})
 
-	Context("Controller policy", Serial, func() {
+	Context("Settings ConfigMap policy", Serial, func() {
 		var env rabbitMQSpecEnv
 
 		BeforeEach(func() {
-			clearAllControllers()
+			clearAllControllerSettingsConfigMaps()
 			env = newRabbitMQSpecEnv()
 		})
 
 		AfterEach(func() {
 			env.cleanup()
-			clearAllControllers()
+			clearAllControllerSettingsConfigMaps()
 		})
 
-		It("should delete stale RabbitMQ vhosts when singleton Controller policy enables deletion", func() {
-			controllerName := env.name("rabbitmq-vhost-cleanup-delete")
+		It("should delete stale RabbitMQ vhosts when settings ConfigMap policy enables deletion", func() {
 			keeperName := env.name("test-rabbitmq-vhost-keeper")
 			staleName := env.name("test-rabbitmq-vhost-stale")
 			keeperVhost := env.vhost("keeper")
@@ -288,11 +287,11 @@ spec:
 				{VHost: staleVhost, Configure: ".*", Write: ".*", Read: ".*"},
 			}
 
-			By("enabling stale RabbitMQ vhost deletion through singleton Controller settings")
-			err := createRabbitMQController(controllerName, nil, &deletePolicy, nil)
+			By("enabling stale RabbitMQ vhost deletion through settings ConfigMap")
+			err := createRabbitMQController(nil, &deletePolicy, nil)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ controller settings")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating a keeper RabbitMQAccess resource")
@@ -372,7 +371,6 @@ spec:
 		})
 
 		It("should preserve excluded RabbitMQ vhosts when stale vhost deletion is enabled", func() {
-			controllerName := env.name("rabbitmq-vhost-cleanup-excluded")
 			keeperName := env.name("test-rabbitmq-vhost-excluded-keeper")
 			staleName := env.name("test-rabbitmq-vhost-excluded-stale")
 			keeperVhost := env.vhost("keeper-excluded")
@@ -386,10 +384,10 @@ spec:
 			}
 
 			By("enabling stale RabbitMQ vhost deletion while excluding the protected vhost")
-			err := createRabbitMQController(controllerName, nil, &deletePolicy, []string{protectedVhost})
+			err := createRabbitMQController(nil, &deletePolicy, []string{protectedVhost})
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ controller settings")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating a keeper RabbitMQAccess resource")
@@ -431,7 +429,6 @@ spec:
 		})
 
 		It("should delete stale RabbitMQ users when stale user deletion policy is Delete", func() {
-			controllerName := env.name("rabbitmq-user-cleanup-delete")
 			resourceName := env.name("test-rabbitmq-user-cleanup")
 			generatedSecret := env.name("test-rabbitmq-user-cleanup-secret")
 			staleUserDeletePolicy := accessv1.StaleUserDeletionPolicyDelete
@@ -439,11 +436,11 @@ spec:
 				{VHost: env.vhost("delete-user"), Configure: ".*", Write: ".*", Read: ".*"},
 			}
 
-			By("creating a singleton Controller with staleUserDeletionPolicy Delete")
-			err := createRabbitMQController(controllerName, &staleUserDeletePolicy, nil, nil)
+			By("creating a settings ConfigMap with staleUserDeletionPolicy Delete")
+			err := createRabbitMQController(&staleUserDeletePolicy, nil, nil)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create RabbitMQ controller settings")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating a RabbitMQAccess resource")
@@ -463,7 +460,7 @@ spec:
 			utils2.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
-		It("should deny cross-namespace existingSecret when no Controller resource exists", func() {
+		It("should deny cross-namespace existingSecret when no settings ConfigMap exists", func() {
 			resourceName := env.name("test-rabbitmq-cross-namespace-no-controller")
 			generatedSecretName := env.name("test-rabbitmq-cross-namespace-no-controller-secret")
 			connectionSecretNamespace := createTestNamespace("rabbitmq-shared-no-controller")
@@ -493,10 +490,9 @@ spec:
 			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
 		})
 
-		It("should deny cross-namespace existingSecret when singleton Controller setting is false", func() {
+		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", func() {
 			resourceName := env.name("test-rabbitmq-cross-namespace-controller-false")
 			generatedSecretName := env.name("test-rabbitmq-cross-namespace-controller-false-secret")
-			controllerName := env.name("rabbitmq-cluster-settings-false")
 			connectionSecretNamespace := createTestNamespace("rabbitmq-shared-controller-false")
 			DeferCleanup(func() {
 				deleteNamespace(connectionSecretNamespace)
@@ -505,11 +501,11 @@ spec:
 				{VHost: env.vhost("app"), Configure: ".*", Write: ".*", Read: ".*"},
 			}
 
-			By("creating a singleton Controller with existingSecretNamespace=false")
-			err := createControllerResource(controllerName, namespace, `existingSecretNamespace: false`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with false policy")
+			By("creating settings ConfigMap with existingSecretNamespace=false")
+			err := createControllerSettingsConfigMap(namespace, `existingSecretNamespace: false`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap with false policy")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating the connection secret in another namespace")
@@ -520,7 +516,7 @@ spec:
 			err = utils2.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RabbitMQAccess")
 
-			By("verifying reconcile is denied because singleton Controller policy is false")
+			By("verifying reconcile is denied because settings ConfigMap policy is false")
 			waitForReadyCondition("rabbitmqaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
 				messageContains: "cross-namespace connection secret references are disabled",
 			})
@@ -532,7 +528,6 @@ spec:
 		It("should create a RabbitMQAccess resource using an existing connection secret from another namespace", func() {
 			resourceName := env.name("test-rabbitmq-cross-namespace")
 			generatedSecretName := env.name("test-rabbitmq-cross-namespace-credentials")
-			controllerName := env.name("rabbitmq-cluster-settings")
 			connectionSecretNamespace := createTestNamespace("rabbitmq-shared")
 			DeferCleanup(func() {
 				deleteNamespace(connectionSecretNamespace)
@@ -541,11 +536,11 @@ spec:
 				{VHost: env.vhost("app"), Configure: ".*", Write: ".*", Read: ".*"},
 			}
 
-			By("enabling cross-namespace references through the singleton Controller resource")
-			err := createControllerResource(controllerName, namespace, `existingSecretNamespace: true`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to enable cross-namespace references via Controller CR")
+			By("enabling cross-namespace references through operator settings ConfigMap")
+			err := createControllerSettingsConfigMap(namespace, `existingSecretNamespace: true`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to enable cross-namespace references via settings ConfigMap")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating the connection secret in the shared namespace")
@@ -571,10 +566,9 @@ spec:
 			utils2.WaitForRabbitMQPermissions(env.backendNamespace, resourceName, permissions)
 		})
 
-		It("should deny cross-namespace existingSecret when the singleton Controller is outside the operator namespace", func() {
+		It("should deny cross-namespace existingSecret when settings ConfigMap is outside the operator namespace", func() {
 			resourceName := env.name("test-rabbitmq-wrong-controller-namespace")
 			generatedSecretName := env.name("test-rabbitmq-wrong-controller-namespace-secret")
-			controllerName := env.name("rabbitmq-cluster-settings-wrong-namespace")
 			connectionSecretNamespace := createTestNamespace("rabbitmq-shared-wrong-controller-namespace")
 			DeferCleanup(func() {
 				deleteNamespace(connectionSecretNamespace)
@@ -583,11 +577,11 @@ spec:
 				{VHost: env.vhost("app"), Configure: ".*", Write: ".*", Read: ".*"},
 			}
 
-			By("creating the singleton Controller in a workload namespace instead of the operator namespace")
-			err := createControllerResource(controllerName, env.namespace, `existingSecretNamespace: true`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller outside the operator namespace")
+			By("creating settings ConfigMap in workload namespace instead of operator namespace")
+			err := createControllerSettingsConfigMap(env.namespace, `existingSecretNamespace: true`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap outside the operator namespace")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, env.namespace)
+				deleteControllerSettingsConfigMap(env.namespace)
 			})
 
 			By("creating the connection secret in another namespace")
@@ -598,88 +592,21 @@ spec:
 			err = utils2.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, permissions)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RabbitMQAccess")
 
-			By("verifying reconcile is denied because the Controller is not in the operator namespace")
+			By("verifying reconcile is denied because settings ConfigMap outside operator namespace is ignored")
 			waitForReadyCondition("rabbitmqaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
 				status:          "False",
 				reason:          "ConnectionError",
-				messageContains: `must be created in the operator namespace "access-operator-system"`,
-			})
-
-			By("verifying the misplaced Controller is marked not ready")
-			waitForReadyCondition("controller", namespacedName{name: controllerName, namespace: env.namespace}, readyConditionExpectation{
-				status:          "False",
-				reason:          "InvalidControllerNamespace",
-				messageContains: `must be created in the operator namespace "access-operator-system"`,
+				messageContains: "cross-namespace connection secret references are disabled",
 			})
 
 			By("verifying the requested RabbitMQ user was not created")
 			utils2.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
 		})
 
-		It("should fail when multiple Controller resources exist and emit warning events", func() {
-			resourceName := env.name("test-rabbitmq-multiple-controllers")
-			generatedSecretName := env.name("test-rabbitmq-multiple-controllers-secret")
-			controllerAName := env.name("rabbitmq-cluster-settings-a")
-			controllerBName := env.name("rabbitmq-cluster-settings-b")
-			connectionSecretNamespace := createTestNamespace("rabbitmq-shared-multiple-controller")
-			DeferCleanup(func() {
-				deleteNamespace(connectionSecretNamespace)
-			})
-			permissions := []accessv1.RabbitMQPermissionSpec{
-				{VHost: env.vhost("app"), Configure: ".*", Write: ".*", Read: ".*"},
-			}
-
-			By("creating two Controller resources to violate singleton policy")
-			err := createControllerResource(controllerAName, namespace, `existingSecretNamespace: true`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create first Controller")
-
-			err = createControllerResource(controllerBName, env.namespace, `existingSecretNamespace: true`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create second Controller")
-
-			DeferCleanup(func() {
-				deleteControllerResource(controllerAName, namespace)
-			})
-			DeferCleanup(func() {
-				deleteControllerResource(controllerBName, env.namespace)
-			})
-
-			By("creating the connection secret in another namespace")
-			secretName, err := utils2.CreateRabbitMQConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
-
-			By("creating a RabbitMQAccess that references the shared secret namespace")
-			err = utils2.CreateRabbitMQAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, permissions)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RabbitMQAccess")
-
-			By("verifying RabbitMQAccess fails with multiple-controller error")
-			waitForReadyCondition("rabbitmqaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
-				reason:          "ConnectionError",
-				messageContains: "multiple Controller resources found",
-			})
-
-			By("verifying both Controller resources are marked Ready=False with MultipleControllersFound")
-			controllerResources := []namespacedName{
-				{name: controllerAName, namespace: namespace},
-				{name: controllerBName, namespace: env.namespace},
-			}
-			waitForControllerResourcesReadyCondition(controllerResources, readyConditionExpectation{
-				status: "False",
-				reason: "MultipleControllersFound",
-			})
-
-			By("verifying warning events are emitted for both Controller resources")
-			for _, resource := range controllerResources {
-				waitForResourceWarningEvent(resource, "Controller", "MultipleControllersFound")
-			}
-
-			By("verifying warning event is emitted on controller-manager Deployment")
-			waitForResourceWarningEvent(namespacedName{name: managerDeploymentName, namespace: namespace}, "Deployment", "MultipleControllersFound")
-		})
 	})
 })
 
 func createRabbitMQController(
-	name string,
 	staleUserPolicy *accessv1.StaleUserDeletionPolicy,
 	staleVhostPolicy *accessv1.StaleVhostDeletionPolicy,
 	excludedVhosts []string,
@@ -702,5 +629,5 @@ func createRabbitMQController(
 		}
 	}
 
-	return createControllerResource(name, namespace, settings.String())
+	return createControllerSettingsConfigMap(namespace, settings.String())
 }

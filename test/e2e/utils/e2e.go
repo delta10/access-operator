@@ -106,6 +106,40 @@ func WaitForCRDsEstablished(crdNames ...string) error {
 	return err
 }
 
+// WaitForAPIResources waits until the given plural resources are discoverable in the API group.
+func WaitForAPIResources(apiGroup string, resourceNames ...string) error {
+	if len(resourceNames) == 0 {
+		return nil
+	}
+
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		cmd := exec.Command("kubectl", "api-resources", "--api-group", apiGroup, "-o", "name")
+		output, err := Run(cmd)
+		if err == nil {
+			allPresent := true
+			for _, resourceName := range resourceNames {
+				if !strings.Contains(output, resourceName) {
+					allPresent = false
+					break
+				}
+			}
+			if allPresent {
+				return nil
+			}
+		}
+
+		if time.Now().After(deadline) {
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("timed out waiting for api resources in group %q: %v", apiGroup, resourceNames)
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+}
+
 // WaitForSecretField waits until a secret data field is present and returns its value.
 func WaitForSecretField(namespace, secretName, field string) string {
 	var output string

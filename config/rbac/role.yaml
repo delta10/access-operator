@@ -7,7 +7,7 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - pods
+  - configmaps
   verbs:
   - get
   - list
@@ -35,7 +35,6 @@ rules:
 - apiGroups:
   - access.k8s.delta10.nl
   resources:
-  - controllers
   - cronjobs
   - postgresaccesses
   - rabbitmqaccesses
@@ -51,7 +50,6 @@ rules:
 - apiGroups:
   - access.k8s.delta10.nl
   resources:
-  - controllers/finalizers
   - cronjobs/finalizers
   - postgresaccesses/finalizers
   - rabbitmqaccesses/finalizers
@@ -61,7 +59,6 @@ rules:
 - apiGroups:
   - access.k8s.delta10.nl
   resources:
-  - controllers/status
   - cronjobs/status
   - postgresaccesses/status
   - rabbitmqaccesses/status
@@ -70,14 +67,3 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - apps
-  resources:
-  - deployments
-  verbs:
-  - create
-  - get
-  - list
-  - patch
-  - update
-  - watch

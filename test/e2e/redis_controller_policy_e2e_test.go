@@ -14,20 +14,20 @@ import (
 )
 
 var _ = Describe("Redis", func() {
-	Context("Controller policy", Serial, func() {
+	Context("Settings ConfigMap policy", Serial, func() {
 		var env redisSpecEnv
 
 		BeforeEach(func() {
-			clearAllControllers()
+			clearAllControllerSettingsConfigMaps()
 			env = newRedisSpecEnv()
 		})
 
 		AfterEach(func() {
 			env.cleanup()
-			clearAllControllers()
+			clearAllControllerSettingsConfigMaps()
 		})
 
-		It("should deny cross-namespace existingSecret when no Controller resource exists", func() {
+		It("should deny cross-namespace existingSecret when no settings ConfigMap exists", func() {
 			resourceName := env.name("test-redis-cross-namespace-no-controller")
 			generatedSecretName := env.name("test-redis-cross-namespace-no-controller-secret")
 			connectionSecretNamespace := createTestNamespace("redis-shared-no-controller")
@@ -55,19 +55,18 @@ var _ = Describe("Redis", func() {
 			utils2.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, false)
 		})
 
-		It("should deny cross-namespace existingSecret when singleton Controller setting is false", func() {
+		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", func() {
 			resourceName := env.name("test-redis-cross-namespace-controller-false")
 			generatedSecretName := env.name("test-redis-cross-namespace-controller-false-secret")
-			controllerName := env.name("redis-cluster-settings-false")
 			connectionSecretNamespace := createTestNamespace("redis-shared-controller-false")
 			DeferCleanup(func() {
 				deleteNamespace(connectionSecretNamespace)
 			})
 			aclRules := []string{"~shared:*", "+get"}
 
-			By("creating a singleton Controller with existingSecretNamespace=false")
-			err := createControllerResource(controllerName, namespace, `existingSecretNamespace: false`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with false policy")
+			By("creating settings ConfigMap with existingSecretNamespace=false")
+			err := createControllerSettingsConfigMap(namespace, `existingSecretNamespace: false`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap with false policy")
 
 			By("creating the connection secret in another namespace")
 			secretName, err := utils2.CreateRedisConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
@@ -77,7 +76,7 @@ var _ = Describe("Redis", func() {
 			err = utils2.CreateRedisAccessFromSecretReference(resourceName, env.namespace, generatedSecretName, secretName, &connectionSecretNamespace, aclRules)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace RedisAccess")
 
-			By("verifying reconcile is denied because singleton Controller policy is false")
+			By("verifying reconcile is denied because settings ConfigMap policy is false")
 			waitForReadyCondition("redisaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
 				messageContains: "cross-namespace connection secret references are disabled",
 			})
@@ -89,15 +88,14 @@ var _ = Describe("Redis", func() {
 		It("should create a RedisAccess resource using an existing connection secret from another namespace", func() {
 			resourceName := env.name("test-redis-cross-namespace")
 			generatedSecretName := env.name("test-redis-cross-namespace-credentials")
-			controllerName := env.name("redis-cluster-settings")
 			connectionSecretNamespace := createTestNamespace("redis-shared")
 			DeferCleanup(func() {
 				deleteNamespace(connectionSecretNamespace)
 			})
 			aclRules := []string{"~cross:*", "+get", "+set"}
 
-			By("enabling cross-namespace references through the singleton Controller resource")
-			err := createControllerResource(controllerName, namespace, `existingSecretNamespace: true`)
+			By("enabling cross-namespace references through operator settings ConfigMap")
+			err := createControllerSettingsConfigMap(namespace, `existingSecretNamespace: true`)
 			Expect(err).NotTo(HaveOccurred(), "Failed to enable cross-namespace references via Controller CR")
 
 			By("creating the connection secret in the shared namespace")
@@ -116,11 +114,10 @@ var _ = Describe("Redis", func() {
 			utils2.WaitForRedisACLRules(env.backendNamespace, env.conn, resourceName, aclRules)
 		})
 
-		It("should preserve excluded Redis ACL users from singleton Controller settings", func() {
+		It("should preserve excluded Redis ACL users from settings ConfigMap", func() {
 			excludedUsername := env.name("excluded-keeper")
 			managedUsername := env.name("test-redis-managed-user")
 			generatedSecret := env.name("test-redis-managed-secret")
-			controllerName := env.name("redis-excluded-users")
 			managedACLRules := []string{"~managed:*", "+get"}
 
 			settingsYAML := strings.Join([]string{
@@ -129,8 +126,8 @@ var _ = Describe("Redis", func() {
 				fmt.Sprintf("    - %s", excludedUsername),
 			}, "\n")
 
-			By("creating a singleton Controller that excludes the unmanaged Redis user")
-			err := createControllerResource(controllerName, namespace, settingsYAML)
+			By("creating settings ConfigMap that excludes the unmanaged Redis user")
+			err := createControllerSettingsConfigMap(namespace, settingsYAML)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create Redis exclusion Controller")
 
 			By("creating an unmanaged Redis ACL user that should be preserved")
@@ -178,14 +175,16 @@ var _ = Describe("Redis", func() {
 		It("should delete stale Redis users when stale user deletion policy is Delete", func() {
 			resourceName := env.name("test-redis-delete-stale-user")
 			generatedSecret := env.name("test-redis-delete-stale-user-secret")
-			controllerName := env.name("redis-delete-users")
 			deletePolicy := accessv1.StaleUserDeletionPolicyDelete
 			aclRules := []string{"~delete:*", "+get"}
 
-			By("creating a singleton Controller with staleUserDeletionPolicy Delete")
-			err := createControllerResource(controllerName, namespace, fmt.Sprintf(`redis:
+			By("creating a settings ConfigMap with staleUserDeletionPolicy Delete")
+			err := createControllerSettingsConfigMap(namespace, fmt.Sprintf(`redis:
   staleUserDeletionPolicy: %s`, deletePolicy))
-			Expect(err).NotTo(HaveOccurred(), "Failed to create Redis controller policy")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create Redis controller settings")
+			DeferCleanup(func() {
+				deleteControllerSettingsConfigMap(namespace)
+			})
 
 			By("creating a RedisAccess resource")
 			err = utils2.CreateRedisAccessWithDirectConnection(resourceName, env.namespace, generatedSecret, env.conn, aclRules)

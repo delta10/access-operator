@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	"github.com/delta10/access-operator/internal/controller"
@@ -61,14 +60,8 @@ func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(ctx context.Co
 		r.Client,
 		pg.Namespace,
 		pg.Spec.Connection.ExistingSecretNamespace,
-		func(controllerObj *accessv1.Controller, message string) {
-			r.emitEvent(controllerObj, "Warning", controller.MultipleControllersFoundReason, message)
-		},
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "multiple Controller resources found") {
-			r.emitEvent(pg, "Warning", controller.MultipleControllersFoundReason, err.Error())
-		}
 		return "", err
 	}
 

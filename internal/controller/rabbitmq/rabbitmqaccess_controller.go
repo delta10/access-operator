@@ -29,9 +29,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 )
@@ -79,10 +83,10 @@ type AccessReconciler struct {
 }
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=rabbitmqaccesses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=rabbitmqaccesses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=rabbitmqaccesses/finalizers,verbs=update
-// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=controllers,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -241,19 +245,19 @@ func reconcileRabbitMQ(ctx context.Context, r *AccessReconciler, rbq *accessv1.R
 
 	excludedUsers, err := r.resolveExcludedUsers(ctx)
 	if err != nil {
-		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve excluded users: %w", err)
+		return false, rabbitMQAccessListCRsErrorReason, fmt.Errorf("failed to resolve excluded users: %w", err)
 	}
 	excludedVhosts, err := r.resolveExcludedVhosts(ctx)
 	if err != nil {
-		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve excluded vhosts: %w", err)
+		return false, rabbitMQAccessListCRsErrorReason, fmt.Errorf("failed to resolve excluded vhosts: %w", err)
 	}
 	staleUserDeletionPolicy, err := r.resolveStaleUserDeletionPolicy(ctx)
 	if err != nil {
-		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve stale user deletion policy: %w", err)
+		return false, rabbitMQAccessListCRsErrorReason, fmt.Errorf("failed to resolve stale user deletion policy: %w", err)
 	}
 	staleVhostDeletionPolicy, err := r.resolveStaleVhostDeletionPolicy(ctx)
 	if err != nil {
-		return false, controller.MultipleControllersFoundReason, fmt.Errorf("failed to resolve stale vhost deletion policy: %w", err)
+		return false, rabbitMQAccessListCRsErrorReason, fmt.Errorf("failed to resolve stale vhost deletion policy: %w", err)
 	}
 
 	usersAndVhostsInSync, reason, err := r.reconcileUsersAndVhosts(rmqc, desiredUsers, usersPermissions, excludedUsers, log)
@@ -313,6 +317,29 @@ func (r *AccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&accessv1.RabbitMQAccess{}).
 		Owns(&corev1.Secret{}).
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+				if !controller.IsControllerSettingsConfigMap(obj) {
+					return nil
+				}
+
+				var accesses accessv1.RabbitMQAccessList
+				if err := r.List(ctx, &accesses); err != nil {
+					return nil
+				}
+
+				requests := make([]reconcile.Request, 0, len(accesses.Items))
+				for i := range accesses.Items {
+					requests = append(requests, reconcile.Request{
+						NamespacedName: client.ObjectKeyFromObject(&accesses.Items[i]),
+					})
+				}
+
+				return requests
+			}),
+			builder.WithPredicates(predicate.NewPredicateFuncs(controller.IsControllerSettingsConfigMap)),
+		).
 		Named("rabbitmqaccess").
 		Complete(r)
 }
@@ -463,9 +490,7 @@ func (r *AccessReconciler) reconcileUsersAndVhosts(
 }
 
 func resolveRabbitMQControllerSettings(ctx context.Context, r *AccessReconciler) (accessv1.ControllerSettings, error) {
-	return controller.ResolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
-		controller.EmitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, controller.MultipleControllersFoundReason, message)
-	})
+	return controller.ResolveControllerSettings(ctx, r.Client)
 }
 
 func permissionsEqual(desired, current []accessv1.RabbitMQPermissionSpec) bool {

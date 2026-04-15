@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	neturl "net/url"
@@ -15,6 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+const serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
 func resolveValueOrSecretRef(
 	ctx context.Context,
@@ -48,68 +49,26 @@ func resolveValueOrSecretRef(
 func resolveExistingSecretNamespacePolicy(
 	ctx context.Context,
 	c client.Client,
-	onMultiple SharedControllerMultipleHandler,
 ) (bool, error) {
-	controllerObj, err := resolveSingletonController(ctx, c, onMultiple)
+	settings, err := ResolveControllerSettings(ctx, c)
 	if err != nil {
 		return false, err
 	}
-	if controllerObj == nil {
+	if !settings.ExistingSecretNamespace {
 		return false, nil
-	}
-
-	if !controllerObj.Spec.Settings.ExistingSecretNamespace {
-		return false, nil
-	}
-
-	operatorNamespace, err := resolveOperatorNamespace(ctx, c)
-	if err != nil {
-		return false, err
-	}
-	if controllerObj.Namespace != operatorNamespace {
-		return false, fmt.Errorf(
-			"cross-namespace connection secret references are disabled: Controller resource %q must be created in the operator namespace %q, found in %q",
-			controllerObj.Name,
-			operatorNamespace,
-			controllerObj.Namespace,
-		)
 	}
 
 	return true, nil
 }
 
-func resolveSingletonController(
-	ctx context.Context,
-	c client.Client,
-	onMultiple SharedControllerMultipleHandler,
-) (*accessv1.Controller, error) {
-	var controllers accessv1.ControllerList
-	if err := c.List(ctx, &controllers); err != nil {
-		return nil, err
-	}
-
-	switch len(controllers.Items) {
-	case 0:
-		return nil, nil
-	case 1:
-		return &controllers.Items[0], nil
-	default:
-		message := fmt.Sprintf(
-			"multiple Controller resources found (%d); exactly one is allowed cluster-wide",
-			len(controllers.Items),
-		)
-		if onMultiple != nil {
-			for i := range controllers.Items {
-				onMultiple(&controllers.Items[i], message)
-			}
-		}
-		return nil, errors.New(message)
-	}
-}
-
 func resolveOperatorNamespace(ctx context.Context, c client.Client) (string, error) {
 	if podNamespace := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); podNamespace != "" {
 		return podNamespace, nil
+	}
+	if data, err := os.ReadFile(serviceAccountNamespaceFile); err == nil {
+		if namespace := strings.TrimSpace(string(data)); namespace != "" {
+			return namespace, nil
+		}
 	}
 
 	managerDeployments, err := ListManagerDeployments(ctx, c)

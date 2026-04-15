@@ -4,13 +4,15 @@
 package e2e
 
 import (
-    "fmt"
-    "os/exec"
-    "strings"
-    "time"
+	"fmt"
+	"os/exec"
+	"strings"
+	"time"
 
-    utils2 "github.com/delta10/access-operator/test/e2e/utils"
-    . "github.com/onsi/gomega"
+	. "github.com/onsi/gomega"
+
+	operatorcontroller "github.com/delta10/access-operator/internal/controller"
+	utils2 "github.com/delta10/access-operator/test/e2e/utils"
 )
 
 type namespacedName struct {
@@ -77,31 +79,52 @@ func waitForControllerLogsContain(substrings ...string) {
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 }
 
-func createControllerResource(name, namespace, settingsYAML string) error {
+func createControllerSettingsConfigMap(namespace, settingsYAML string) error {
 	settingsYAML = strings.TrimSpace(settingsYAML)
 	if settingsYAML == "" {
 		return fmt.Errorf("controller settings YAML cannot be empty")
 	}
 
-	manifest := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
-kind: Controller
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
 metadata:
   name: %s
   namespace: %s
-spec:
-  settings:
+data:
+  %s: |
+    spec:
+      settings:
 %s
-`, name, namespace, indentYAMLBlock(settingsYAML, "    "))
+`, operatorcontroller.ControllerSettingsConfigMapName, namespace, operatorcontroller.ControllerSettingsConfigMapKey, indentYAMLBlock(settingsYAML, "        "))
 
 	return utils2.ApplyManifest(manifest)
 }
 
-func deleteControllerResource(name, namespace string) {
-	cmd := exec.Command("kubectl", "delete", "controller", name, "-n", namespace, "--ignore-not-found", "--wait=false")
+func deleteControllerSettingsConfigMap(namespace string) {
+	cmd := exec.Command(
+		"kubectl",
+		"delete",
+		"configmap",
+		operatorcontroller.ControllerSettingsConfigMapName,
+		"-n",
+		namespace,
+		"--ignore-not-found",
+		"--wait=false",
+	)
 	_, _ = utils2.Run(cmd)
 
 	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "controller", name, "-n", namespace, "-o", "name", "--ignore-not-found")
+		cmd := exec.Command(
+			"kubectl",
+			"get",
+			"configmap",
+			"-n",
+			namespace,
+			operatorcontroller.ControllerSettingsConfigMapName,
+			"-o",
+			"name",
+			"--ignore-not-found",
+		)
 		output, err := utils2.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(strings.TrimSpace(output)).To(BeEmpty())
@@ -126,30 +149,11 @@ func waitForResourceWarningEvent(resource namespacedName, kind, reason string) {
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 }
 
-func waitForControllerResourcesReadyCondition(resources []namespacedName, expectation readyConditionExpectation) {
+func waitForNoControllerSettingsConfigMaps() {
 	Eventually(func(g Gomega) {
-		for _, resource := range resources {
-			if expectation.status != "" {
-				status, err := getReadyConditionField("controller", resource, "status")
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(status).To(Equal(expectation.status))
-			}
-
-			if expectation.reason != "" {
-				reason, err := getReadyConditionField("controller", resource, "reason")
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(reason).To(Equal(expectation.reason))
-			}
-		}
-	}, 2*time.Minute, 5*time.Second).Should(Succeed())
-}
-
-func waitForNoControllers() {
-	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "controller", "-A", "-o", "name", "--ignore-not-found")
-		output, err := utils2.Run(cmd)
+		configMaps, err := listControllerSettingsConfigMaps()
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(strings.TrimSpace(output)).To(BeEmpty())
+		g.Expect(configMaps).To(BeEmpty())
 	}, 30*time.Second, time.Second).Should(Succeed())
 }
 
@@ -159,4 +163,42 @@ func indentYAMLBlock(block, indent string) string {
 		lines[i] = indent + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+func listControllerSettingsConfigMaps() ([]namespacedName, error) {
+	cmd := exec.Command(
+		"kubectl",
+		"get",
+		"configmap",
+		"-A",
+		"--field-selector",
+		fmt.Sprintf("metadata.name=%s", operatorcontroller.ControllerSettingsConfigMapName),
+		"-o",
+		`jsonpath={range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\n"}{end}`,
+	)
+	output, err := utils2.Run(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	trimmedOutput := strings.TrimSpace(output)
+	if trimmedOutput == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(trimmedOutput, "\n")
+	configMaps := make([]namespacedName, 0, len(lines))
+	for _, line := range lines {
+		fields := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("unexpected configmap listing output %q", line)
+		}
+
+		configMaps = append(configMaps, namespacedName{
+			namespace: fields[0],
+			name:      fields[1],
+		})
+	}
+
+	return configMaps, nil
 }

@@ -10,7 +10,6 @@ import (
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	"github.com/delta10/access-operator/internal/controller"
 	rabbithole "github.com/michaelklishin/rabbit-hole/v3"
-	corev1 "k8s.io/api/core/v1"
 )
 
 const defaultRabbitMQAMQPPort = "5672"
@@ -62,14 +61,8 @@ func (r *AccessReconciler) resolveExistingSecretNamespace(
 		r.Client,
 		rbq.Namespace,
 		rbq.Spec.Connection.ExistingSecretNamespace,
-		func(controllerObj *accessv1.Controller, message string) {
-			controller.EmitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, controller.MultipleControllersFoundReason, message)
-		},
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "multiple Controller resources found") {
-			controller.EmitEvent(r.Recorder, rbq, corev1.EventTypeWarning, controller.MultipleControllersFoundReason, err.Error())
-		}
 		return "", err
 	}
 

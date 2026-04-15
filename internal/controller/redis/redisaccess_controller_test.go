@@ -235,17 +235,14 @@ var _ = Describe("RedisAccess Controller", func() {
 			Expect(connection.Password).To(Equal(testRedisAdminPassword))
 		})
 
-		It("should allow cross-namespace existingSecret when singleton Controller policy is enabled", func() {
+		It("should allow cross-namespace existingSecret when settings ConfigMap policy is enabled", func() {
 			secretName := testRedisSecretName
 			secretNamespace := "shared-redis"
 
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "controller", Namespace: "system"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
-					},
-				},
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					ExistingSecretNamespace: true,
+				}),
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: secretNamespace},
 					Data: map[string][]byte{
@@ -273,62 +270,13 @@ var _ = Describe("RedisAccess Controller", func() {
 			Expect(connection.Host).To(Equal("redis.shared-redis.svc"))
 		})
 
-		It("should hard fail cross-namespace existingSecret when multiple Controller resources exist", func() {
-			secretName := "redis-connection-secret"
-			secretNamespace := "shared-redis"
-
+		It("should normalize excluded usernames from settings ConfigMap", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "controller-a", Namespace: "system"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					RedisSettings: accessv1.RedisControllerSettings{
+						ExcludedUsers: []string{" default ", "", "ops-user", "default"},
 					},
-				},
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "controller-b", Namespace: "default"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
-					},
-				},
-				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: secretNamespace},
-					Data: map[string][]byte{
-						"host":     []byte("redis"),
-						"port":     []byte("6379"),
-						"username": []byte("default"),
-						"password": []byte("secret"),
-					},
-				},
-			)
-
-			reconciler := &RedisAccessReconciler{Client: fakeClient}
-			redisAccess := &accessv1.RedisAccess{
-				ObjectMeta: metav1.ObjectMeta{Name: "cross-namespace", Namespace: "default"},
-				Spec: accessv1.RedisAccessSpec{
-					Connection: accessv1.ConnectionSpec{
-						ExistingSecret:          &secretName,
-						ExistingSecretNamespace: &secretNamespace,
-					},
-				},
-			}
-
-			_, err := reconciler.getConnectionDetails(context.Background(), redisAccess)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("multiple Controller resources found"))
-		})
-
-		It("should normalize excluded usernames from singleton Controller settings", func() {
-			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							RedisSettings: accessv1.RedisControllerSettings{
-								ExcludedUsers: []string{" default ", "", "ops-user", "default"},
-							},
-						},
-					},
-				},
+				}),
 			)
 
 			reconciler := &RedisAccessReconciler{Client: fakeClient}
@@ -346,19 +294,14 @@ var _ = Describe("RedisAccess Controller", func() {
 			Expect(policy).To(Equal(accessv1.StaleUserDeletionPolicyRestrict))
 		})
 
-		It("should resolve stale user deletion policy from singleton Controller settings", func() {
+		It("should resolve stale user deletion policy from settings ConfigMap", func() {
 			deletePolicy := accessv1.StaleUserDeletionPolicyDelete
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							RedisSettings: accessv1.RedisControllerSettings{
-								StaleUserDeletionPolicy: &deletePolicy,
-							},
-						},
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					RedisSettings: accessv1.RedisControllerSettings{
+						StaleUserDeletionPolicy: &deletePolicy,
 					},
-				},
+				}),
 			)
 
 			reconciler := &RedisAccessReconciler{Client: fakeClient}
@@ -451,16 +394,11 @@ var _ = Describe("RedisAccess Controller", func() {
 
 			fakeClient, fakeScheme := test.NewFakeClientWithScheme(
 				redisAccess,
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "system"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							RedisSettings: accessv1.RedisControllerSettings{
-								ExcludedUsers: []string{"default"},
-							},
-						},
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					RedisSettings: accessv1.RedisControllerSettings{
+						ExcludedUsers: []string{"default"},
 					},
-				},
+				}),
 			)
 
 			reconciler := &RedisAccessReconciler{
@@ -658,16 +596,11 @@ var _ = Describe("RedisAccess Controller", func() {
 					ACLRules: []string{"~cache:*", "+get"},
 				},
 			}
-			controllerSettings := &accessv1.Controller{
-				ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "system"},
-				Spec: accessv1.ControllerSpec{
-					Settings: accessv1.ControllerSettings{
-						RedisSettings: accessv1.RedisControllerSettings{
-							StaleUserDeletionPolicy: &deletePolicy,
-						},
-					},
+			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				RedisSettings: accessv1.RedisControllerSettings{
+					StaleUserDeletionPolicy: &deletePolicy,
 				},
-			}
+			})
 
 			fakeClient, fakeScheme := test.NewFakeClientWithScheme(redisAccess, controllerSettings)
 			reconciler := &RedisAccessReconciler{

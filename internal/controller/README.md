@@ -116,7 +116,7 @@ func (r *MyServiceAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 ```
 
-Use a custom reconcile loop instead of `ReconcileManagedAccess` when the controller is not access-oriented, does not manage generated credentials, or needs different status or watch behavior. The `ControllerReconciler` in [`controller_controller.go`](./controller_controller.go) is the example for that shape.
+Use a custom reconcile loop instead of `ReconcileManagedAccess` when the controller is not access-oriented, does not manage generated credentials, or needs different status or watch behavior.
 
 ## 6. Implement reconciliation with repository conventions
 

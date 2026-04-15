@@ -27,12 +27,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // PostgresAccessReconciler reconciles a PostgresAccess object
@@ -63,10 +67,10 @@ func postgresReconcileStatusConfig() controller.ReconcileStatusConfig[*accessv1.
 }
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/finalizers,verbs=update
-// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=controllers,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
@@ -319,6 +323,29 @@ func (r *PostgresAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&accessv1.PostgresAccess{}).
 		Named("postgresaccess").
 		Owns(&corev1.Secret{}).
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+				if !controller.IsControllerSettingsConfigMap(obj) {
+					return nil
+				}
+
+				var accesses accessv1.PostgresAccessList
+				if err := r.List(ctx, &accesses); err != nil {
+					return nil
+				}
+
+				requests := make([]reconcile.Request, 0, len(accesses.Items))
+				for i := range accesses.Items {
+					requests = append(requests, reconcile.Request{
+						NamespacedName: client.ObjectKeyFromObject(&accesses.Items[i]),
+					})
+				}
+
+				return requests
+			}),
+			builder.WithPredicates(predicate.NewPredicateFuncs(controller.IsControllerSettingsConfigMap)),
+		).
 		Complete(r)
 }
 
@@ -395,7 +422,5 @@ func getUserPassword(ctx context.Context, c client.Client, namespace, secretName
 }
 
 func resolvePostgresControllerSettings(ctx context.Context, r *PostgresAccessReconciler) (accessv1.ControllerSettings, error) {
-	return controller.ResolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
-		r.emitEvent(controllerObj, "Warning", controller.MultipleControllersFoundReason, message)
-	})
+	return controller.ResolveControllerSettings(ctx, r.Client)
 }

@@ -206,34 +206,31 @@ Redis ACL rules are configured through `spec.aclRules`. The operator always owns
 # Controller configuration
 All of these settings are optional, and have safe defaults. If you don't need to change any of these settings, you can skip this section.
 
-Only 1 controller resource is allowed, if there are more than 1, the operator will log an error and ignore all but the first one it finds.
-
-
 ## Cross-namespace existing secrets (optional)
 By default, the `existingSecret` value is resolved in the same namespace as the `PostgresAccess` resource.
 
-To allow cross-namespace references, create exactly one `Controller` resource as found in `config/samples/access_v1_controller.yaml` in the same namespace as the operator.  
+To allow cross-namespace references, create `ConfigMap/access-operator-settings` as shown in `config/samples/access_v1_controller.yaml` in the same namespace as the operator.  
 Excluded usernames are skipped during normal reconciliation and orphan cleanup, so the operator will not create, update, or delete those roles.
 
 ## Ignoring users (optional)
 By default, no users are ignored **except** for Postgres users that can't login (rolcanlogin == false) or are superusers (rolsuper == true).
-To exclude certain usernames from being managed by the operator, you can specify them in the `Controller` resource as well.   
+To exclude certain usernames from being managed by the operator, you can specify them in the operator settings ConfigMap as well.   
 This is useful for excluding default users like `postgres` or `admin` that are created by the service itself for example.
 
-Add the service's key (postgres, rabbitmq, redis) within the settings as shown here in the CR to exclude the `postgres`, `admin`, and `default` users:
+Add the service's key (postgres, rabbitmq, redis) within the embedded config document to exclude the `postgres`, `admin`, and `default` users:
 ```yaml
 spec:
-    settings:
+  settings:
     existingSecretNamespace: false
     postgres:
-       excludedUsers:
-         - postgres
+      excludedUsers:
+        - postgres
     rabbitmq:
-       excludedUsers:
-         - admin
+      excludedUsers:
+        - admin
     redis:
-       excludedUsers:
-         - default
+      excludedUsers:
+        - default
 ```
 
 You can also control stale-user cleanup per backend from the same singleton `Controller` resource. The safe default is `Restrict`, which retains users that are no longer referenced by any managed access resource. For PostgreSQL, the controller-scoped policy uses `Cascade`, `Restrict`, `Orphan`, or `None`. `None` disables stale-user cleanup during steady-state reconciliation but still allows the specific `PostgresAccess` being deleted to finalize its own role. Redis and RabbitMQ use `Delete` or `Restrict`.

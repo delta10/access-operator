@@ -20,16 +20,16 @@ limitations under the License.
 package e2e
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "os/exec"
-    "testing"
-    "time"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"testing"
+	"time"
 
-    utils2 "github.com/delta10/access-operator/test/e2e/utils"
-    . "github.com/onsi/ginkgo/v2"
-    . "github.com/onsi/gomega"
+	utils2 "github.com/delta10/access-operator/test/e2e/utils"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var (
@@ -80,12 +80,20 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	By("waiting for operator CRDs to become established")
 	err = utils2.WaitForCRDsEstablished(
-		"controllers.access.k8s.delta10.nl",
 		"postgresaccesses.access.k8s.delta10.nl",
 		"rabbitmqaccesses.access.k8s.delta10.nl",
 		"redisaccesses.access.k8s.delta10.nl",
 	)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to wait for operator CRDs")
+
+	By("waiting for operator API resources to become discoverable")
+	err = utils2.WaitForAPIResources(
+		"access.k8s.delta10.nl",
+		"postgresaccesses",
+		"rabbitmqaccesses",
+		"redisaccesses",
+	)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to wait for operator API discovery")
 
 	By("deploying the controller-manager")
 	_, err = utils2.RunCommandWithTimeout(5*time.Minute, "make", "deploy", fmt.Sprintf("IMG=%s", managerImage))

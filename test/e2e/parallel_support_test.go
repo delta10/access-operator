@@ -4,17 +4,17 @@
 package e2e
 
 import (
-    "fmt"
-    "os/exec"
-    "strconv"
-    "sync"
-    "sync/atomic"
-    "time"
+	"fmt"
+	"os/exec"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
 
-    "github.com/delta10/access-operator/internal/controller"
-    utils2 "github.com/delta10/access-operator/test/e2e/utils"
-    . "github.com/onsi/ginkgo/v2"
-    . "github.com/onsi/gomega"
+	"github.com/delta10/access-operator/internal/controller"
+	utils2 "github.com/delta10/access-operator/test/e2e/utils"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 type sharedBackend struct {
@@ -99,10 +99,26 @@ func waitForNamespaceDeleted(name string) {
 	}, 2*time.Minute, 2*time.Second).Should(Succeed())
 }
 
-func clearAllControllers() {
-	cmd := exec.Command("kubectl", "delete", "controller", "--all", "-A", "--ignore-not-found", "--wait=false")
-	_, _ = utils2.Run(cmd)
-	waitForNoControllers()
+func clearAllControllerSettingsConfigMaps() {
+	configMaps, err := listControllerSettingsConfigMaps()
+	Expect(err).NotTo(HaveOccurred(), "Failed to list settings ConfigMaps")
+
+	for _, configMap := range configMaps {
+		cmd := exec.Command(
+			"kubectl",
+			"delete",
+			"configmap",
+			configMap.name,
+			"-n",
+			configMap.namespace,
+			"--ignore-not-found",
+			"--wait=false",
+		)
+		_, err = utils2.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to delete settings ConfigMap %s/%s", configMap.namespace, configMap.name)
+	}
+
+	waitForNoControllerSettingsConfigMaps()
 }
 
 func ensureWorkerBackend(
@@ -135,7 +151,7 @@ func ensurePostgresWorkerBackend() (string, controller.ConnectionDetails) {
 		&postgresBackendOnce,
 		&postgresBackend,
 		"postgres-backend",
-        utils2.DatabaseConnectionDetailsForNamespace,
+		utils2.DatabaseConnectionDetailsForNamespace,
 		func(backendNamespace string, conn controller.ConnectionDetails) {
 			Expect(utils2.DeployPostgresInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared PostgreSQL backend")
@@ -173,7 +189,7 @@ func ensureRabbitMQWorkerBackend() (string, controller.ConnectionDetails) {
 		&rabbitMQBackendOnce,
 		&rabbitMQBackend,
 		"rabbitmq-backend",
-        utils2.RabbitMQConnectionDetailsForNamespace,
+		utils2.RabbitMQConnectionDetailsForNamespace,
 		func(backendNamespace string, conn controller.ConnectionDetails) {
 			Expect(utils2.DeployRabbitMQInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared RabbitMQ backend")
@@ -187,7 +203,7 @@ func ensureRedisWorkerBackend() (string, controller.ConnectionDetails) {
 		&redisBackendOnce,
 		&redisBackend,
 		"redis-backend",
-        utils2.RedisConnectionDetailsForNamespace,
+		utils2.RedisConnectionDetailsForNamespace,
 		func(backendNamespace string, conn controller.ConnectionDetails) {
 			Expect(utils2.DeployRedisInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared Redis backend")

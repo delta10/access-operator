@@ -340,7 +340,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(connectionString).To(Equal(expectedString))
 		})
 
-		It("should reject cross-namespace existingSecret when no Controller resource exists", func() {
+		It("should reject cross-namespace existingSecret when no settings ConfigMap exists", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
@@ -374,19 +374,11 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(err.Error()).To(ContainSubstring("cross-namespace connection secret references are disabled"))
 		})
 
-		It("should reject cross-namespace existingSecret when singleton Controller policy is false", func() {
+		It("should reject cross-namespace existingSecret when settings ConfigMap policy is false", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "cluster-settings",
-						Namespace: "system",
-					},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							ExistingSecretNamespace: false,
-						},
-					},
-				},
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					ExistingSecretNamespace: false,
+				}),
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -419,19 +411,11 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(err.Error()).To(ContainSubstring("cross-namespace connection secret references are disabled"))
 		})
 
-		It("should allow cross-namespace existingSecret when singleton Controller policy is true", func() {
+		It("should allow cross-namespace existingSecret when settings ConfigMap policy is true", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "cluster-settings",
-						Namespace: "system",
-					},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							ExistingSecretNamespace: true,
-						},
-					},
-				},
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					ExistingSecretNamespace: true,
+				}),
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -464,19 +448,11 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(connectionString).To(Equal("postgresql://db-admin:secret@postgres.shared-db.svc:5432/appdb?sslmode=require"))
 		})
 
-		It("should reject cross-namespace existingSecret when singleton Controller is outside the operator namespace", func() {
+		It("should ignore settings ConfigMap outside operator namespace", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "cluster-settings",
-						Namespace: "tenant-a",
-					},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							ExistingSecretNamespace: true,
-						},
-					},
-				},
+				test.NewControllerSettingsConfigMap("tenant-a", accessv1.ControllerSettings{
+					ExistingSecretNamespace: true,
+				}),
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      secretName,
@@ -506,24 +482,16 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 			_, err := reconciler.getConnectionString(context.Background(), pg)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring(`must be created in the operator namespace "system"`))
+			Expect(err.Error()).To(ContainSubstring("cross-namespace connection secret references are disabled"))
 		})
 
-		It("should normalize excluded usernames from singleton Controller settings", func() {
+		It("should normalize excluded usernames from settings ConfigMap", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "cluster-settings",
-						Namespace: "system",
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					PostgresSettings: accessv1.PostgresControllerSettings{
+						ExcludedUsers: []string{" postgres ", "", "app-user", "postgres"},
 					},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							PostgresSettings: accessv1.PostgresControllerSettings{
-								ExcludedUsers: []string{" postgres ", "", "app-user", "postgres"},
-							},
-						},
-					},
-				},
+				}),
 			)
 
 			reconciler := &PostgresAccessReconciler{Client: fakeClient}
@@ -541,19 +509,14 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(policy).To(Equal(accessv1.CleanupPolicyRestrict))
 		})
 
-		It("should resolve stale user deletion policy from singleton Controller settings", func() {
+		It("should resolve stale user deletion policy from settings ConfigMap", func() {
 			orphanPolicy := accessv1.CleanupPolicyOrphan
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{
-							PostgresSettings: accessv1.PostgresControllerSettings{
-								StaleUserDeletionPolicy: &orphanPolicy,
-							},
-						},
+				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+					PostgresSettings: accessv1.PostgresControllerSettings{
+						StaleUserDeletionPolicy: &orphanPolicy,
 					},
-				},
+				}),
 			)
 
 			reconciler := &PostgresAccessReconciler{Client: fakeClient}
@@ -569,60 +532,6 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(shouldDelete).To(BeTrue())
 			Expect(finalizationPolicy).To(Equal(accessv1.CleanupPolicyRestrict))
 		})
-
-		It("should hard fail cross-namespace existingSecret when multiple Controller resources exist", func() {
-			fakeClient, _ := test.NewFakeClientWithScheme(
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "controller-a", Namespace: "system"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
-					},
-				},
-				&accessv1.Controller{
-					ObjectMeta: metav1.ObjectMeta{Name: "controller-b", Namespace: "default"},
-					Spec: accessv1.ControllerSpec{
-						Settings: accessv1.ControllerSettings{ExistingSecretNamespace: true},
-					},
-				},
-				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      secretName,
-						Namespace: "shared-db",
-					},
-					Data: map[string][]byte{
-						"host":     []byte("postgres"),
-						"port":     []byte(strconv.Itoa(int(port))),
-						"database": []byte(database),
-						"username": []byte(username),
-						"password": []byte(password),
-					},
-				},
-			)
-
-			eventRecorder := events.NewFakeRecorder(10)
-			reconciler := &PostgresAccessReconciler{
-				Client:   fakeClient,
-				Recorder: eventRecorder,
-			}
-			secretNamespace := "shared-db"
-			pg := &accessv1.PostgresAccess{
-				ObjectMeta: metav1.ObjectMeta{Name: "tenant-access", Namespace: "tenant-a"},
-				Spec: accessv1.PostgresAccessSpec{
-					Connection: accessv1.ConnectionSpec{
-						ExistingSecret:          &secretName,
-						ExistingSecretNamespace: &secretNamespace,
-					},
-				},
-			}
-
-			_, err := reconciler.getConnectionString(context.Background(), pg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("multiple Controller resources found"))
-
-			allEvents := test.ReceiveEvents(eventRecorder.Events, 3)
-			Expect(allEvents).To(ContainSubstring(controller.MultipleControllersFoundReason))
-		})
-
 		It("should return an error when no valid connection details are provided", func() {
 			reconciler := &PostgresAccessReconciler{}
 			pg := &accessv1.PostgresAccess{
@@ -1096,19 +1005,11 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			controllerSettings := &accessv1.Controller{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "cluster-settings",
-					Namespace: "system",
+			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				PostgresSettings: accessv1.PostgresControllerSettings{
+					ExcludedUsers: []string{username, "excluded-orphan"},
 				},
-				Spec: accessv1.ControllerSpec{
-					Settings: accessv1.ControllerSettings{
-						PostgresSettings: accessv1.PostgresControllerSettings{
-							ExcludedUsers: []string{username, "excluded-orphan"},
-						},
-					},
-				},
-			}
+			})
 
 			fakeClient, fakeScheme := test.NewFakeClientWithScheme(pg, controllerSettings)
 			mockDB := NewMockDB()
@@ -1218,16 +1119,11 @@ var _ = Describe("PostgresAccess Controller", func() {
 					},
 				},
 			}
-			controllerSettings := &accessv1.Controller{
-				ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
-				Spec: accessv1.ControllerSpec{
-					Settings: accessv1.ControllerSettings{
-						PostgresSettings: accessv1.PostgresControllerSettings{
-							StaleUserDeletionPolicy: &orphanPolicy,
-						},
-					},
+			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				PostgresSettings: accessv1.PostgresControllerSettings{
+					StaleUserDeletionPolicy: &orphanPolicy,
 				},
-			}
+			})
 
 			fakeClient, fakeScheme := test.NewFakeClientWithScheme(pg, controllerSettings)
 			mockDB := NewMockDB()
@@ -1268,16 +1164,11 @@ var _ = Describe("PostgresAccess Controller", func() {
 					},
 				},
 			}
-			controllerSettings := &accessv1.Controller{
-				ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
-				Spec: accessv1.ControllerSpec{
-					Settings: accessv1.ControllerSettings{
-						PostgresSettings: accessv1.PostgresControllerSettings{
-							StaleUserDeletionPolicy: &nonePolicy,
-						},
-					},
+			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				PostgresSettings: accessv1.PostgresControllerSettings{
+					StaleUserDeletionPolicy: &nonePolicy,
 				},
-			}
+			})
 
 			fakeClient, fakeScheme := test.NewFakeClientWithScheme(pg, controllerSettings)
 			mockDB := NewMockDB()
@@ -1361,16 +1252,11 @@ var _ = Describe("PostgresAccess Controller", func() {
 					},
 				},
 			}
-			controllerSettings := &accessv1.Controller{
-				ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
-				Spec: accessv1.ControllerSpec{
-					Settings: accessv1.ControllerSettings{
-						PostgresSettings: accessv1.PostgresControllerSettings{
-							StaleUserDeletionPolicy: &cascadePolicy,
-						},
-					},
+			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				PostgresSettings: accessv1.PostgresControllerSettings{
+					StaleUserDeletionPolicy: &cascadePolicy,
 				},
-			}
+			})
 
 			fakeClient, fakeScheme := test.NewFakeClientWithScheme(pg, controllerSettings)
 			mockDB := NewMockDB()
@@ -1415,16 +1301,11 @@ var _ = Describe("PostgresAccess Controller", func() {
 					},
 				},
 			}
-			controllerSettings := &accessv1.Controller{
-				ObjectMeta: metav1.ObjectMeta{Name: "cluster-settings", Namespace: "system"},
-				Spec: accessv1.ControllerSpec{
-					Settings: accessv1.ControllerSettings{
-						PostgresSettings: accessv1.PostgresControllerSettings{
-							StaleUserDeletionPolicy: &nonePolicy,
-						},
-					},
+			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				PostgresSettings: accessv1.PostgresControllerSettings{
+					StaleUserDeletionPolicy: &nonePolicy,
 				},
-			}
+			})
 
 			fakeClient, fakeScheme := test.NewFakeClientWithScheme(pg, controllerSettings)
 			mockDB := NewMockDB()

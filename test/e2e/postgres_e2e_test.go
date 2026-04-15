@@ -315,14 +315,12 @@ spec:
 			managedUsername := env.name("test-orphan-cleanup")
 			generatedSecret := env.name("test-orphan-cleanup-credentials")
 			ownedTable := env.name("orphan-policy-owned-table")
-			controllerName := env.name("postgres-orphan-policy")
-
-			By("creating a singleton Controller with staleUserDeletionPolicy Orphan")
-			err := createControllerResource(controllerName, namespace, `postgres:
+			By("creating a settings ConfigMap with staleUserDeletionPolicy Orphan")
+			err := createControllerSettingsConfigMap(namespace, `postgres:
   staleUserDeletionPolicy: Orphan`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with Orphan policy")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap with Orphan policy")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating a PostgresAccess resource")
@@ -449,20 +447,20 @@ data:
 		})
 	})
 
-	Context("Controller policy", Serial, func() {
+	Context("Settings ConfigMap policy", Serial, func() {
 		var env postgresSpecEnv
 
 		BeforeEach(func() {
-			clearAllControllers()
+			clearAllControllerSettingsConfigMaps()
 			env = newPostgresSpecEnv()
 		})
 
 		AfterEach(func() {
 			env.cleanup()
-			clearAllControllers()
+			clearAllControllerSettingsConfigMaps()
 		})
 
-		It("should deny cross-namespace existingSecret when no Controller resource exists", func() {
+		It("should deny cross-namespace existingSecret when no settings ConfigMap exists", func() {
 			resourceName := env.name("test-cross-namespace-no-controller")
 			generatedSecret := env.name("test-cross-namespace-no-controller-secret")
 			connectionSecretNamespace := createTestNamespace("postgres-shared-no-controller")
@@ -499,20 +497,19 @@ data:
 			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
 		})
 
-		It("should deny cross-namespace existingSecret when singleton Controller setting is false", func() {
+		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", func() {
 			resourceName := env.name("test-cross-namespace-controller-false")
 			generatedSecret := env.name("test-cross-namespace-controller-false-secret")
-			controllerName := env.name("cluster-settings-false")
 			connectionSecretNamespace := createTestNamespace("postgres-shared-controller-false")
 			DeferCleanup(func() {
 				deleteNamespace(connectionSecretNamespace)
 			})
 
-			By("creating a singleton Controller with existingSecretNamespace=false")
-			err := createControllerResource(controllerName, namespace, `existingSecretNamespace: false`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with false policy")
+			By("creating settings ConfigMap with existingSecretNamespace=false")
+			err := createControllerSettingsConfigMap(namespace, `existingSecretNamespace: false`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap with false policy")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating the connection secret in another namespace")
@@ -533,7 +530,7 @@ data:
 			)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace PostgresAccess")
 
-			By("verifying reconcile is denied because singleton Controller policy is false")
+			By("verifying reconcile is denied because settings ConfigMap policy is false")
 			waitForReadyCondition("postgresaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
 				messageContains: "cross-namespace connection secret references are disabled",
 			})
@@ -545,17 +542,16 @@ data:
 		It("should create a PostgresAccess resource using an existing connection secret from another namespace", func() {
 			resourceName := env.name("test-username-cross-namespace")
 			generatedSecret := env.name("test-postgres-credentials-cross-namespace")
-			controllerName := env.name("cluster-settings")
 			connectionSecretNamespace := createTestNamespace("postgres-shared")
 			DeferCleanup(func() {
 				deleteNamespace(connectionSecretNamespace)
 			})
 
-			By("enabling cross-namespace references through the singleton Controller resource")
-			err := createControllerResource(controllerName, namespace, `existingSecretNamespace: true`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to enable cross-namespace references via Controller CR")
+			By("enabling cross-namespace references through operator settings ConfigMap")
+			err := createControllerSettingsConfigMap(namespace, `existingSecretNamespace: true`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to enable cross-namespace references via settings ConfigMap")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating the connection secret in the shared namespace")
@@ -583,20 +579,19 @@ data:
 			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, true)
 		})
 
-		It("should deny cross-namespace existingSecret when the singleton Controller is outside the operator namespace", func() {
+		It("should deny cross-namespace existingSecret when settings ConfigMap is outside the operator namespace", func() {
 			resourceName := env.name("test-cross-namespace-wrong-controller-namespace")
 			generatedSecret := env.name("test-cross-namespace-wrong-controller-namespace-secret")
-			controllerName := env.name("cluster-settings-wrong-namespace")
 			connectionSecretNamespace := createTestNamespace("postgres-shared-wrong-controller-namespace")
 			DeferCleanup(func() {
 				deleteNamespace(connectionSecretNamespace)
 			})
 
-			By("creating the singleton Controller in a workload namespace instead of the operator namespace")
-			err := createControllerResource(controllerName, env.namespace, `existingSecretNamespace: true`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller outside the operator namespace")
+			By("creating settings ConfigMap in workload namespace instead of operator namespace")
+			err := createControllerSettingsConfigMap(env.namespace, `existingSecretNamespace: true`)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap outside the operator namespace")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, env.namespace)
+				deleteControllerSettingsConfigMap(env.namespace)
 			})
 
 			By("creating the connection secret in another namespace")
@@ -617,104 +612,29 @@ data:
 			)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace PostgresAccess")
 
-			By("verifying reconcile is denied because the Controller is not in the operator namespace")
+			By("verifying reconcile is denied because settings ConfigMap outside operator namespace is ignored")
 			waitForReadyCondition("postgresaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
 				status:          "False",
 				reason:          "DatabaseSyncFailed",
-				messageContains: `must be created in the operator namespace "access-operator-system"`,
-			})
-
-			By("verifying the misplaced Controller is marked not ready")
-			waitForReadyCondition("controller", namespacedName{name: controllerName, namespace: env.namespace}, readyConditionExpectation{
-				status:          "False",
-				reason:          "InvalidControllerNamespace",
-				messageContains: `must be created in the operator namespace "access-operator-system"`,
+				messageContains: "cross-namespace connection secret references are disabled",
 			})
 
 			By("verifying the requested database user was not created")
 			utils2.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
 		})
 
-		It("should fail when multiple Controller resources exist and emit warning events", func() {
-			resourceName := env.name("test-cross-namespace-multiple-controllers")
-			generatedSecret := env.name("test-cross-namespace-multiple-controllers-secret")
-			controllerAName := env.name("cluster-settings-a")
-			controllerBName := env.name("cluster-settings-b")
-			connectionSecretNamespace := createTestNamespace("postgres-shared-multiple-controller")
-			DeferCleanup(func() {
-				deleteNamespace(connectionSecretNamespace)
-			})
-
-			By("creating two Controller resources to violate singleton policy")
-			err := createControllerResource(controllerAName, namespace, `existingSecretNamespace: true`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create first Controller")
-
-			err = createControllerResource(controllerBName, env.namespace, `existingSecretNamespace: true`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create second Controller")
-
-			DeferCleanup(func() {
-				deleteControllerResource(controllerAName, namespace)
-			})
-			DeferCleanup(func() {
-				deleteControllerResource(controllerBName, env.namespace)
-			})
-
-			By("creating the connection secret in another namespace")
-			secretName, err := utils2.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
-
-			By("creating a PostgresAccess that references the shared secret namespace")
-			err = utils2.CreateResourceFromSecretReferenceWithNamespace(
-				resourceName,
-				env.namespace,
-				generatedSecret,
-				secretName,
-				connectionSecretNamespace,
-				accessv1.GrantSpec{
-					Database:   env.conn.Database,
-					Privileges: []string{"CONNECT", "SELECT"},
-				},
-			)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create cross-namespace PostgresAccess")
-
-			By("verifying PostgresAccess fails with multiple-controller error")
-			waitForReadyCondition("postgresaccess", namespacedName{name: resourceName, namespace: env.namespace}, readyConditionExpectation{
-				reason:          "DatabaseSyncFailed",
-				messageContains: "multiple Controller resources found",
-			})
-
-			By("verifying both Controller resources are marked Ready=False with MultipleControllersFound")
-			controllerResources := []namespacedName{
-				{name: controllerAName, namespace: namespace},
-				{name: controllerBName, namespace: env.namespace},
-			}
-			waitForControllerResourcesReadyCondition(controllerResources, readyConditionExpectation{
-				status: "False",
-				reason: "MultipleControllersFound",
-			})
-
-			By("verifying warning events are emitted for both Controller resources")
-			for _, resource := range controllerResources {
-				waitForResourceWarningEvent(resource, "Controller", "MultipleControllersFound")
-			}
-
-			By("verifying warning event is emitted on controller-manager Deployment")
-			waitForResourceWarningEvent(namespacedName{name: managerDeploymentName, namespace: namespace}, "Deployment", "MultipleControllersFound")
-		})
-
-		It("should preserve excluded PostgreSQL users from singleton Controller settings", func() {
+		It("should preserve excluded PostgreSQL users from settings ConfigMap", func() {
 			excludedUsername := env.name("excluded-keeper")
 			managedUsername := env.name("test-managed-user")
 			generatedSecret := env.name("test-excluded-user-secret")
-			controllerName := env.name("cluster-settings-excluded-users")
 
-			By("creating a singleton Controller with excluded PostgreSQL users")
-			err := createControllerResource(controllerName, namespace, fmt.Sprintf(`postgres:
+			By("creating settings ConfigMap with excluded PostgreSQL users")
+			err := createControllerSettingsConfigMap(namespace, fmt.Sprintf(`postgres:
   excludedUsers:
     - %s`, excludedUsername))
-			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with excluded users")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap with excluded users")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating an unmanaged PostgreSQL role that should be preserved")
@@ -785,14 +705,12 @@ data:
 			managedUsername := env.name("test-cascade-cleanup")
 			generatedSecret := env.name("test-cascade-cleanup-credentials")
 			ownedTable := env.name("cascade-policy-owned-table")
-			controllerName := env.name("postgres-cascade-policy")
-
-			By("creating a singleton Controller with staleUserDeletionPolicy Cascade")
-			err := createControllerResource(controllerName, namespace, `postgres:
+			By("creating a settings ConfigMap with staleUserDeletionPolicy Cascade")
+			err := createControllerSettingsConfigMap(namespace, `postgres:
   staleUserDeletionPolicy: Cascade`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with Cascade policy")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap with Cascade policy")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating a PostgresAccess resource")
@@ -839,14 +757,12 @@ data:
 		It("should delete the managed role during finalization when stale user deletion policy is None", func() {
 			resourceName := env.name("test-none-finalizer-delete")
 			generatedSecret := env.name("test-none-finalizer-delete-secret")
-			controllerName := env.name("postgres-none-policy")
-
-			By("creating a singleton Controller with staleUserDeletionPolicy None")
-			err := createControllerResource(controllerName, namespace, `postgres:
+			By("creating a settings ConfigMap with staleUserDeletionPolicy None")
+			err := createControllerSettingsConfigMap(namespace, `postgres:
   staleUserDeletionPolicy: None`)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create singleton Controller with None policy")
+			Expect(err).NotTo(HaveOccurred(), "Failed to create settings ConfigMap with None policy")
 			DeferCleanup(func() {
-				deleteControllerResource(controllerName, namespace)
+				deleteControllerSettingsConfigMap(namespace)
 			})
 
 			By("creating a PostgresAccess resource")

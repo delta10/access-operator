@@ -40,7 +40,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
-	"github.com/delta10/access-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -179,15 +178,6 @@ func main() {
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
-	}
-
-	if err := (&controller.ControllerReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("controller-controller"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Controller")
 		os.Exit(1)
 	}
 
