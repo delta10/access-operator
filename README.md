@@ -219,18 +219,16 @@ This is useful for excluding default users like `postgres` or `admin` that are c
 
 Add the service's key (postgres, rabbitmq, redis) within the embedded config document to exclude the `postgres`, `admin`, and `default` users:
 ```yaml
-spec:
-  settings:
-    existingSecretNamespace: false
-    postgres:
-      excludedUsers:
-        - postgres
-    rabbitmq:
-      excludedUsers:
-        - admin
-    redis:
-      excludedUsers:
-        - default
+existingSecretNamespace: false
+postgres:
+  excludedUsers:
+    - postgres
+rabbitmq:
+  excludedUsers:
+    - admin
+redis:
+  excludedUsers:
+    - default
 ```
 
 You can also control stale-user cleanup per backend from the same singleton `Controller` resource. The safe default is `Restrict`, which retains users that are no longer referenced by any managed access resource. For PostgreSQL, the controller-scoped policy uses `Cascade`, `Restrict`, `Orphan`, or `Retain`. `Retain` disables stale-user cleanup during steady-state reconciliation but still allows the specific `PostgresAccess` being deleted to finalize its own role. Redis and RabbitMQ use `Delete` or `Restrict`.

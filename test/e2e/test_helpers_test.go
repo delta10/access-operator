@@ -92,8 +92,6 @@ metadata:
   namespace: %s
 data:
   %s: |
-    spec:
-      settings:
 %s
 `, operatorcontroller.ControllerSettingsConfigMapName, namespace, operatorcontroller.ControllerSettingsConfigMapKey, indentYAMLBlock(settingsYAML, "        "))
 

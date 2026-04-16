@@ -122,10 +122,3 @@ type ControllerSettings struct {
 	// +optional
 	RedisSettings RedisControllerSettings `json:"redis,omitempty"`
 }
-
-// ControllerSpec defines config document structure for operator settings.
-type ControllerSpec struct {
-	// settings contains operator-wide settings.
-	// +optional
-	Settings ControllerSettings `json:"settings,omitempty"`
-}

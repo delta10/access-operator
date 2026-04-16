@@ -34,12 +34,6 @@ func (in *ControllerSettings) DeepCopy() *ControllerSettings {
 }
 
 // DeepCopyInto copies all properties of this object into another object of the same type.
-func (in *ControllerSpec) DeepCopyInto(out *ControllerSpec) {
-	*out = *in
-	in.Settings.DeepCopyInto(&out.Settings)
-}
-
-// DeepCopyInto copies all properties of this object into another object of the same type.
 func (in *PostgresControllerSettings) DeepCopyInto(out *PostgresControllerSettings) {
 	*out = *in
 	if in.ExcludedUsers != nil {
@@ -60,16 +54,6 @@ func (in *PostgresControllerSettings) DeepCopy() *PostgresControllerSettings {
 		return nil
 	}
 	out := new(PostgresControllerSettings)
-	in.DeepCopyInto(out)
-	return out
-}
-
-// DeepCopy returns a deep copy of this object.
-func (in *ControllerSpec) DeepCopy() *ControllerSpec {
-	if in == nil {
-		return nil
-	}
-	out := new(ControllerSpec)
 	in.DeepCopyInto(out)
 	return out
 }

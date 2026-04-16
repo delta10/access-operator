@@ -26,11 +26,6 @@ const (
 	defaultManagerDeploymentNamespace = "system"
 )
 
-type controllerSettingsDocument struct {
-	Spec     accessv1.ControllerSpec      `json:"spec,omitempty"`
-	Settings *accessv1.ControllerSettings `json:"settings,omitempty"`
-}
-
 type SharedConnectionDetails struct {
 	Username string
 	Password string
@@ -142,8 +137,8 @@ func ResolveControllerSettings(
 		return accessv1.ControllerSettings{}, nil
 	}
 
-	var document controllerSettingsDocument
-	if err := yaml.Unmarshal([]byte(rawSettings), &document); err != nil {
+	var settings accessv1.ControllerSettings
+	if err := yaml.Unmarshal([]byte(rawSettings), &settings); err != nil {
 		return accessv1.ControllerSettings{}, fmt.Errorf(
 			"failed to parse ConfigMap %s/%s data[%q]: %w",
 			configMap.Namespace,
@@ -153,11 +148,7 @@ func ResolveControllerSettings(
 		)
 	}
 
-	if document.Settings != nil {
-		return *document.Settings, nil
-	}
-
-	return document.Spec.Settings, nil
+	return settings, nil
 }
 
 func ListManagerDeployments(ctx context.Context, c client.Client) ([]appsv1.Deployment, error) {

@@ -43,11 +43,7 @@ func ReceiveEvents(events <-chan string, count int) string {
 }
 
 func NewControllerSettingsConfigMap(namespace string, settings accessv1.ControllerSettings) *corev1.ConfigMap {
-	rawConfig, err := yaml.Marshal(map[string]accessv1.ControllerSpec{
-		"spec": {
-			Settings: settings,
-		},
-	})
+	rawConfig, err := yaml.Marshal(settings)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	return &corev1.ConfigMap{

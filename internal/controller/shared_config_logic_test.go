@@ -27,7 +27,7 @@ var _ = Describe("Shared config logic", func() {
 			Expect(settings).To(Equal(accessv1.ControllerSettings{}))
 		})
 
-		It("should parse settings from spec.settings", func() {
+		It("should parse settings from ConfigMap payload", func() {
 			fakeClient := newFakeClientWithScheme(
 				newControllerSettingsConfigMap("system", accessv1.ControllerSettings{
 					ExistingSecretNamespace: true,
@@ -41,23 +41,6 @@ var _ = Describe("Shared config logic", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(settings.ExistingSecretNamespace).To(BeTrue())
 			Expect(settings.PostgresSettings.ExcludedUsers).To(Equal([]string{"postgres"}))
-		})
-
-		It("should parse settings from root settings field for backward compatibility", func() {
-			fakeClient := newFakeClientWithScheme(
-				newControllerSettingsConfigMapWithRawData("system", `
-settings:
-  existingSecretNamespace: true
-  rabbitmq:
-    excludedUsers:
-      - admin
-`),
-			)
-
-			settings, err := ResolveControllerSettings(context.Background(), fakeClient)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(settings.ExistingSecretNamespace).To(BeTrue())
-			Expect(settings.RabbitMQSettings.ExcludedUsers).To(Equal([]string{"admin"}))
 		})
 
 		It("should ignore ConfigMap outside operator namespace", func() {
@@ -80,7 +63,7 @@ settings:
 						Namespace: "system",
 					},
 					Data: map[string]string{
-						ControllerSettingsConfigMapKey: "spec:\n  settings: [",
+						ControllerSettingsConfigMapKey: "existingSecretNamespace: [",
 					},
 				},
 			)
@@ -120,11 +103,7 @@ func newFakeClientWithScheme(objs ...client.Object) client.Client {
 }
 
 func newControllerSettingsConfigMap(namespace string, settings accessv1.ControllerSettings) *corev1.ConfigMap {
-	rawConfig, err := yaml.Marshal(map[string]accessv1.ControllerSpec{
-		"spec": {
-			Settings: settings,
-		},
-	})
+	rawConfig, err := yaml.Marshal(settings)
 	Expect(err).NotTo(HaveOccurred())
 
 	return &corev1.ConfigMap{

@@ -5,31 +5,29 @@ metadata:
     app.kubernetes.io/name: access-operator
     app.kubernetes.io/managed-by: kustomize
   name: access-operator-settings
-  namespace: kube-system
+  namespace: access-operator-demo
 data:
   settings.yaml: |
-    spec:
-      settings:
-        # Default is false.
-        # Set to true to allow PostgresAccess connection.existingSecretNamespace
-        # to reference a Secret in a different namespace.
-        existingSecretNamespace: false
-        # Configure PostgreSQL-specific controller behavior.
-        postgres:
-          excludedUsers:
-            - postgres
-          # Default is Restrict.
-          # Controls whether stale PostgreSQL roles are deleted or retained.
-          # Retain disables stale-user cleanup outside of finalization for the
-          # specific PostgresAccess being deleted.
-          staleUserDeletionPolicy: Restrict
-        # Configure RabbitMQ-specific controller behavior.
-        rabbitmq:
-          # Default is Restrict.
-          staleUserDeletionPolicy: Restrict
-          # Default is Retain.
-          staleVhostDeletionPolicy: Retain
-        # Configure Redis-specific controller behavior.
-        redis:
-          # Default is Restrict.
-          staleUserDeletionPolicy: Restrict
+    # Default is false.
+    # Set to true to allow PostgresAccess connection.existingSecretNamespace
+    # to reference a Secret in a different namespace.
+    existingSecretNamespace: false
+    # Configure PostgreSQL-specific controller behavior.
+    postgres:
+      excludedUsers:
+        - postgres
+      # Default is Restrict.
+      # Controls whether stale PostgreSQL roles are deleted or retained.
+      # Retain disables stale-user cleanup outside of finalization for the
+      # specific PostgresAccess being deleted.
+      staleUserDeletionPolicy: Restrict
+    # Configure RabbitMQ-specific controller behavior.
+    rabbitmq:
+      # Default is Restrict.
+      staleUserDeletionPolicy: Restrict
+      # Default is Retain.
+      staleVhostDeletionPolicy: Retain
+    # Configure Redis-specific controller behavior.
+    redis:
+      # Default is Restrict.
+      staleUserDeletionPolicy: Restrict
