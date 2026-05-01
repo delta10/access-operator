@@ -5,7 +5,7 @@ metadata:
     app.kubernetes.io/name: access-operator
     app.kubernetes.io/managed-by: kustomize
   name: access-operator-settings
-  namespace: access-operator-demo
+  namespace: access-operator-system
 data:
   settings.yaml: |
     # Default is false.

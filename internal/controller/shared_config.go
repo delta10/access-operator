@@ -23,7 +23,7 @@ const (
 	managerAppNameLabelKey        = "app.kubernetes.io/name"
 	managerAppNameLabelValue      = "access-operator"
 
-	defaultManagerDeploymentNamespace = "system"
+	defaultManagerDeploymentNamespace = "access-operator-system"
 )
 
 type SharedConnectionDetails struct {

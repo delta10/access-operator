@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,7 +28,7 @@ var _ = Describe("Shared config logic", func() {
 
 		It("should parse settings from ConfigMap payload", func() {
 			fakeClient := newFakeClientWithScheme(
-				newControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				newControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					ExistingSecretNamespace: true,
 					PostgresSettings: accessv1.PostgresControllerSettings{
 						ExcludedUsers: []string{"postgres"},
@@ -60,7 +59,7 @@ var _ = Describe("Shared config logic", func() {
 				&corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      ControllerSettingsConfigMapName,
-						Namespace: "system",
+						Namespace: "access-operator-system",
 					},
 					Data: map[string]string{
 						ControllerSettingsConfigMapKey: "existingSecretNamespace: [",
@@ -70,7 +69,7 @@ var _ = Describe("Shared config logic", func() {
 
 			_, err := ResolveControllerSettings(context.Background(), fakeClient)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to parse ConfigMap system/access-operator-settings"))
+			Expect(err.Error()).To(ContainSubstring("failed to parse ConfigMap access-operator-system/access-operator-settings"))
 		})
 	})
 
@@ -113,18 +112,6 @@ func newControllerSettingsConfigMap(namespace string, settings accessv1.Controll
 		},
 		Data: map[string]string{
 			ControllerSettingsConfigMapKey: string(rawConfig),
-		},
-	}
-}
-
-func newControllerSettingsConfigMapWithRawData(namespace, rawData string) *corev1.ConfigMap {
-	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ControllerSettingsConfigMapName,
-			Namespace: namespace,
-		},
-		Data: map[string]string{
-			ControllerSettingsConfigMapKey: strings.TrimSpace(rawData),
 		},
 	}
 }

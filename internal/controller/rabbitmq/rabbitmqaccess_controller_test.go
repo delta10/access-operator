@@ -74,7 +74,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 	Context("When resolving excluded RabbitMQ users", func() {
 		It("should normalize excluded usernames from settings ConfigMap", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					RabbitMQSettings: accessv1.RabbitMQControllerSettings{
 						ExcludedUsers: []string{" admin ", "", "ops-user", "admin"},
 					},
@@ -99,7 +99,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 		It("should resolve stale user deletion policy from settings ConfigMap", func() {
 			deletePolicy := accessv1.StaleUserDeletionPolicyDelete
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					RabbitMQSettings: accessv1.RabbitMQControllerSettings{
 						StaleUserDeletionPolicy: &deletePolicy,
 					},
@@ -116,7 +116,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 	Context("When resolving excluded RabbitMQ vhosts", func() {
 		It("should normalize excluded vhosts and always retain the default vhost", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					RabbitMQSettings: accessv1.RabbitMQControllerSettings{
 						ExcludedVhosts: []string{" /shared ", "", "/team-a", "/shared"},
 					},
@@ -431,7 +431,7 @@ var _ = Describe("RabbitMQAccess Controller", func() {
 				},
 			}
 
-			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+			controllerSettings := test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 				RabbitMQSettings: accessv1.RabbitMQControllerSettings{
 					ExcludedUsers: []string{"excluded-user"},
 				},

@@ -240,7 +240,7 @@ var _ = Describe("RedisAccess Controller", func() {
 			secretNamespace := "shared-redis"
 
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					ExistingSecretNamespace: true,
 				}),
 				&corev1.Secret{
@@ -272,7 +272,7 @@ var _ = Describe("RedisAccess Controller", func() {
 
 		It("should normalize excluded usernames from settings ConfigMap", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					RedisSettings: accessv1.RedisControllerSettings{
 						ExcludedUsers: []string{" default ", "", "ops-user", "default"},
 					},
@@ -297,7 +297,7 @@ var _ = Describe("RedisAccess Controller", func() {
 		It("should resolve stale user deletion policy from settings ConfigMap", func() {
 			deletePolicy := accessv1.StaleUserDeletionPolicyDelete
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					RedisSettings: accessv1.RedisControllerSettings{
 						StaleUserDeletionPolicy: &deletePolicy,
 					},
@@ -394,7 +394,7 @@ var _ = Describe("RedisAccess Controller", func() {
 
 			fakeClient, fakeScheme := test.NewFakeClientWithScheme(
 				redisAccess,
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					RedisSettings: accessv1.RedisControllerSettings{
 						ExcludedUsers: []string{"default"},
 					},
@@ -596,7 +596,7 @@ var _ = Describe("RedisAccess Controller", func() {
 					ACLRules: []string{"~cache:*", "+get"},
 				},
 			}
-			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+			controllerSettings := test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 				RedisSettings: accessv1.RedisControllerSettings{
 					StaleUserDeletionPolicy: &deletePolicy,
 				},

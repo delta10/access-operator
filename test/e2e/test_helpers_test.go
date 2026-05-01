@@ -67,6 +67,33 @@ func getReadyConditionField(resourceType string, resource namespacedName, field 
 	return strings.TrimSpace(output), err
 }
 
+func forceDeleteAccessResource(resourceType string, resource namespacedName) {
+	cmd := exec.Command(
+		"kubectl",
+		"patch",
+		resourceType,
+		resource.name,
+		"-n",
+		resource.namespace,
+		"--type=merge",
+		"-p",
+		`{"metadata":{"finalizers":[]}}`,
+	)
+	_, _ = e2eutils.Run(cmd)
+
+	cmd = exec.Command(
+		"kubectl",
+		"delete",
+		resourceType,
+		resource.name,
+		"-n",
+		resource.namespace,
+		"--ignore-not-found",
+		"--wait=false",
+	)
+	_, _ = e2eutils.Run(cmd)
+}
+
 func waitForControllerLogsContain(substrings ...string) {
 	Eventually(func(g Gomega) {
 		controllerPodName = ensureControllerPodName()

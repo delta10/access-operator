@@ -20,14 +20,14 @@ limitations under the License.
 package e2e
 
 import (
-    "fmt"
-    "os/exec"
+	"fmt"
+	"os/exec"
 
-    e2eutils "github.com/delta10/access-operator/test/e2e/utils"
-    . "github.com/onsi/ginkgo/v2"
-    . "github.com/onsi/gomega"
+	e2eutils "github.com/delta10/access-operator/test/e2e/utils"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
-    "github.com/delta10/access-operator/internal/controller"
+	"github.com/delta10/access-operator/internal/controller"
 )
 
 var _ = Describe("Redis", func() {

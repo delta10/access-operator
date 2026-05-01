@@ -20,13 +20,13 @@ limitations under the License.
 package e2e
 
 import (
-    "fmt"
-    "os/exec"
-    "time"
+	"fmt"
+	"os/exec"
+	"time"
 
-    e2eutils "github.com/delta10/access-operator/test/e2e/utils"
-    . "github.com/onsi/ginkgo/v2"
-    . "github.com/onsi/gomega"
+	e2eutils "github.com/delta10/access-operator/test/e2e/utils"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 const namespace = "access-operator-system"

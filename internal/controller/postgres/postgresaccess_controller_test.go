@@ -376,7 +376,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 		It("should reject cross-namespace existingSecret when settings ConfigMap policy is false", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					ExistingSecretNamespace: false,
 				}),
 				&corev1.Secret{
@@ -413,7 +413,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 		It("should allow cross-namespace existingSecret when settings ConfigMap policy is true", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					ExistingSecretNamespace: true,
 				}),
 				&corev1.Secret{
@@ -487,7 +487,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 
 		It("should normalize excluded usernames from settings ConfigMap", func() {
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					PostgresSettings: accessv1.PostgresControllerSettings{
 						ExcludedUsers: []string{" postgres ", "", "app-user", "postgres"},
 					},
@@ -512,7 +512,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 		It("should resolve stale user deletion policy from settings ConfigMap", func() {
 			orphanPolicy := accessv1.CleanupPolicyOrphan
 			fakeClient, _ := test.NewFakeClientWithScheme(
-				test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+				test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 					PostgresSettings: accessv1.PostgresControllerSettings{
 						StaleUserDeletionPolicy: &orphanPolicy,
 					},
@@ -1005,7 +1005,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 				},
 			}
 
-			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+			controllerSettings := test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 				PostgresSettings: accessv1.PostgresControllerSettings{
 					ExcludedUsers: []string{username, "excluded-orphan"},
 				},
@@ -1119,7 +1119,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					},
 				},
 			}
-			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+			controllerSettings := test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 				PostgresSettings: accessv1.PostgresControllerSettings{
 					StaleUserDeletionPolicy: &orphanPolicy,
 				},
@@ -1164,7 +1164,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					},
 				},
 			}
-			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+			controllerSettings := test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 				PostgresSettings: accessv1.PostgresControllerSettings{
 					StaleUserDeletionPolicy: &retainPolicy,
 				},
@@ -1252,7 +1252,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					},
 				},
 			}
-			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+			controllerSettings := test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 				PostgresSettings: accessv1.PostgresControllerSettings{
 					StaleUserDeletionPolicy: &cascadePolicy,
 				},
@@ -1301,7 +1301,7 @@ var _ = Describe("PostgresAccess Controller", func() {
 					},
 				},
 			}
-			controllerSettings := test.NewControllerSettingsConfigMap("system", accessv1.ControllerSettings{
+			controllerSettings := test.NewControllerSettingsConfigMap("access-operator-system", accessv1.ControllerSettings{
 				PostgresSettings: accessv1.PostgresControllerSettings{
 					StaleUserDeletionPolicy: &retainPolicy,
 				},

@@ -495,6 +495,9 @@ data:
 
 			By("verifying the requested database user was not created")
 			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
+
+			By("removing the denied PostgresAccess resource without running its unreachable finalizer")
+			forceDeleteAccessResource("postgresaccess", namespacedName{name: resourceName, namespace: env.namespace})
 		})
 
 		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", func() {
@@ -537,6 +540,9 @@ data:
 
 			By("verifying the requested database user was not created")
 			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
+
+			By("removing the denied PostgresAccess resource without running its unreachable finalizer")
+			forceDeleteAccessResource("postgresaccess", namespacedName{name: resourceName, namespace: env.namespace})
 		})
 
 		It("should create a PostgresAccess resource using an existing connection secret from another namespace", func() {
@@ -621,6 +627,9 @@ data:
 
 			By("verifying the requested database user was not created")
 			e2eutils.WaitForDatabaseUserState(env.backendNamespace, env.conn, resourceName, false)
+
+			By("removing the denied PostgresAccess resource without running its unreachable finalizer")
+			forceDeleteAccessResource("postgresaccess", namespacedName{name: resourceName, namespace: env.namespace})
 		})
 
 		It("should preserve excluded PostgreSQL users from settings ConfigMap", func() {
