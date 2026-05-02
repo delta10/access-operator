@@ -70,19 +70,6 @@ func getReadyConditionField(resourceType string, resource namespacedName, field 
 func forceDeleteAccessResource(resourceType string, resource namespacedName) {
 	cmd := exec.Command(
 		"kubectl",
-		"patch",
-		resourceType,
-		resource.name,
-		"-n",
-		resource.namespace,
-		"--type=merge",
-		"-p",
-		`{"metadata":{"finalizers":[]}}`,
-	)
-	_, _ = e2eutils.Run(cmd)
-
-	cmd = exec.Command(
-		"kubectl",
 		"delete",
 		resourceType,
 		resource.name,
@@ -92,6 +79,99 @@ func forceDeleteAccessResource(resourceType string, resource namespacedName) {
 		"--wait=false",
 	)
 	_, _ = e2eutils.Run(cmd)
+
+	Eventually(func(g Gomega) {
+		cmd = exec.Command(
+			"kubectl",
+			"patch",
+			resourceType,
+			resource.name,
+			"-n",
+			resource.namespace,
+			"--type=merge",
+			"-p",
+			`{"metadata":{"finalizers":null}}`,
+		)
+		_, _ = e2eutils.Run(cmd)
+
+		cmd := exec.Command(
+			"kubectl",
+			"get",
+			resourceType,
+			resource.name,
+			"-n",
+			resource.namespace,
+			"-o",
+			"name",
+			"--ignore-not-found",
+		)
+		output, err := e2eutils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to check forced deletion for %s %s/%s", resourceType, resource.namespace, resource.name)
+		g.Expect(strings.TrimSpace(output)).To(BeEmpty())
+	}, 30*time.Second, time.Second).Should(Succeed())
+}
+
+func forceDeleteAccessResourcesInNamespace(namespace string) {
+	for _, resourceType := range []string{"postgresaccess", "rabbitmqaccess", "redisaccess"} {
+		Eventually(func(g Gomega) {
+			cmd := exec.Command(
+				"kubectl",
+				"get",
+				resourceType,
+				"-n",
+				namespace,
+				"-o",
+				"name",
+				"--ignore-not-found",
+			)
+			output, err := e2eutils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred(), "Failed to list access resources for cleanup for %s in namespace %s", resourceType, namespace)
+
+			resourceNames := strings.Fields(output)
+			if len(resourceNames) == 0 {
+				return
+			}
+
+			for _, resourceName := range resourceNames {
+				cmd = exec.Command(
+					"kubectl",
+					"delete",
+					resourceName,
+					"-n",
+					namespace,
+					"--ignore-not-found",
+					"--wait=false",
+				)
+				_, _ = e2eutils.Run(cmd)
+
+				cmd = exec.Command(
+					"kubectl",
+					"patch",
+					resourceName,
+					"-n",
+					namespace,
+					"--type=merge",
+					"-p",
+					`{"metadata":{"finalizers":null}}`,
+				)
+				_, _ = e2eutils.Run(cmd)
+			}
+
+			cmd = exec.Command(
+				"kubectl",
+				"get",
+				resourceType,
+				"-n",
+				namespace,
+				"-o",
+				"name",
+				"--ignore-not-found",
+			)
+			output, err = e2eutils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred(), "Failed to check access resource cleanup for %s in namespace %s", resourceType, namespace)
+			g.Expect(strings.TrimSpace(output)).To(BeEmpty())
+		}, 30*time.Second, time.Second).Should(Succeed())
+	}
 }
 
 func waitForControllerLogsContain(substrings ...string) {

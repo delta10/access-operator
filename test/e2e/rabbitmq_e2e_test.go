@@ -261,20 +261,21 @@ spec:
 		})
 	})
 
-	Context("Settings ConfigMap policy", Serial, func() {
+	Context("Settings ConfigMap policy", func() {
 		var env rabbitMQSpecEnv
 
 		BeforeEach(func() {
-			clearAllControllerSettingsConfigMaps()
 			env = newRabbitMQSpecEnv()
 		})
 
 		AfterEach(func() {
 			env.cleanup()
-			clearAllControllerSettingsConfigMaps()
 		})
 
-		It("should delete stale RabbitMQ vhosts when settings ConfigMap policy enables deletion", func() {
+		It("should delete stale RabbitMQ vhosts when settings ConfigMap policy enables deletion", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			keeperName := env.name("test-rabbitmq-vhost-keeper")
 			staleName := env.name("test-rabbitmq-vhost-stale")
 			keeperVhost := env.vhost("keeper")
@@ -370,7 +371,10 @@ spec:
 			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
 		})
 
-		It("should preserve excluded RabbitMQ vhosts when stale vhost deletion is enabled", func() {
+		It("should preserve excluded RabbitMQ vhosts when stale vhost deletion is enabled", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			keeperName := env.name("test-rabbitmq-vhost-excluded-keeper")
 			staleName := env.name("test-rabbitmq-vhost-excluded-stale")
 			keeperVhost := env.vhost("keeper-excluded")
@@ -428,7 +432,10 @@ spec:
 			e2eutils.WaitForRabbitMQVhostState(env.backendNamespace, keeperVhost, true)
 		})
 
-		It("should delete stale RabbitMQ users when stale user deletion policy is Delete", func() {
+		It("should delete stale RabbitMQ users when stale user deletion policy is Delete", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			resourceName := env.name("test-rabbitmq-user-cleanup")
 			generatedSecret := env.name("test-rabbitmq-user-cleanup-secret")
 			staleUserDeletePolicy := accessv1.StaleUserDeletionPolicyDelete
@@ -490,7 +497,10 @@ spec:
 			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
 		})
 
-		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", func() {
+		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			resourceName := env.name("test-rabbitmq-cross-namespace-controller-false")
 			generatedSecretName := env.name("test-rabbitmq-cross-namespace-controller-false-secret")
 			connectionSecretNamespace := createTestNamespace("rabbitmq-shared-controller-false")
@@ -525,7 +535,10 @@ spec:
 			e2eutils.WaitForRabbitMQUserState(env.backendNamespace, resourceName, false)
 		})
 
-		It("should create a RabbitMQAccess resource using an existing connection secret from another namespace", func() {
+		It("should create a RabbitMQAccess resource using an existing connection secret from another namespace", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			resourceName := env.name("test-rabbitmq-cross-namespace")
 			generatedSecretName := env.name("test-rabbitmq-cross-namespace-credentials")
 			connectionSecretNamespace := createTestNamespace("rabbitmq-shared")

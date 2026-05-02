@@ -72,6 +72,7 @@ spec:
 		It("should create a PostgresAccess resource and create a database user with the specified privileges on a CNPG instance", func() {
 			testNamespace := createTestNamespace("cnpg-test")
 			DeferCleanup(func() {
+				forceDeleteAccessResourcesInNamespace(testNamespace)
 				deleteNamespace(testNamespace)
 			})
 
@@ -312,6 +313,9 @@ spec:
 		})
 
 		It("should reassign owned objects to the database owner when stale user deletion policy is Orphan", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			managedUsername := env.name("test-orphan-cleanup")
 			generatedSecret := env.name("test-orphan-cleanup-credentials")
 			ownedTable := env.name("orphan-policy-owned-table")
@@ -447,17 +451,15 @@ data:
 		})
 	})
 
-	Context("Settings ConfigMap policy", Serial, func() {
+	Context("Settings ConfigMap policy", func() {
 		var env postgresSpecEnv
 
 		BeforeEach(func() {
-			clearAllControllerSettingsConfigMaps()
 			env = newPostgresSpecEnv()
 		})
 
 		AfterEach(func() {
 			env.cleanup()
-			clearAllControllerSettingsConfigMaps()
 		})
 
 		It("should deny cross-namespace existingSecret when no settings ConfigMap exists", func() {
@@ -500,7 +502,10 @@ data:
 			forceDeleteAccessResource("postgresaccess", namespacedName{name: resourceName, namespace: env.namespace})
 		})
 
-		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", func() {
+		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			resourceName := env.name("test-cross-namespace-controller-false")
 			generatedSecret := env.name("test-cross-namespace-controller-false-secret")
 			connectionSecretNamespace := createTestNamespace("postgres-shared-controller-false")
@@ -545,7 +550,10 @@ data:
 			forceDeleteAccessResource("postgresaccess", namespacedName{name: resourceName, namespace: env.namespace})
 		})
 
-		It("should create a PostgresAccess resource using an existing connection secret from another namespace", func() {
+		It("should create a PostgresAccess resource using an existing connection secret from another namespace", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			resourceName := env.name("test-username-cross-namespace")
 			generatedSecret := env.name("test-postgres-credentials-cross-namespace")
 			connectionSecretNamespace := createTestNamespace("postgres-shared")
@@ -588,10 +596,8 @@ data:
 		It("should deny cross-namespace existingSecret when settings ConfigMap is outside the operator namespace", func() {
 			resourceName := env.name("test-cross-namespace-wrong-controller-namespace")
 			generatedSecret := env.name("test-cross-namespace-wrong-controller-namespace-secret")
-			connectionSecretNamespace := createTestNamespace("postgres-shared-wrong-controller-namespace")
-			DeferCleanup(func() {
-				deleteNamespace(connectionSecretNamespace)
-			})
+			connectionSecretNamespace := env.name("postgres-shared-wrong-controller-namespace")
+			secretName := env.name("missing-connection-secret")
 
 			By("creating settings ConfigMap in workload namespace instead of operator namespace")
 			err := createControllerSettingsConfigMap(env.namespace, `existingSecretNamespace: true`)
@@ -599,10 +605,6 @@ data:
 			DeferCleanup(func() {
 				deleteControllerSettingsConfigMap(env.namespace)
 			})
-
-			By("creating the connection secret in another namespace")
-			secretName, err := e2eutils.CreateConnectionDetailsViaSecret(connectionSecretNamespace, env.conn)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create connection secret in shared namespace")
 
 			By("creating a PostgresAccess that references the shared secret namespace")
 			err = e2eutils.CreateResourceFromSecretReferenceWithNamespace(
@@ -632,7 +634,10 @@ data:
 			forceDeleteAccessResource("postgresaccess", namespacedName{name: resourceName, namespace: env.namespace})
 		})
 
-		It("should preserve excluded PostgreSQL users from settings ConfigMap", func() {
+		It("should preserve excluded PostgreSQL users from settings ConfigMap", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			excludedUsername := env.name("excluded-keeper")
 			managedUsername := env.name("test-managed-user")
 			generatedSecret := env.name("test-excluded-user-secret")
@@ -716,7 +721,10 @@ data:
 			e2eutils.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
-		It("should drop owned objects when stale user deletion policy is Cascade", func() {
+		It("should drop owned objects when stale user deletion policy is Cascade", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			managedUsername := env.name("test-cascade-cleanup")
 			generatedSecret := env.name("test-cascade-cleanup-credentials")
 			ownedTable := env.name("cascade-policy-owned-table")
@@ -769,7 +777,10 @@ data:
 			e2eutils.WaitForTableMissing(env.backendNamespace, env.conn, ownedTable)
 		})
 
-		It("should delete the managed role during finalization when stale user deletion policy is Retain", func() {
+		It("should delete the managed role during finalization when stale user deletion policy is Retain", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			resourceName := env.name("test-retain-finalizer-delete")
 			generatedSecret := env.name("test-retain-finalizer-delete-secret")
 			By("creating a settings ConfigMap with staleUserDeletionPolicy Retain")

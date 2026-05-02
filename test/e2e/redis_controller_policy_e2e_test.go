@@ -14,17 +14,15 @@ import (
 )
 
 var _ = Describe("Redis", func() {
-	Context("Settings ConfigMap policy", Serial, func() {
+	Context("Settings ConfigMap policy", func() {
 		var env redisSpecEnv
 
 		BeforeEach(func() {
-			clearAllControllerSettingsConfigMaps()
 			env = newRedisSpecEnv()
 		})
 
 		AfterEach(func() {
 			env.cleanup()
-			clearAllControllerSettingsConfigMaps()
 		})
 
 		It("should deny cross-namespace existingSecret when no settings ConfigMap exists", func() {
@@ -55,7 +53,10 @@ var _ = Describe("Redis", func() {
 			e2eutils.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, false)
 		})
 
-		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", func() {
+		It("should deny cross-namespace existingSecret when settings ConfigMap setting is false", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			resourceName := env.name("test-redis-cross-namespace-controller-false")
 			generatedSecretName := env.name("test-redis-cross-namespace-controller-false-secret")
 			connectionSecretNamespace := createTestNamespace("redis-shared-controller-false")
@@ -85,7 +86,10 @@ var _ = Describe("Redis", func() {
 			e2eutils.WaitForRedisUserState(env.backendNamespace, env.conn, resourceName, false)
 		})
 
-		It("should create a RedisAccess resource using an existing connection secret from another namespace", func() {
+		It("should create a RedisAccess resource using an existing connection secret from another namespace", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			resourceName := env.name("test-redis-cross-namespace")
 			generatedSecretName := env.name("test-redis-cross-namespace-credentials")
 			connectionSecretNamespace := createTestNamespace("redis-shared")
@@ -114,7 +118,10 @@ var _ = Describe("Redis", func() {
 			e2eutils.WaitForRedisACLRules(env.backendNamespace, env.conn, resourceName, aclRules)
 		})
 
-		It("should preserve excluded Redis ACL users from settings ConfigMap", func() {
+		It("should preserve excluded Redis ACL users from settings ConfigMap", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			excludedUsername := env.name("excluded-keeper")
 			managedUsername := env.name("test-redis-managed-user")
 			generatedSecret := env.name("test-redis-managed-secret")
@@ -172,7 +179,10 @@ var _ = Describe("Redis", func() {
 			e2eutils.WaitForSecretDeleted(env.namespace, generatedSecret)
 		})
 
-		It("should delete stale Redis users when stale user deletion policy is Delete", func() {
+		It("should delete stale Redis users when stale user deletion policy is Delete", Serial, func() {
+			clearAllControllerSettingsConfigMaps()
+			DeferCleanup(clearAllControllerSettingsConfigMaps)
+
 			resourceName := env.name("test-redis-delete-stale-user")
 			generatedSecret := env.name("test-redis-delete-stale-user-secret")
 			deletePolicy := accessv1.StaleUserDeletionPolicyDelete

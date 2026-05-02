@@ -163,7 +163,7 @@ func ensurePostgresWorkerBackend() (string, controller.ConnectionDetails) {
 				"deployment/postgres",
 				"-n",
 				backendNamespace,
-				"--timeout=2m",
+				"--timeout=5m",
 			)
 			_, err := e2eutils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "PostgreSQL backend deployment should become available")
@@ -235,6 +235,7 @@ func newSpecEnv(prefix string, ensureBackend func() (string, controller.Connecti
 }
 
 func (e specEnv) cleanup() {
+	forceDeleteAccessResourcesInNamespace(e.namespace)
 	deleteNamespace(e.namespace)
 }
 

@@ -98,6 +98,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	By("deploying the controller-manager")
 	_, err = e2eutils.RunCommandWithTimeout(5*time.Minute, "make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+	By("removing any stale controller settings before parallel specs start")
+	clearAllControllerSettingsConfigMaps()
 	return nil
 }, func(_ []byte) {
 	SetDefaultEventuallyTimeout(2 * time.Minute)
