@@ -11,7 +11,8 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	"github.com/delta10/access-operator/test/utils"
+	operatorcontroller "github.com/delta10/access-operator/internal/controller"
+	e2eutils "github.com/delta10/access-operator/test/e2e/utils"
 )
 
 type namespacedName struct {
@@ -62,15 +63,122 @@ func getReadyConditionField(resourceType string, resource namespacedName, field 
 		"-o",
 		fmt.Sprintf("jsonpath={.status.conditions[?(@.type=='Ready')].%s}", field),
 	)
-	output, err := utils.Run(cmd)
+	output, err := e2eutils.Run(cmd)
 	return strings.TrimSpace(output), err
+}
+
+func forceDeleteAccessResource(resourceType string, resource namespacedName) {
+	cmd := exec.Command(
+		"kubectl",
+		"delete",
+		resourceType,
+		resource.name,
+		"-n",
+		resource.namespace,
+		"--ignore-not-found",
+		"--wait=false",
+	)
+	_, _ = e2eutils.Run(cmd)
+
+	Eventually(func(g Gomega) {
+		cmd = exec.Command(
+			"kubectl",
+			"patch",
+			resourceType,
+			resource.name,
+			"-n",
+			resource.namespace,
+			"--type=merge",
+			"-p",
+			`{"metadata":{"finalizers":null}}`,
+		)
+		_, _ = e2eutils.Run(cmd)
+
+		cmd := exec.Command(
+			"kubectl",
+			"get",
+			resourceType,
+			resource.name,
+			"-n",
+			resource.namespace,
+			"-o",
+			"name",
+			"--ignore-not-found",
+		)
+		output, err := e2eutils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to check forced deletion for %s %s/%s", resourceType, resource.namespace, resource.name)
+		g.Expect(strings.TrimSpace(output)).To(BeEmpty())
+	}, 30*time.Second, time.Second).Should(Succeed())
+}
+
+func forceDeleteAccessResourcesInNamespace(namespace string) {
+	for _, resourceType := range []string{"postgresaccess", "rabbitmqaccess", "redisaccess"} {
+		Eventually(func(g Gomega) {
+			cmd := exec.Command(
+				"kubectl",
+				"get",
+				resourceType,
+				"-n",
+				namespace,
+				"-o",
+				"name",
+				"--ignore-not-found",
+			)
+			output, err := e2eutils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred(), "Failed to list access resources for cleanup for %s in namespace %s", resourceType, namespace)
+
+			resourceNames := strings.Fields(output)
+			if len(resourceNames) == 0 {
+				return
+			}
+
+			for _, resourceName := range resourceNames {
+				cmd = exec.Command(
+					"kubectl",
+					"delete",
+					resourceName,
+					"-n",
+					namespace,
+					"--ignore-not-found",
+					"--wait=false",
+				)
+				_, _ = e2eutils.Run(cmd)
+
+				cmd = exec.Command(
+					"kubectl",
+					"patch",
+					resourceName,
+					"-n",
+					namespace,
+					"--type=merge",
+					"-p",
+					`{"metadata":{"finalizers":null}}`,
+				)
+				_, _ = e2eutils.Run(cmd)
+			}
+
+			cmd = exec.Command(
+				"kubectl",
+				"get",
+				resourceType,
+				"-n",
+				namespace,
+				"-o",
+				"name",
+				"--ignore-not-found",
+			)
+			output, err = e2eutils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred(), "Failed to check access resource cleanup for %s in namespace %s", resourceType, namespace)
+			g.Expect(strings.TrimSpace(output)).To(BeEmpty())
+		}, 30*time.Second, time.Second).Should(Succeed())
+	}
 }
 
 func waitForControllerLogsContain(substrings ...string) {
 	Eventually(func(g Gomega) {
 		controllerPodName = ensureControllerPodName()
 		cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace, "--since=10m")
-		output, err := utils.Run(cmd)
+		output, err := e2eutils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to read controller logs")
 		for _, substring := range substrings {
 			g.Expect(output).To(ContainSubstring(substring))
@@ -78,32 +186,51 @@ func waitForControllerLogsContain(substrings ...string) {
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 }
 
-func createControllerResource(name, namespace, settingsYAML string) error {
+func createControllerSettingsConfigMap(namespace, settingsYAML string) error {
 	settingsYAML = strings.TrimSpace(settingsYAML)
 	if settingsYAML == "" {
 		return fmt.Errorf("controller settings YAML cannot be empty")
 	}
 
-	manifest := fmt.Sprintf(`apiVersion: access.k8s.delta10.nl/v1
-kind: Controller
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
 metadata:
   name: %s
   namespace: %s
-spec:
-  settings:
+data:
+  %s: |
 %s
-`, name, namespace, indentYAMLBlock(settingsYAML, "    "))
+`, operatorcontroller.ControllerSettingsConfigMapName, namespace, operatorcontroller.ControllerSettingsConfigMapKey, indentYAMLBlock(settingsYAML, "        "))
 
-	return utils.ApplyManifest(manifest)
+	return e2eutils.ApplyManifest(manifest)
 }
 
-func deleteControllerResource(name, namespace string) {
-	cmd := exec.Command("kubectl", "delete", "controller", name, "-n", namespace, "--ignore-not-found", "--wait=false")
-	_, _ = utils.Run(cmd)
+func deleteControllerSettingsConfigMap(namespace string) {
+	cmd := exec.Command(
+		"kubectl",
+		"delete",
+		"configmap",
+		operatorcontroller.ControllerSettingsConfigMapName,
+		"-n",
+		namespace,
+		"--ignore-not-found",
+		"--wait=false",
+	)
+	_, _ = e2eutils.Run(cmd)
 
 	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "controller", name, "-n", namespace, "-o", "name", "--ignore-not-found")
-		output, err := utils.Run(cmd)
+		cmd := exec.Command(
+			"kubectl",
+			"get",
+			"configmap",
+			"-n",
+			namespace,
+			operatorcontroller.ControllerSettingsConfigMapName,
+			"-o",
+			"name",
+			"--ignore-not-found",
+		)
+		output, err := e2eutils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(strings.TrimSpace(output)).To(BeEmpty())
 	}, 30*time.Second, time.Second).Should(Succeed())
@@ -121,36 +248,17 @@ func waitForResourceWarningEvent(resource namespacedName, kind, reason string) {
 			fmt.Sprintf("involvedObject.kind=%s,involvedObject.name=%s,reason=%s", kind, resource.name, reason),
 			"--no-headers",
 		)
-		output, err := utils.Run(cmd)
+		output, err := e2eutils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(strings.TrimSpace(output)).NotTo(BeEmpty())
 	}, 2*time.Minute, 5*time.Second).Should(Succeed())
 }
 
-func waitForControllerResourcesReadyCondition(resources []namespacedName, expectation readyConditionExpectation) {
+func waitForNoControllerSettingsConfigMaps() {
 	Eventually(func(g Gomega) {
-		for _, resource := range resources {
-			if expectation.status != "" {
-				status, err := getReadyConditionField("controller", resource, "status")
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(status).To(Equal(expectation.status))
-			}
-
-			if expectation.reason != "" {
-				reason, err := getReadyConditionField("controller", resource, "reason")
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(reason).To(Equal(expectation.reason))
-			}
-		}
-	}, 2*time.Minute, 5*time.Second).Should(Succeed())
-}
-
-func waitForNoControllers() {
-	Eventually(func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "controller", "-A", "-o", "name", "--ignore-not-found")
-		output, err := utils.Run(cmd)
+		configMaps, err := listControllerSettingsConfigMaps()
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(strings.TrimSpace(output)).To(BeEmpty())
+		g.Expect(configMaps).To(BeEmpty())
 	}, 30*time.Second, time.Second).Should(Succeed())
 }
 
@@ -160,4 +268,42 @@ func indentYAMLBlock(block, indent string) string {
 		lines[i] = indent + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+func listControllerSettingsConfigMaps() ([]namespacedName, error) {
+	cmd := exec.Command(
+		"kubectl",
+		"get",
+		"configmap",
+		"-A",
+		"--field-selector",
+		fmt.Sprintf("metadata.name=%s", operatorcontroller.ControllerSettingsConfigMapName),
+		"-o",
+		`jsonpath={range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\n"}{end}`,
+	)
+	output, err := e2eutils.Run(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	trimmedOutput := strings.TrimSpace(output)
+	if trimmedOutput == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(trimmedOutput, "\n")
+	configMaps := make([]namespacedName, 0, len(lines))
+	for _, line := range lines {
+		fields := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("unexpected configmap listing output %q", line)
+		}
+
+		configMaps = append(configMaps, namespacedName{
+			namespace: fields[0],
+			name:      fields[1],
+		})
+	}
+
+	return configMaps, nil
 }

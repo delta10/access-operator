@@ -1,4 +1,4 @@
-package rabbitMQ
+package rabbitmq
 
 import (
 	accessv1 "github.com/delta10/access-operator/api/v1"

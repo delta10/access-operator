@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	"github.com/delta10/access-operator/internal/controller"
@@ -61,14 +60,8 @@ func (r *PostgresAccessReconciler) resolveExistingSecretNamespace(ctx context.Co
 		r.Client,
 		pg.Namespace,
 		pg.Spec.Connection.ExistingSecretNamespace,
-		func(controllerObj *accessv1.Controller, message string) {
-			r.emitEvent(controllerObj, "Warning", controller.MultipleControllersFoundReason, message)
-		},
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "multiple Controller resources found") {
-			r.emitEvent(pg, "Warning", controller.MultipleControllersFoundReason, err.Error())
-		}
 		return "", err
 	}
 
@@ -82,6 +75,23 @@ func (r *PostgresAccessReconciler) resolveExcludedUsers(ctx context.Context) (ma
 	}
 
 	return controller.NormalizeExcludedUsers(settings.PostgresSettings.ExcludedUsers), nil
+}
+
+func (r *PostgresAccessReconciler) resolveStaleUserDeletionPolicy(ctx context.Context) (accessv1.PostgresCleanupPolicy, error) {
+	if r.Client == nil {
+		return accessv1.CleanupPolicyRestrict, nil
+	}
+
+	settings, err := resolvePostgresControllerSettings(ctx, r)
+	if err != nil {
+		return "", err
+	}
+
+	if settings.PostgresSettings.StaleUserDeletionPolicy == nil {
+		return accessv1.CleanupPolicyRestrict, nil
+	}
+
+	return *settings.PostgresSettings.StaleUserDeletionPolicy, nil
 }
 
 func formatConnectionString(connection controller.ConnectionDetails) string {

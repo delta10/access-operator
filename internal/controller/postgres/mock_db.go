@@ -16,6 +16,7 @@ type MockDB struct {
 	LastUsername          string
 	LastCreatedUsername   string
 	LastDroppedUsername   string
+	LastDropCleanupPolicy accessv1.PostgresCleanupPolicy
 	CreatedUsernames      []string
 	DroppedUsernames      []string
 	LastPassword          string
@@ -56,9 +57,10 @@ func (m *MockDB) UpdateUserPassword(ctx context.Context, username, newPassword s
 	return nil
 }
 
-func (m *MockDB) DropUser(ctx context.Context, username string, cleanupPolicy accessv1.CleanupPolicy) error {
+func (m *MockDB) DropUser(ctx context.Context, username string, cleanupPolicy accessv1.PostgresCleanupPolicy) error {
 	m.DropUserCalled = true
 	m.LastDroppedUsername = username
+	m.LastDropCleanupPolicy = cleanupPolicy
 	m.DroppedUsernames = append(m.DroppedUsernames, username)
 	return nil
 }

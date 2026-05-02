@@ -1,19 +1,33 @@
-apiVersion: access.k8s.delta10.nl/v1
-kind: Controller
+apiVersion: v1
+kind: ConfigMap
 metadata:
   labels:
     app.kubernetes.io/name: access-operator
     app.kubernetes.io/managed-by: kustomize
-  name: controller-sample
+  name: access-operator-settings
   namespace: access-operator-system
-spec:
-  settings:
+data:
+  settings.yaml: |
     # Default is false.
     # Set to true to allow PostgresAccess connection.existingSecretNamespace
     # to reference a Secret in a different namespace.
-    # This Controller resource must live in the operator namespace.
     existingSecretNamespace: false
     # Configure PostgreSQL-specific controller behavior.
     postgres:
-       excludedUsers:
-         - postgres
+      excludedUsers:
+        - postgres
+      # Default is Restrict.
+      # Controls whether stale PostgreSQL roles are deleted or retained.
+      # Retain disables stale-user cleanup outside of finalization for the
+      # specific PostgresAccess being deleted.
+      staleUserDeletionPolicy: Restrict
+    # Configure RabbitMQ-specific controller behavior.
+    rabbitmq:
+      # Default is Restrict.
+      staleUserDeletionPolicy: Restrict
+      # Default is Retain.
+      staleVhostDeletionPolicy: Retain
+    # Configure Redis-specific controller behavior.
+    redis:
+      # Default is Restrict.
+      staleUserDeletionPolicy: Restrict

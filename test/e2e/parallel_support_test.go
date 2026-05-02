@@ -12,10 +12,9 @@ import (
 	"time"
 
 	"github.com/delta10/access-operator/internal/controller"
+	e2eutils "github.com/delta10/access-operator/test/e2e/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/delta10/access-operator/test/utils"
 )
 
 type sharedBackend struct {
@@ -70,11 +69,11 @@ metadata:
   name: %s
 `, name)
 
-	Expect(utils.ApplyManifest(manifest)).To(Succeed(), "Failed to create namespace %s", name)
+	Expect(e2eutils.ApplyManifest(manifest)).To(Succeed(), "Failed to create namespace %s", name)
 
 	Eventually(func(g Gomega) {
 		cmd := exec.Command("kubectl", "get", "ns", name, "-o", "jsonpath={.status.phase}")
-		output, err := utils.Run(cmd)
+		output, err := e2eutils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to get namespace %s", name)
 		g.Expect(output).To(Equal("Active"))
 	}, 30*time.Second, time.Second).Should(Succeed())
@@ -88,22 +87,38 @@ func createTestNamespace(prefix string) string {
 
 func deleteNamespace(name string) {
 	cmd := exec.Command("kubectl", "delete", "ns", name, "--ignore-not-found", "--wait=false")
-	_, _ = utils.Run(cmd)
+	_, _ = e2eutils.Run(cmd)
 }
 
 func waitForNamespaceDeleted(name string) {
 	Eventually(func(g Gomega) {
 		cmd := exec.Command("kubectl", "get", "ns", name, "-o", "name", "--ignore-not-found")
-		output, err := utils.Run(cmd)
+		output, err := e2eutils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to check namespace %s", name)
 		g.Expect(output).To(BeEmpty())
 	}, 2*time.Minute, 2*time.Second).Should(Succeed())
 }
 
-func clearAllControllers() {
-	cmd := exec.Command("kubectl", "delete", "controller", "--all", "-A", "--ignore-not-found", "--wait=false")
-	_, _ = utils.Run(cmd)
-	waitForNoControllers()
+func clearAllControllerSettingsConfigMaps() {
+	configMaps, err := listControllerSettingsConfigMaps()
+	Expect(err).NotTo(HaveOccurred(), "Failed to list settings ConfigMaps")
+
+	for _, configMap := range configMaps {
+		cmd := exec.Command(
+			"kubectl",
+			"delete",
+			"configmap",
+			configMap.name,
+			"-n",
+			configMap.namespace,
+			"--ignore-not-found",
+			"--wait=false",
+		)
+		_, err = e2eutils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to delete settings ConfigMap %s/%s", configMap.namespace, configMap.name)
+	}
+
+	waitForNoControllerSettingsConfigMaps()
 }
 
 func ensureWorkerBackend(
@@ -136,9 +151,9 @@ func ensurePostgresWorkerBackend() (string, controller.ConnectionDetails) {
 		&postgresBackendOnce,
 		&postgresBackend,
 		"postgres-backend",
-		utils.DatabaseConnectionDetailsForNamespace,
+		e2eutils.DatabaseConnectionDetailsForNamespace,
 		func(backendNamespace string, conn controller.ConnectionDetails) {
-			Expect(utils.DeployPostgresInstance(backendNamespace, conn)).To(Succeed(),
+			Expect(e2eutils.DeployPostgresInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared PostgreSQL backend")
 
 			cmd := exec.Command(
@@ -148,18 +163,18 @@ func ensurePostgresWorkerBackend() (string, controller.ConnectionDetails) {
 				"deployment/postgres",
 				"-n",
 				backendNamespace,
-				"--timeout=2m",
+				"--timeout=5m",
 			)
-			_, err := utils.Run(cmd)
+			_, err := e2eutils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "PostgreSQL backend deployment should become available")
 
 			Eventually(func(g Gomega) {
-				output, queryErr := utils.RunPostgresQuery(backendNamespace, conn, "SELECT 1;")
+				output, queryErr := e2eutils.RunPostgresQuery(backendNamespace, conn, "SELECT 1;")
 				g.Expect(queryErr).NotTo(HaveOccurred(), "Shared PostgreSQL backend should accept connections")
 				g.Expect(output).To(Equal("1"))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-			_, err = utils.RunPostgresQuery(
+			_, err = e2eutils.RunPostgresQuery(
 				backendNamespace,
 				conn,
 				"CREATE TABLE IF NOT EXISTS public.access_operator_test(id SERIAL PRIMARY KEY, value TEXT);",
@@ -174,11 +189,11 @@ func ensureRabbitMQWorkerBackend() (string, controller.ConnectionDetails) {
 		&rabbitMQBackendOnce,
 		&rabbitMQBackend,
 		"rabbitmq-backend",
-		utils.RabbitMQConnectionDetailsForNamespace,
+		e2eutils.RabbitMQConnectionDetailsForNamespace,
 		func(backendNamespace string, conn controller.ConnectionDetails) {
-			Expect(utils.DeployRabbitMQInstance(backendNamespace, conn)).To(Succeed(),
+			Expect(e2eutils.DeployRabbitMQInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared RabbitMQ backend")
-			utils.WaitForRabbitMQReady(backendNamespace)
+			e2eutils.WaitForRabbitMQReady(backendNamespace)
 		},
 	)
 }
@@ -188,11 +203,11 @@ func ensureRedisWorkerBackend() (string, controller.ConnectionDetails) {
 		&redisBackendOnce,
 		&redisBackend,
 		"redis-backend",
-		utils.RedisConnectionDetailsForNamespace,
+		e2eutils.RedisConnectionDetailsForNamespace,
 		func(backendNamespace string, conn controller.ConnectionDetails) {
-			Expect(utils.DeployRedisInstance(backendNamespace, conn)).To(Succeed(),
+			Expect(e2eutils.DeployRedisInstance(backendNamespace, conn)).To(Succeed(),
 				"Failed to deploy shared Redis backend")
-			utils.WaitForRedisReady(backendNamespace, conn)
+			e2eutils.WaitForRedisReady(backendNamespace, conn)
 		},
 	)
 }
@@ -220,6 +235,7 @@ func newSpecEnv(prefix string, ensureBackend func() (string, controller.Connecti
 }
 
 func (e specEnv) cleanup() {
+	forceDeleteAccessResourcesInNamespace(e.namespace)
 	deleteNamespace(e.namespace)
 }
 

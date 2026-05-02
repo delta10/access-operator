@@ -22,7 +22,7 @@ import (
 	"os"
 
 	"github.com/delta10/access-operator/internal/controller/postgres"
-	"github.com/delta10/access-operator/internal/controller/rabbitMQ"
+	"github.com/delta10/access-operator/internal/controller/rabbitmq"
 	rediscontroller "github.com/delta10/access-operator/internal/controller/redis"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -40,7 +40,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
-	"github.com/delta10/access-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -182,15 +181,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.ControllerReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("controller-controller"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Controller")
-		os.Exit(1)
-	}
-
 	if err := (&postgres.PostgresAccessReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
@@ -199,7 +189,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "PostgresAccess")
 		os.Exit(1)
 	}
-	if err := (&rabbitMQ.AccessReconciler{
+	if err := (&rabbitmq.AccessReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("rabbitmqaccess-controller"),

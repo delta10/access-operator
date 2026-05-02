@@ -58,8 +58,8 @@ type ConnectionSpec struct {
 
 	// existingSecretNamespace is the namespace where existingSecret is stored.
 	// If omitted, defaults to the PostgresAccess namespace.
-	// Cross-namespace secret references are rejected unless a single Controller
-	// resource exists with spec.settings.existingSecretNamespace=true.
+	// Cross-namespace secret references are rejected unless the operator settings
+	// ConfigMap enables existingSecretNamespace=true.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	ExistingSecretNamespace *string `json:"existingSecretNamespace,omitempty"`
@@ -100,17 +100,20 @@ type ConnectionSpec struct {
 	SSLMode *string `json:"sslMode,omitempty"`
 }
 
-// CleanupPolicy specifies how to handle owned objects when dropping a user
-// +kubebuilder:validation:Enum=Cascade;Restrict;Orphan
-type CleanupPolicy string
+// PostgresCleanupPolicy specifies how the controller handles PostgreSQL role deletion.
+// +kubebuilder:validation:Enum=Cascade;Restrict;Orphan;Retain
+type PostgresCleanupPolicy string
 
 const (
-	// CleanupPolicyCascade drops all objects owned by the user (destructive)
-	CleanupPolicyCascade CleanupPolicy = "Cascade"
-	// CleanupPolicyRestrict prevents dropping the user if they own any objects
-	CleanupPolicyRestrict CleanupPolicy = "Restrict"
-	// CleanupPolicyOrphan reassigns owned objects to the current database owner before dropping
-	CleanupPolicyOrphan CleanupPolicy = "Orphan"
+	// CleanupPolicyCascade drops all objects owned by the user (destructive).
+	CleanupPolicyCascade PostgresCleanupPolicy = "Cascade"
+	// CleanupPolicyRestrict prevents dropping the user if they own any objects.
+	CleanupPolicyRestrict PostgresCleanupPolicy = "Restrict"
+	// CleanupPolicyOrphan reassigns owned objects to the current database owner before dropping.
+	CleanupPolicyOrphan PostgresCleanupPolicy = "Orphan"
+	// CleanupPolicyRetain retains stale roles during steady-state reconciliation and
+	// only allows deletion during finalization of the specific PostgresAccess.
+	CleanupPolicyRetain PostgresCleanupPolicy = "Retain"
 )
 
 // GrantSpec defines database grants to be applied
@@ -154,14 +157,6 @@ type PostgresAccessSpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=1
 	Grants []GrantSpec `json:"grants"`
-
-	// cleanupPolicy specifies how to handle owned objects when dropping a user
-	// Cascade: drops all objects owned by the user (destructive)
-	// Restrict: prevents dropping the user if they own any objects (safe default)
-	// Orphan: reassigns owned objects to the current database owner before dropping
-	// +optional
-	// +kubebuilder:default="Restrict"
-	CleanupPolicy *CleanupPolicy `json:"cleanupPolicy,omitempty"`
 }
 
 // ReconcileState defines the most recent reconcile outcome.

@@ -27,12 +27,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // PostgresAccessReconciler reconciles a PostgresAccess object
@@ -63,10 +67,10 @@ func postgresReconcileStatusConfig() controller.ReconcileStatusConfig[*accessv1.
 }
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=postgresaccesses/finalizers,verbs=update
-// +kubebuilder:rbac:groups=access.k8s.delta10.nl,resources=controllers,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
@@ -152,6 +156,10 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	if err != nil {
 		return false, err
 	}
+	staleUserDeletionPolicy, err := r.resolveStaleUserDeletionPolicy(ctx)
+	if err != nil {
+		return false, err
+	}
 
 	usersHandled := make(map[string]bool)
 	for username := range excludedUsers {
@@ -215,14 +223,15 @@ func (r *PostgresAccessReconciler) reconcilePostgresAccess(ctx context.Context, 
 	}
 
 	// remove users that are not handled by any PostgresAccess CR anymore
-	// Use Restrict policy as the safe default for orphaned users
-	for _, user := range users {
-		if !usersHandled[user] {
-			err = r.DB.DropUser(ctx, user, accessv1.CleanupPolicyRestrict)
-			if err != nil {
-				log.Error(err, "failed to drop user in PostgreSQL", "username", user)
-				inSync = false
-				continue
+	if shouldDeleteStalePostgresUsers(staleUserDeletionPolicy) {
+		for _, user := range users {
+			if !usersHandled[user] {
+				err = r.DB.DropUser(ctx, user, staleUserDeletionPolicy)
+				if err != nil {
+					log.Error(err, "failed to drop user in PostgreSQL", "username", user)
+					inSync = false
+					continue
+				}
 			}
 		}
 	}
@@ -282,20 +291,23 @@ func (r *PostgresAccessReconciler) finalizePostgresAccess(ctx context.Context, p
 		return true, err
 	}
 
-	// Determine cleanup policy, default to Restrict if not specified
-	cleanupPolicy := accessv1.CleanupPolicyRestrict
-	if pg.Spec.CleanupPolicy != nil {
-		cleanupPolicy = *pg.Spec.CleanupPolicy
+	staleUserDeletionPolicy, err := r.resolveStaleUserDeletionPolicy(ctx)
+	if err != nil {
+		return true, err
 	}
 
-	for _, user := range users {
-		if pg.Spec.Username == user {
-			err = r.DB.DropUser(ctx, user, cleanupPolicy)
-			if err != nil {
-				log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
-				continue
+	if finalizationPolicy, shouldDelete := postgresFinalizationCleanupPolicy(staleUserDeletionPolicy); shouldDelete {
+		for _, user := range users {
+			if pg.Spec.Username == user {
+				err = r.DB.DropUser(ctx, user, finalizationPolicy)
+				if err != nil {
+					log.Error(err, "failed to drop user in PostgreSQL during finalization", "username", user)
+					continue
+				}
 			}
 		}
+	} else {
+		log.Info("Skipping finalizer PostgreSQL user deletion because stale user deletion policy disables it", "username", pg.Spec.Username)
 	}
 
 	if err := controller.RemoveAccessFinalizerIfPresent(ctx, r.Client, pg); err != nil {
@@ -311,7 +323,49 @@ func (r *PostgresAccessReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&accessv1.PostgresAccess{}).
 		Named("postgresaccess").
 		Owns(&corev1.Secret{}).
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+				if !controller.IsControllerSettingsConfigMap(obj) {
+					return nil
+				}
+
+				var accesses accessv1.PostgresAccessList
+				if err := r.List(ctx, &accesses); err != nil {
+					return nil
+				}
+
+				requests := make([]reconcile.Request, 0, len(accesses.Items))
+				for i := range accesses.Items {
+					requests = append(requests, reconcile.Request{
+						NamespacedName: client.ObjectKeyFromObject(&accesses.Items[i]),
+					})
+				}
+
+				return requests
+			}),
+			builder.WithPredicates(predicate.NewPredicateFuncs(controller.IsControllerSettingsConfigMap)),
+		).
 		Complete(r)
+}
+
+func shouldDeleteStalePostgresUsers(policy accessv1.PostgresCleanupPolicy) bool {
+	return policy != accessv1.CleanupPolicyRestrict && policy != accessv1.CleanupPolicyRetain
+}
+
+func postgresFinalizationCleanupPolicy(
+	policy accessv1.PostgresCleanupPolicy,
+) (accessv1.PostgresCleanupPolicy, bool) {
+	switch policy {
+	case accessv1.CleanupPolicyCascade, accessv1.CleanupPolicyOrphan:
+		return policy, true
+	case accessv1.CleanupPolicyRetain:
+		// Retain disables background cleanup but still allows deleting the
+		// specific managed role during finalization using safe Restrict semantics.
+		return accessv1.CleanupPolicyRestrict, true
+	default:
+		return "", false
+	}
 }
 
 func (r *PostgresAccessReconciler) emitEvent(object client.Object, eventType, reason, message string) {
@@ -368,7 +422,5 @@ func getUserPassword(ctx context.Context, c client.Client, namespace, secretName
 }
 
 func resolvePostgresControllerSettings(ctx context.Context, r *PostgresAccessReconciler) (accessv1.ControllerSettings, error) {
-	return controller.ResolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
-		r.emitEvent(controllerObj, "Warning", controller.MultipleControllersFoundReason, message)
-	})
+	return controller.ResolveControllerSettings(ctx, r.Client)
 }

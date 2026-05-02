@@ -7,10 +7,24 @@ import (
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 )
 
-type SharedControllerMultipleHandler func(*accessv1.Controller, string)
+const (
+	ControllerSettingsConfigMapName = "access-operator-settings"
+	ControllerSettingsConfigMapKey  = "settings.yaml"
+
+	managerControlPlaneLabelKey   = "control-plane"
+	managerControlPlaneLabelValue = "controller-manager"
+	managerAppNameLabelKey        = "app.kubernetes.io/name"
+	managerAppNameLabelValue      = "access-operator"
+
+	defaultManagerDeploymentNamespace = "access-operator-system"
+)
 
 type SharedConnectionDetails struct {
 	Username string
@@ -67,7 +81,6 @@ func ResolveConnectionSecretNamespace(
 	c client.Client,
 	resourceNamespace string,
 	requestedNamespace *string,
-	onMultiple SharedControllerMultipleHandler,
 ) (string, error) {
 	secretNamespace := resourceNamespace
 	if requestedNamespace == nil {
@@ -83,7 +96,7 @@ func ResolveConnectionSecretNamespace(
 		return requested, nil
 	}
 
-	allowed, err := resolveExistingSecretNamespacePolicy(ctx, c, onMultiple)
+	allowed, err := resolveExistingSecretNamespacePolicy(ctx, c)
 	if err != nil {
 		return "", err
 	}
@@ -100,17 +113,42 @@ func ResolveConnectionSecretNamespace(
 func ResolveControllerSettings(
 	ctx context.Context,
 	c client.Client,
-	onMultiple SharedControllerMultipleHandler,
 ) (accessv1.ControllerSettings, error) {
-	controllerObj, err := resolveSingletonController(ctx, c, onMultiple)
+	operatorNamespace, err := resolveOperatorNamespace(ctx, c)
 	if err != nil {
 		return accessv1.ControllerSettings{}, err
 	}
-	if controllerObj == nil {
+
+	configMapKey := types.NamespacedName{
+		Name:      ControllerSettingsConfigMapName,
+		Namespace: operatorNamespace,
+	}
+
+	var configMap corev1.ConfigMap
+	if err := c.Get(ctx, configMapKey, &configMap); err != nil {
+		if apierrors.IsNotFound(err) {
+			return accessv1.ControllerSettings{}, nil
+		}
+		return accessv1.ControllerSettings{}, err
+	}
+
+	rawSettings := strings.TrimSpace(configMap.Data[ControllerSettingsConfigMapKey])
+	if rawSettings == "" {
 		return accessv1.ControllerSettings{}, nil
 	}
 
-	return controllerObj.Spec.Settings, nil
+	var settings accessv1.ControllerSettings
+	if err := yaml.Unmarshal([]byte(rawSettings), &settings); err != nil {
+		return accessv1.ControllerSettings{}, fmt.Errorf(
+			"failed to parse ConfigMap %s/%s data[%q]: %w",
+			configMap.Namespace,
+			configMap.Name,
+			ControllerSettingsConfigMapKey,
+			err,
+		)
+	}
+
+	return settings, nil
 }
 
 func ListManagerDeployments(ctx context.Context, c client.Client) ([]appsv1.Deployment, error) {
@@ -140,4 +178,8 @@ func NormalizeExcludedUsers(users []string) map[string]struct{} {
 	}
 
 	return normalized
+}
+
+func IsControllerSettingsConfigMap(obj client.Object) bool {
+	return obj != nil && obj.GetName() == ControllerSettingsConfigMapName
 }

@@ -3,11 +3,9 @@ package redis
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	"github.com/delta10/access-operator/internal/controller"
-	corev1 "k8s.io/api/core/v1"
 )
 
 var connectionDefaults = accessv1.ConnectionSpec{}
@@ -54,14 +52,8 @@ func (r *RedisAccessReconciler) resolveExistingSecretNamespace(
 		r.Client,
 		redisAccess.Namespace,
 		redisAccess.Spec.Connection.ExistingSecretNamespace,
-		func(controllerObj *accessv1.Controller, message string) {
-			controller.EmitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, controller.MultipleControllersFoundReason, message)
-		},
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "multiple Controller resources found") {
-			controller.EmitEvent(r.Recorder, redisAccess, corev1.EventTypeWarning, controller.MultipleControllersFoundReason, err.Error())
-		}
 		return "", err
 	}
 
@@ -77,8 +69,23 @@ func (r *RedisAccessReconciler) resolveExcludedUsers(ctx context.Context) (map[s
 	return controller.NormalizeExcludedUsers(settings.RedisSettings.ExcludedUsers), nil
 }
 
+func (r *RedisAccessReconciler) resolveStaleUserDeletionPolicy(ctx context.Context) (accessv1.StaleUserDeletionPolicy, error) {
+	if r.Client == nil {
+		return accessv1.StaleUserDeletionPolicyRestrict, nil
+	}
+
+	settings, err := resolveRedisControllerSettings(ctx, r)
+	if err != nil {
+		return "", err
+	}
+
+	if settings.RedisSettings.StaleUserDeletionPolicy == nil {
+		return accessv1.StaleUserDeletionPolicyRestrict, nil
+	}
+
+	return *settings.RedisSettings.StaleUserDeletionPolicy, nil
+}
+
 func resolveRedisControllerSettings(ctx context.Context, r *RedisAccessReconciler) (accessv1.ControllerSettings, error) {
-	return controller.ResolveControllerSettings(ctx, r.Client, func(controllerObj *accessv1.Controller, message string) {
-		controller.EmitEvent(r.Recorder, controllerObj, corev1.EventTypeWarning, controller.MultipleControllersFoundReason, message)
-	})
+	return controller.ResolveControllerSettings(ctx, r.Client)
 }

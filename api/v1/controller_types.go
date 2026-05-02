@@ -14,11 +14,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// +kubebuilder:object:generate=true
 package v1
 
-import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+// StaleUserDeletionPolicy defines how the controller handles managed users
+// that are no longer referenced by any managed access resource.
+// +kubebuilder:validation:Enum=Delete;Restrict
+type StaleUserDeletionPolicy string
+
+const (
+	// StaleUserDeletionPolicyDelete removes unreferenced managed users.
+	StaleUserDeletionPolicyDelete StaleUserDeletionPolicy = "Delete"
+	// StaleUserDeletionPolicyRestrict retains unreferenced managed users.
+	StaleUserDeletionPolicyRestrict StaleUserDeletionPolicy = "Restrict"
 )
 
 // StaleVhostDeletionPolicy defines how the controller handles RabbitMQ vhosts
@@ -53,6 +60,13 @@ type RabbitMQControllerSettings struct {
 	// +optional
 	// +kubebuilder:default="Retain"
 	StaleVhostDeletionPolicy *StaleVhostDeletionPolicy `json:"staleVhostDeletionPolicy,omitempty"`
+
+	// staleUserDeletionPolicy controls whether the controller deletes RabbitMQ
+	// users that are no longer referenced by any managed RabbitMQAccess.
+	// Restrict retains stale users instead of deleting them.
+	// +optional
+	// +kubebuilder:default="Restrict"
+	StaleUserDeletionPolicy *StaleUserDeletionPolicy `json:"staleUserDeletionPolicy,omitempty"`
 }
 
 type PostgresControllerSettings struct {
@@ -62,6 +76,14 @@ type PostgresControllerSettings struct {
 	// +listType=set
 	// +optional
 	ExcludedUsers []string `json:"excludedUsers,omitempty"`
+
+	// staleUserDeletionPolicy controls whether the controller deletes PostgreSQL
+	// roles that are no longer referenced by any managed PostgresAccess.
+	// Restrict retains stale roles, while Retain only permits deletion during
+	// finalization of the specific PostgresAccess being removed.
+	// +optional
+	// +kubebuilder:default="Restrict"
+	StaleUserDeletionPolicy *PostgresCleanupPolicy `json:"staleUserDeletionPolicy,omitempty"`
 }
 
 type RedisControllerSettings struct {
@@ -71,6 +93,13 @@ type RedisControllerSettings struct {
 	// +listType=set
 	// +optional
 	ExcludedUsers []string `json:"excludedUsers,omitempty"`
+
+	// staleUserDeletionPolicy controls whether the controller deletes Redis ACL
+	// users that are no longer referenced by any managed RedisAccess.
+	// Restrict retains stale users instead of deleting them.
+	// +optional
+	// +kubebuilder:default="Restrict"
+	StaleUserDeletionPolicy *StaleUserDeletionPolicy `json:"staleUserDeletionPolicy,omitempty"`
 }
 
 // ControllerSettings defines operator-wide behavior toggles.
@@ -92,56 +121,4 @@ type ControllerSettings struct {
 	// redis contains settings specific to RedisAccess controllers.
 	// +optional
 	RedisSettings RedisControllerSettings `json:"redis,omitempty"`
-}
-
-// ControllerSpec defines the desired state of Controller.
-type ControllerSpec struct {
-	// settings contains operator-wide settings.
-	// +optional
-	Settings ControllerSettings `json:"settings,omitempty"`
-}
-
-// ControllerStatus defines the observed state of Controller.
-type ControllerStatus struct {
-	// conditions represent the current state of this Controller resource.
-	// +listType=map
-	// +listMapKey=type
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
-// +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-// +kubebuilder:resource:path=controllers,scope=Namespaced,singular=controller,shortName=actrl
-
-// Controller is the Schema for the controllers API.
-type Controller struct {
-	metav1.TypeMeta `json:",inline"`
-
-	// metadata is a standard object metadata.
-	// +optional
-	metav1.ObjectMeta `json:"metadata,omitzero"`
-
-	// spec defines the desired state of Controller.
-	// +optional
-	Spec ControllerSpec `json:"spec,omitzero"`
-
-	// status defines the observed state of Controller.
-	// +optional
-	Status ControllerStatus `json:"status,omitzero"`
-}
-
-// +kubebuilder:object:root=true
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-// ControllerList contains a list of Controller.
-type ControllerList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitzero"`
-	Items           []Controller `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&Controller{}, &ControllerList{})
 }

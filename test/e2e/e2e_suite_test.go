@@ -27,10 +27,9 @@ import (
 	"testing"
 	"time"
 
+	e2eutils "github.com/delta10/access-operator/test/e2e/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/delta10/access-operator/test/utils"
 )
 
 var (
@@ -55,42 +54,53 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	SetDefaultEventuallyPollingInterval(time.Second)
 
 	By("building the manager image")
-	_, err := utils.RunCommandWithTimeout(10*time.Minute, "make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
+	_, err := e2eutils.RunCommandWithTimeout(10*time.Minute, "make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
 
 	// TODO(user): If you want to change the e2e test vendor from Kind,
 	// ensure the image is built and available, then remove the following block.
 	By("loading the manager image on Kind")
-	err = utils.LoadImageToKindClusterWithName(managerImage)
+	err = e2eutils.LoadImageToKindClusterWithName(managerImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
 
 	setupCertManager()
 
 	By("creating manager namespace")
-	_, err = utils.RunCommandWithTimeout(30*time.Second, "kubectl", "create", "ns", namespace)
+	_, err = e2eutils.RunCommandWithTimeout(30*time.Second, "kubectl", "create", "ns", namespace)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create namespace")
 
 	By("labeling the namespace to enforce the restricted security policy")
-	_, err = utils.RunCommandWithTimeout(30*time.Second, "kubectl", "label", "--overwrite", "ns", namespace,
+	_, err = e2eutils.RunCommandWithTimeout(30*time.Second, "kubectl", "label", "--overwrite", "ns", namespace,
 		"pod-security.kubernetes.io/enforce=restricted")
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
 	By("installing CRDs")
-	_, err = utils.RunCommandWithTimeout(5*time.Minute, "make", "install")
+	_, err = e2eutils.RunCommandWithTimeout(5*time.Minute, "make", "install")
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
 	By("waiting for operator CRDs to become established")
-	err = utils.WaitForCRDsEstablished(
-		"controllers.access.k8s.delta10.nl",
+	err = e2eutils.WaitForCRDsEstablished(
 		"postgresaccesses.access.k8s.delta10.nl",
 		"rabbitmqaccesses.access.k8s.delta10.nl",
 		"redisaccesses.access.k8s.delta10.nl",
 	)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to wait for operator CRDs")
 
+	By("waiting for operator API resources to become discoverable")
+	err = e2eutils.WaitForAPIResources(
+		"access.k8s.delta10.nl",
+		"postgresaccesses",
+		"rabbitmqaccesses",
+		"redisaccesses",
+	)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to wait for operator API discovery")
+
 	By("deploying the controller-manager")
-	_, err = utils.RunCommandWithTimeout(5*time.Minute, "make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+	_, err = e2eutils.RunCommandWithTimeout(5*time.Minute, "make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+	By("removing any stale controller settings before parallel specs start")
+	clearAllControllerSettingsConfigMaps()
 	return nil
 }, func(_ []byte) {
 	SetDefaultEventuallyTimeout(2 * time.Minute)
@@ -104,7 +114,7 @@ var _ = SynchronizedAfterSuite(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, name, args...)
-		_, _ = utils.Run(cmd)
+		_, _ = e2eutils.Run(cmd)
 	}
 
 	By("cleaning up the curl pod for metrics")
@@ -140,7 +150,7 @@ func setupCertManager() {
 	}
 
 	By("checking if CertManager is already installed")
-	if utils.IsCertManagerCRDsInstalled() {
+	if e2eutils.IsCertManagerCRDsInstalled() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "CertManager is already installed. Skipping installation.\n")
 		return
 	}
@@ -149,7 +159,7 @@ func setupCertManager() {
 	shouldCleanupCertManager = true
 
 	By("installing CertManager")
-	Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
+	Expect(e2eutils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
 }
 
 // teardownCertManager uninstalls CertManager if it was installed by setupCertManager.
@@ -161,5 +171,5 @@ func teardownCertManager() {
 	}
 
 	By("uninstalling CertManager")
-	utils.UninstallCertManager()
+	e2eutils.UninstallCertManager()
 }
