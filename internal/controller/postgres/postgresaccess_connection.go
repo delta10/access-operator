@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 
 	accessv1 "github.com/delta10/access-operator/api/v1"
 	"github.com/delta10/access-operator/internal/controller"
@@ -95,13 +97,15 @@ func (r *PostgresAccessReconciler) resolveStaleUserDeletionPolicy(ctx context.Co
 }
 
 func formatConnectionString(connection controller.ConnectionDetails) string {
-	return fmt.Sprintf(
-		"postgresql://%s:%s@%s:%s/%s?sslmode=%s",
-		connection.Username,
-		connection.Password,
-		connection.Host,
-		connection.Port,
-		connection.Database,
-		connection.SSLMode,
-	)
+	connectionURL := url.URL{
+		Scheme: "postgresql",
+		User:   url.UserPassword(connection.Username, connection.Password),
+		Host:   net.JoinHostPort(connection.Host, connection.Port),
+		Path:   "/" + connection.Database,
+	}
+	query := connectionURL.Query()
+	query.Set("sslmode", connection.SSLMode)
+	connectionURL.RawQuery = query.Encode()
+
+	return connectionURL.String()
 }

@@ -19,6 +19,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -307,6 +308,33 @@ var _ = Describe("PostgresAccess Controller", func() {
 			Expect(connectionString).To(Equal(expectedString))
 		})
 
+		It("should escape URL-sensitive PostgreSQL connection credentials", func() {
+			passwordWithPunctuation := "p@ss:word/with?quote'&space"
+
+			reconciler := &PostgresAccessReconciler{}
+			pg := &accessv1.PostgresAccess{
+				Spec: accessv1.PostgresAccessSpec{
+					Connection: accessv1.ConnectionSpec{
+						Host:     &host,
+						Port:     &port,
+						Database: &database,
+						Username: &accessv1.SecretKeySelector{Value: &username},
+						Password: &accessv1.SecretKeySelector{Value: &passwordWithPunctuation},
+					},
+				},
+			}
+
+			connectionString, err := reconciler.getConnectionString(context.Background(), pg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(connectionString).To(Equal("postgresql://db-admin:p%40ss%3Aword%2Fwith%3Fquote%27&space@postgres.default.svc:5432/appdb?sslmode=require"))
+
+			parsed, err := url.Parse(connectionString)
+			Expect(err).NotTo(HaveOccurred())
+			parsedPassword, ok := parsed.User.Password()
+			Expect(ok).To(BeTrue())
+			Expect(parsedPassword).To(Equal(passwordWithPunctuation))
+		})
+
 		It("should build connection strings from an existing secret", func() {
 			expectedString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=require", username, password, host, port, database)
 			fakeClient, _ := test.NewFakeClientWithScheme(
@@ -338,6 +366,13 @@ var _ = Describe("PostgresAccess Controller", func() {
 			connectionString, err := reconciler.getConnectionString(context.Background(), pg)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(connectionString).To(Equal(expectedString))
+		})
+
+		It("should quote PostgreSQL role passwords as string literals", func() {
+			quotedUsername := `"app-user"`
+
+			Expect(createRoleSQL(quotedUsername, `pa"ss`)).To(Equal(`CREATE ROLE "app-user" WITH LOGIN PASSWORD 'pa"ss'`))
+			Expect(alterRolePasswordSQL(quotedUsername, "pa'ss")).To(Equal(`ALTER ROLE "app-user" WITH LOGIN PASSWORD 'pa''ss'`))
 		})
 
 		It("should reject cross-namespace existingSecret when no settings ConfigMap exists", func() {

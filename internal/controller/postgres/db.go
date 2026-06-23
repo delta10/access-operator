@@ -77,15 +77,14 @@ func (p *DB) CreateUser(ctx context.Context, username, password string) error {
 	}
 
 	sanitizedUser := pgx.Identifier{username}.Sanitize()
-	sanitizedPass := pgx.Identifier{password}.Sanitize()
 
 	var err error
 	if exists {
-		_, err = p.conn.Exec(ctx, fmt.Sprintf("ALTER ROLE %s WITH LOGIN PASSWORD '%s'", sanitizedUser, sanitizedPass))
+		_, err = p.conn.Exec(ctx, alterRolePasswordSQL(sanitizedUser, password))
 		return err
 	}
 
-	_, err = p.conn.Exec(ctx, fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s'", sanitizedUser, sanitizedPass))
+	_, err = p.conn.Exec(ctx, createRoleSQL(sanitizedUser, password))
 	return err
 }
 
@@ -95,10 +94,21 @@ func (p *DB) UpdateUserPassword(ctx context.Context, username, newPassword strin
 	}
 
 	sanitizedUser := pgx.Identifier{username}.Sanitize()
-	sanitizedPass := pgx.Identifier{newPassword}.Sanitize()
 
-	_, err := p.conn.Exec(ctx, fmt.Sprintf("ALTER ROLE %s WITH LOGIN PASSWORD '%s'", sanitizedUser, sanitizedPass))
+	_, err := p.conn.Exec(ctx, alterRolePasswordSQL(sanitizedUser, newPassword))
 	return err
+}
+
+func createRoleSQL(quotedUsername, password string) string {
+	return fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD %s", quotedUsername, quotePostgresStringLiteral(password))
+}
+
+func alterRolePasswordSQL(quotedUsername, password string) string {
+	return fmt.Sprintf("ALTER ROLE %s WITH LOGIN PASSWORD %s", quotedUsername, quotePostgresStringLiteral(password))
+}
+
+func quotePostgresStringLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func (p *DB) DropUser(ctx context.Context, username string, policy accessv1.PostgresCleanupPolicy) (err error) {
